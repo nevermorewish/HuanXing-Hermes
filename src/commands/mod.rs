@@ -1,4 +1,5 @@
 pub mod api_proxy;
+pub mod account;
 pub mod backup;
 pub mod config_migration;
 pub mod debug_bundle;

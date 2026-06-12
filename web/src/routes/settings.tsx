@@ -54,6 +54,7 @@ import { playChime, shouldPlayFallbackSound } from "@/lib/notifications";
 import { openExternalUrl } from "@/lib/external-links";
 import { checkDesktopUpdate, DESKTOP_UPDATE_DOWNLOAD_URL } from "@/lib/desktop-update";
 import { DESKTOP_VERSION, versionLabel } from "@/lib/build-info";
+import { BRAND } from "@/lib/brand.generated";
 import {
   approvalModeConfigValue,
   approvalModeLabel,
@@ -123,7 +124,7 @@ export function NotificationSection({ showHeading = true }: SettingsSectionProps
     try {
       const result = await bridge.desktopNotify({
         kind: "test",
-        title: "Hermes 通知测试",
+        title: `${BRAND.appName} 通知测试`,
         body: "看到这条系统通知说明配置正常（macOS 首次会请求授权）。",
         showSystemNotification: notifySystem,
         withSound: notifySound,

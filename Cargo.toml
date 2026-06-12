@@ -2,7 +2,7 @@
 name = "hermes-agent-cn-desktop"
 version = "0.3.2"
 edition = "2021"
-description = "Hermes Agent CN Desktop (Tauri)"
+description = "Hermes Agent Chinese Community Desktop"
 authors = ["Hermes Agent CN Contributors"]
 homepage = "https://hermesagent.org.cn"
 
@@ -21,6 +21,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "multipart",
     "rustls-tls",
     "stream",
+    "cookies",
 ] }
 sha2 = "0.10"
 ed25519-dalek = { version = "2", features = ["pkcs8", "pem"] }
@@ -54,10 +55,16 @@ windows-sys = { version = "0.61", features = [
     "Win32_Security",
     "Win32_System_JobObjects",
 ] }
+# Native credential store for the account sk- key (commands/account.rs).
+# Windows + macOS only: the ubuntu CI runner has no Secret Service / D-Bus
+# session, so on Linux/CI the key falls back to an encrypted file under
+# HERMES_HOME (see account::secret_store). keyring is never compiled there.
+keyring = { version = "3", features = ["windows-native"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString"] }
+keyring = { version = "3", features = ["apple-native"] }
 
 [dev-dependencies]
 pretty_assertions = "1"

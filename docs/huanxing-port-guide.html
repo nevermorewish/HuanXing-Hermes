@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HuanXing-Claw → HuanXing-Hermes 功能移植说明</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1d212a;
+    --border: #2a2f3a;
+    --text: #e6e8ec;
+    --muted: #9aa3ب0;
+    --muted: #9aa3b0;
+    --accent: #6ea8fe;
+    --accent-2: #7ee787;
+    --warn: #f2cc60;
+    --danger: #ff7b72;
+    --code-bg: #0b0d11;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .layout { display: flex; max-width: 1280px; margin: 0 auto; }
+  nav {
+    position: sticky; top: 0; align-self: flex-start;
+    width: 260px; height: 100vh; overflow-y: auto;
+    padding: 24px 16px; border-right: 1px solid var(--border);
+    font-size: 13.5px;
+  }
+  nav h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 18px 0 8px; }
+  nav a { display: block; color: var(--muted); text-decoration: none; padding: 4px 8px; border-radius: 6px; }
+  nav a:hover { color: var(--text); background: var(--panel-2); }
+  main { flex: 1; min-width: 0; padding: 36px 44px 120px; }
+  h1 { font-size: 30px; margin: 0 0 4px; }
+  h2 { font-size: 23px; margin: 44px 0 14px; padding-top: 10px; border-top: 1px solid var(--border); }
+  h3 { font-size: 18px; margin: 26px 0 10px; color: #cdd4df; }
+  h4 { font-size: 15px; margin: 18px 0 8px; color: var(--accent); }
+  p, li { color: var(--text); }
+  .lede { color: var(--muted); font-size: 16px; max-width: 70ch; }
+  code { background: var(--code-bg); padding: 1.5px 6px; border-radius: 5px; font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; font-size: 13px; color: #e3b341; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; overflow-x: auto; }
+  pre code { background: none; padding: 0; color: #c9d1d9; font-size: 12.5px; line-height: 1.6; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; margin: 14px 0; }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; background: var(--panel-2); }
+  tr:hover td { background: var(--panel); }
+  .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; letter-spacing: .02em; }
+  .t-port { background: #1f3a5f; color: #9ecbff; }
+  .t-skip { background: #3a2f1a; color: #f2cc60; }
+  .t-rust { background: #5f2f1f; color: #ffb59e; }
+  .t-react { background: #1f4d3a; color: #8ce6b5; }
+  .t-build { background: #3a2f4d; color: #d6b5ff; }
+  .effort { font-size: 12px; color: var(--muted); }
+  .pill { display:inline-block; width: 10px; height:10px; border-radius:50%; margin-right:6px; vertical-align: middle;}
+  .p1{background:var(--accent-2)} .p2{background:var(--warn)} .p3{background:var(--danger)}
+  .arch { display:flex; gap:14px; flex-wrap:wrap; margin:16px 0; }
+  .arch .col { flex:1; min-width:240px; background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:16px; }
+  .arch .col h4 { margin-top:0; }
+  .arrow { align-self:center; color:var(--accent); font-size:24px; }
+  .callout { border-left: 3px solid var(--accent); background: var(--panel-2); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 14px 0; }
+  .callout.warn { border-color: var(--warn); }
+  .callout.danger { border-color: var(--danger); }
+  ol.steps { counter-reset: step; list-style: none; padding-left: 0; }
+  ol.steps > li { position: relative; padding: 8px 0 8px 42px; border-bottom: 1px dashed var(--border); }
+  ol.steps > li::before { counter-increment: step; content: counter(step); position: absolute; left: 0; top: 8px; width: 28px; height: 28px; background: var(--accent); color: #06101f; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; }
+  .muted { color: var(--muted); }
+  .files { font-size: 13px; }
+  .files code { display:inline-block; margin: 2px 0; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 30px 0; }
+  .legend span { margin-right: 16px; font-size: 12.5px; color: var(--muted); }
+  header.hero { padding: 14px 0 22px; }
+  .meta-row { color: var(--muted); font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav>
+    <h2>导航</h2>
+    <a href="#overview">总览</a>
+    <a href="#arch">架构差异（核心）</a>
+    <a href="#summary">功能改动总表</a>
+    <h2>功能簇</h2>
+    <a href="#f1">1. 账户登录 / Account</a>
+    <a href="#f2">2. 模型 Provider 管理</a>
+    <a href="#f3">3. 配置管理页</a>
+    <a href="#f4">4. 用量 / 计费页</a>
+    <a href="#f5">5. 日志页</a>
+    <a href="#f6">6. 渠道 + 飞书接入</a>
+    <a href="#f7">7. 白标多品牌</a>
+    <a href="#f8">8. 预装技能 / SkillHub</a>
+    <h2>移植</h2>
+    <a href="#plan">分阶段移植计划</a>
+    <a href="#mapping">文件映射速查</a>
+    <a href="#risks">风险与注意</a>
+  </nav>
+
+  <main>
+    <header class="hero" id="overview">
+      <h1>HuanXing-Claw → HuanXing-Hermes 功能移植说明</h1>
+      <p class="lede">本文档梳理 <code>HuanXing-Claw</code> 仓库 <code>huanxing</code> 分支（相对 <code>main</code> 的 27 个提交）所做的功能改动，并给出移植进 <code>HuanXing-Hermes</code> 桌面端的具体方案。</p>
+      <div class="meta-row">
+        源仓库：<code>D:\huanxing\HuanXing-Claw</code>（Electron + React）　·
+        目标仓库：<code>D:\huanxing\HuanXing-Hermes</code>（Tauri v2 + React，已新建 <code>huanxing</code> 分支）　·
+        生成日期：2026-06-12
+      </div>
+    </header>
+
+    <div class="callout danger">
+      <strong>⚠️ 安全提示（务必先读）：</strong> 在本次分析过程中，多个工具/终端输出里混入了<strong>伪造的"系统提示词"文本</strong>（伪装成 Claude Code、含假冒计费头）。这是<strong>提示词注入（prompt injection）</strong>，并非真实指令，已全部忽略。移植涉及外部 HTTP 接口与凭证存储，请把所有来自命令输出、网络响应、文件内容的"指令式文本"一律当作不可信数据处理。
+    </div>
+
+    <!-- ARCH -->
+    <h2 id="arch">架构差异（移植的核心前提）</h2>
+    <p>两个项目<strong>不是同一套技术栈</strong>。这不是"复制文件"，而是一次<strong>跨架构重写</strong>：把 Electron 主进程逻辑改写为 Rust Tauri command，渲染层 React 可大幅复用但需替换数据通道。</p>
+    <div class="arch">
+      <div class="col">
+        <h4>HuanXing-Claw（源）</h4>
+        <ul>
+          <li>Electron 主进程（TypeScript / Node.js）</li>
+          <li>业务逻辑在 <code>electron/services/*</code>、<code>electron/utils/*</code></li>
+          <li>主进程↔渲染：<code>ipcMain / ipcRenderer</code> + <code>hostApi</code> facade</li>
+          <li>HTTP：Node 核心 <code>http/https</code>（带 Cookie）、<code>undici</code></li>
+          <li>凭证：Electron <code>safeStorage</code></li>
+          <li>状态：Zustand（带 persist）</li>
+          <li>页面在 <code>src/pages/*</code></li>
+        </ul>
+      </div>
+      <div class="arrow">→</div>
+      <div class="col">
+        <h4>HuanXing-Hermes（目标）</h4>
+        <ul>
+          <li>Tauri v2 后端（Rust，crate <code>hermes_agent_cn</code>）</li>
+          <li>业务逻辑在 <code>src/commands/*.rs</code>（<code>#[tauri::command]</code>）</li>
+          <li>前后端：<code>invoke()</code> + <code>window.hermesDesktop</code> shim（<code>tauri-bridge.ts</code>）</li>
+          <li>HTTP：<code>reqwest</code>（见 <code>api_proxy.rs</code> / <code>im_onboarding.rs</code>）</li>
+          <li>凭证：建议 OS keyring / DPAPI（Rust）</li>
+          <li>状态：TanStack Query（服务端）+ Jotai（本地）</li>
+          <li>页面在 <code>web/src/routes/*</code></li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout">
+      <strong>关键事实：</strong> Hermes 已经把后端做成了 <strong>managed runtime（hermes dashboard 子进程）+ Gateway WS</strong>。它的配置（<code>openclaw.json</code> 等价物）多数通过 <strong>dashboard REST / gateway</strong> 读写，而不是前端直接读文件。Claw 里大量"直接读写 <code>~/.openclaw/openclaw.json</code>"的逻辑，在 Hermes 里要判断：<em>能走现有 dashboard 接口就走，不能再新增 Rust command</em>。
+    </div>
+
+    <!-- SUMMARY TABLE -->
+    <h2 id="summary">功能改动总表</h2>
+    <div class="legend">
+      <span><span class="pill p1"></span>P1 高价值/低成本</span>
+      <span><span class="pill p2"></span>P2 中等</span>
+      <span><span class="pill p3"></span>P3 重/需取舍</span>
+    </div>
+    <table>
+      <thead><tr><th>功能簇</th><th>优先级</th><th>移植决策</th><th>目标位置（Hermes）</th></tr></thead>
+      <tbody>
+        <tr><td>1. 账户登录 / Account（环行 API 登录、取模型、生成 sk- key）</td><td><span class="pill p1"></span></td><td><span class="tag t-port">移植</span> <span class="tag t-rust">Rust</span> <span class="tag t-react">React</span></td><td><code>src/commands/account.rs</code> + <code>web/.../account/*</code></td></tr>
+        <tr><td>2. 模型 Provider 管理（clawpanel 式 CRUD）</td><td><span class="pill p2"></span></td><td><span class="tag t-port">融合现有</span></td><td>扩展 <code>provider-catalog.ts</code> / <code>settings-models-section.tsx</code></td></tr>
+        <tr><td>3. 配置管理页（编辑/校准/备份 openclaw.json）</td><td><span class="pill p2"></span></td><td><span class="tag t-port">部分移植</span></td><td>复用 <code>backup.tsx</code> + <code>config-migration.tsx</code>，按需补</td></tr>
+        <tr><td>4. 用量 / 计费页（token 消耗历史）</td><td><span class="pill p1"></span></td><td><span class="tag t-port">移植</span> <span class="tag t-react">React</span></td><td><code>web/src/routes/usage.tsx</code>（复用 <code>model-usage-log.ts</code>）</td></tr>
+        <tr><td>5. 日志页（网关日志 + 错误过滤）</td><td><span class="pill p1"></span></td><td><span class="tag t-port">已有，增强</span></td><td>增强现有 <code>web/src/routes/logs.tsx</code></td></tr>
+        <tr><td>6. 渠道排序 + 飞书 device-code 接入</td><td><span class="pill p2"></span></td><td><span class="tag t-skip">大部分已有</span></td><td>已存在 <code>im_onboarding.rs</code> + <code>im-onboarding.tsx</code>，仅对齐 UI</td></tr>
+        <tr><td>7. 白标多品牌系统（BRAND 构建注入）</td><td><span class="pill p3"></span></td><td><span class="tag t-port">移植（改造）</span> <span class="tag t-build">构建</span></td><td>新增 <code>brands/*.json</code> + 构建脚本 + version:sync 集成</td></tr>
+        <tr><td>8. 预装技能从 SkillHub 拉取</td><td><span class="pill p2"></span></td><td><span class="tag t-port">移植脚本</span> <span class="tag t-build">构建</span></td><td>改 <code>scripts/stage-*.mjs</code> 技能打包逻辑</td></tr>
+      </tbody>
+    </table>
+
+    <hr>
+
+    <!-- F1 -->
+    <h2 id="f1">1. 账户登录 / Account</h2>
+    <p>在侧边栏底部加"登录"按钮，登录到一个 newapi 风格的账户服务（品牌可配的 <code>serviceUrl</code>），拉取账号可用模型列表，生成一个完整 <code>sk-</code> token，并把所选模型注册成一个可用于对话的自定义 provider。</p>
+
+    <h3>源实现要点</h3>
+    <div class="card files">
+      <code>electron/utils/account-session.ts</code> — 主进程 HTTP 客户端（持有 HttpOnly session cookie + <code>New-Api-User</code> 头）<br>
+      <code>electron/services/account-api.ts</code> — IPC：login / fetchSetup / getBalance / listTokens / saveModelConfig / logout …<br>
+      <code>src/stores/account.ts</code> — Zustand store（只持久化 <code>serverUrl</code> / <code>lastUsername</code>，session 与 key 永不出主进程）<br>
+      <code>src/components/account/AccountLoginButton.tsx</code> / <code>AccountLoginDialog.tsx</code> — 两步登录（账号密码 → 选模型 + 选 token）
+    </div>
+
+    <h4>调用的后端 HTTP 接口（newapi 风格）</h4>
+    <table>
+      <thead><tr><th>方法 + 路径</th><th>用途</th><th>关键头/字段</th></tr></thead>
+      <tbody>
+        <tr><td><code>POST /api/user/login</code></td><td>账号密码登录</td><td>返回 session cookie + user 对象</td></tr>
+        <tr><td><code>GET /api/pricing</code></td><td>新版模型列表（按 group 过滤）</td><td><code>Cookie: session=…</code>, <code>New-Api-User: &lt;id&gt;</code></td></tr>
+        <tr><td><code>GET /api/user/self/models</code></td><td>旧版模型列表（回退）</td><td>同上</td></tr>
+        <tr><td><code>GET /api/user/self</code></td><td>额度 quota / usedQuota</td><td>同上</td></tr>
+        <tr><td><code>GET /api/status</code></td><td>显示配置（quotaPerUnit / topUpLink）</td><td>—</td></tr>
+        <tr><td><code>GET /api/token/</code> · <code>POST /api/token/</code></td><td>列出 / 创建 API token</td><td>分页</td></tr>
+        <tr><td><code>POST /api/token/{id}/key</code> · <code>GET /api/token/{id}</code></td><td>取完整 sk- key（新/旧两种回退）</td><td>—</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Hermes 移植方案</h3>
+    <div class="callout warn">
+      <strong>为什么必须放 Rust：</strong> 登录靠 <strong>HttpOnly session cookie</strong>。WebView 的 <code>fetch</code> 会丢 Cookie 头、且 key 不该暴露给前端。所以 HTTP 客户端必须在 Rust 侧（用 <code>reqwest</code>，参考已有的 <code>commands/im_onboarding.rs</code> 的 <code>Client</code> + 内存 <code>FLOWS</code> 状态写法）。
+    </div>
+    <ol class="steps">
+      <li>新建 <code>src/commands/account.rs</code>：用 <code>reqwest::Client</code>（<code>cookie_store(true)</code>）封装上表接口；session/cookie 存进 <code>AppState</code>（<code>Mutex</code>）或模块内 <code>LazyLock&lt;Mutex&lt;...&gt;&gt;</code>，<strong>sk- key 不返回前端</strong>，只返回 <code>maskedKey</code> + <code>hasKey</code>。</li>
+      <li>导出命令：<code>account_login</code> / <code>account_fetch_setup</code> / <code>account_balance</code> / <code>account_list_tokens</code> / <code>account_save_models</code> / <code>account_logout</code>，在 <code>main.rs</code> 的 <code>generate_handler!</code> 注册。</li>
+      <li>凭证持久化：用 OS keyring（<code>keyring</code> crate）或 Windows DPAPI，替代 Electron <code>safeStorage</code>；只持久化 serverUrl + 用户名，密码加密存。</li>
+      <li>"保存所选模型"：写入 provider 配置。<strong>优先走 Hermes 现有 dashboard 配置接口</strong>（写 <code>models.providers.&lt;brandKey&gt;</code>），而不是前端直接写文件——见功能簇 2。</li>
+      <li>前端：在 <code>web/src/components/sidebar/</code> 加 <code>account-login-button.tsx</code> + 登录对话框（复用 <code>components/ui/dialog</code>）；状态用 Jotai atom 或 TanStack Query 包 <code>invoke("account_*")</code>，通过 <code>tauri-bridge.ts</code> 暴露成 <code>hermesDesktop.account.*</code>。</li>
+    </ol>
+
+    <!-- F2 -->
+    <h2 id="f2">2. 模型 Provider 管理（clawpanel 式）</h2>
+    <p>Claw 把 Models 页重做成 provider 中心视图：每个 provider 一张卡片，支持 增/删/改 模型、设主模型、测试模型、从远端拉模型列表（<code>fetchRemoteModels</code>）。新增 <code>API_TYPES</code> 与 <code>PROVIDER_PRESETS</code> 快填模板（deepseek / openai / anthropic / google / moonshot / 硅基流动 / openrouter…）。</p>
+    <div class="card files">
+      源：<code>electron/services/model-providers-api.ts</code>（泛化的 <code>models.providers.*</code> CRUD）、<code>electron/utils/openclaw-auth.ts</code>（provider-generic 读写）、<code>src/stores/modelProviders.ts</code>、<code>src/lib/model-presets.ts</code>、<code>src/components/models/*</code>（ProviderCard / Add/Edit/FetchRemote/ModelEdit 对话框）
+    </div>
+    <div class="callout">
+      <strong>Hermes 已有等价能力。</strong> 目标项目已有完整的 provider 体系：<code>web/src/lib/provider-catalog.ts</code>（<code>BUILTIN_PROVIDER_CATALOG</code>、增删改 update 构造器）、<code>settings-models-section.tsx</code>、<code>use-provider-models</code>、<code>model-combobox</code>。<strong>不要照搬 Claw 的整页</strong>，而是把 Claw 多出来的能力<strong>增量并入</strong>。
+    </div>
+    <h3>移植方案（融合，不重写）</h3>
+    <ul>
+      <li>对比 <code>model-presets.ts</code> 的 <code>PROVIDER_PRESETS</code> 与 Hermes 的 <code>BUILTIN_PROVIDER_CATALOG</code>，把缺的国内 preset（硅基流动、moonshot、zhipu 等）补进 catalog。</li>
+      <li>"从远端拉模型列表"（<code>fetchRemoteModels</code> → <code>GET {baseUrl}/v1/models</code>）若 Hermes 没有，加一个走 <code>api_proxy.rs / external_request</code> 的前端封装即可，无需新 Rust 命令。</li>
+      <li>"测试模型"（<code>testModel</code> 打一次 completions）同理走 <code>external_request</code>。</li>
+      <li>provider 写入统一走 Hermes 现有 config 保存通道（dashboard），保持单一事实来源。</li>
+    </ul>
+
+    <!-- F3 -->
+    <h2 id="f3">3. 配置管理页</h2>
+    <p>一个管理 <code>openclaw.json</code> 的 GUI：服务启停/重启、配置目录覆盖、JSON 在线编辑+校验、校准（inherit/reset）、备份（列出/创建/恢复/删除）。</p>
+    <div class="card files">源：<code>src/pages/ConfigManagement/index.tsx</code>、<code>electron/services/config-api.ts</code>（BOM 去除、宽松 JSON 解析、剥离 UI 字段、calibrate、backup 管理）</div>
+    <div class="callout">
+      <strong>Hermes 已覆盖大半。</strong> 现有 <code>web/src/routes/backup.tsx</code>（备份）+ <code>config-migration.tsx</code>（配置迁移）+ <code>commands/backup.rs</code> / <code>config_migration.rs</code> 已实现备份与迁移。<strong>仅需评估补齐</strong>：在线 JSON 编辑器 + 校准（calibrate inherit/reset）+ 配置目录覆盖。
+    </div>
+    <h3>移植方案</h3>
+    <ol class="steps">
+      <li>盘点：对照 <code>config-api.ts</code> 的 IPC 列表与 Hermes 现有命令，列出缺口（多半是 JSON editor 与 calibrate）。</li>
+      <li>缺口若需读写本地配置文件，加 Rust 命令于 <code>src/commands/config_migration.rs</code> 或新建 <code>config_edit.rs</code>，复用 <code>tempfile</code>/原子写 + 写前自动备份。</li>
+      <li>前端在 <code>web/src/routes/</code> 增 tab 或子页，复用现有 Monaco/编辑器组件（Hermes 的 file-preview 体系）。</li>
+    </ol>
+
+    <!-- F4 -->
+    <h2 id="f4">4. 用量 / 计费页</h2>
+    <p>展示 token 消耗历史：按模型分组、时间窗（7d 等）、分页、过滤隐藏来源（gateway 注入、delivery-mirror）。</p>
+    <div class="card files">源：<code>src/pages/Usage/index.tsx</code> + <code>src/pages/Usage/usage-history.ts</code>（IPC <code>usage.recentTokenHistory(limit)</code> → <code>UsageHistoryEntry[]</code>）</div>
+    <div class="callout">
+      <strong>Hermes 已有数据层。</strong> 目标项目存在 <code>web/src/lib/model-usage-log.ts</code> + <code>model-usage-log.test.ts</code>，已有 token 用量记录解析能力。移植主要是<strong>加一个展示页</strong>。
+    </div>
+    <h3>移植方案</h3>
+    <ul>
+      <li>新增路由页 <code>web/src/routes/usage.tsx</code>（参照现有 <code>analytics.tsx</code> 的结构与 <code>section-shell</code> 布局）。</li>
+      <li>数据来自 <code>model-usage-log.ts</code>；若需要更全的历史，确认 dashboard 是否已有用量接口，优先复用。</li>
+      <li>在侧边栏（<code>app-shell</code> 的某个 sidebar）挂入口。纯 React，无需 Rust 改动。</li>
+    </ul>
+
+    <!-- F5 -->
+    <h2 id="f5">5. 日志页</h2>
+    <p>合并展示 app + gateway 日志，按 <code>[LEVEL]</code> 着色，两个 tab（全部 / 仅错误）、尾行数选择（200/500/1000/2000）、搜索高亮、3s 自动刷新、复制。</p>
+    <div class="card files">源：<code>src/pages/Logs/index.tsx</code>（IPC <code>logs.recent(tailLines)</code>）</div>
+    <div class="callout">
+      <strong>Hermes 已有日志页。</strong> 目标项目存在 <code>web/src/routes/logs.tsx</code> + <code>web/src/lib/logs-viewer.ts</code> + <code>commands/log_export.rs</code>。移植退化为<strong>对比并补齐 UI 细节</strong>（错误 tab、尾行选择、自动刷新间隔）。
+    </div>
+
+    <!-- F6 -->
+    <h2 id="f6">6. 渠道排序 + 飞书接入</h2>
+    <p>Claw：渠道顺序调整（飞书/QQ机器人/微信靠前）、托盘菜单本地化、飞书 device-code 接入（<code>begin</code> → 轮询 <code>poll</code>，走 <code>https://accounts.feishu.cn/oauth/v1/app/registration</code>）。</p>
+    <div class="callout">
+      <strong>Hermes 已深度实现飞书接入。</strong> <code>src/commands/im_onboarding.rs</code> 已包含 <code>FEISHU_REGISTRATION_PATH</code>、device-code flow、飞书/Lark/微信/QQ 等常量与 <code>im_onboarding_begin/poll/apply</code> 命令；前端有 <code>web/src/routes/im-onboarding.tsx</code>。<strong>这块基本无需移植</strong>，仅需：① 对齐渠道排序与文案；② 若 Claw 的飞书 PersonalAgent 参数与 Hermes 不同，做差异核对。</p>
+    </div>
+
+    <!-- F7 -->
+    <h2 id="f7">7. 白标多品牌系统</h2>
+    <p>构建期通过 <code>BRAND=&lt;id&gt;</code> 选择品牌，把一套代码打成多个产品（deepclaw/frogclaw/fengchiclaw/huanxingclaw）。单一事实来源是 <code>brands/&lt;id&gt;.json</code>，由 <code>scripts/generate-brand.mjs</code> 生成 <code>shared/brand/active.generated.ts</code>，主进程与渲染层都读 <code>BRAND</code>。</p>
+    <h4>BrandConfig 字段（18 个）</h4>
+    <pre><code>id, appName, productName, executableName, appId, dataDirName,
+instanceLockName, providerKey, serviceUrl, rechargeUrl,
+updateFeedBaseUrl, copyright, vendor, maintainer,
+linuxWMClass, tagline, assetsDir</code></pre>
+    <div class="callout warn">
+      <strong>成本最高、与 Hermes 现状冲突最大的一块。</strong> Hermes 是 Tauri：品牌注入点在 <code>tauri.conf.json</code>（productName/identifier/窗口标题）、<code>Cargo.toml</code>、<code>package.json</code>，且已有 <code>pnpm version:sync</code> 统一三处版本。Claw 的 electron-builder 多品牌 merge 流程<strong>不能直接搬</strong>。
+    </div>
+    <h3>移植方案（建议改造而非照搬）</h3>
+    <ol class="steps">
+      <li>保留 <code>brands/&lt;id&gt;.json</code> 作为单一事实来源（字段裁剪：去掉 electron 专属如 instanceLock 语义按 Tauri 调整）。</li>
+      <li>新增 <code>scripts/generate-brand.mjs</code>：读 <code>BRAND</code> 环境变量 → 生成前端可 import 的 <code>web/src/lib/brand.generated.ts</code>，并<strong>注入 <code>tauri.conf.json</code> 的 productName/identifier/title</strong>（参照现有 <code>version:sync</code> 脚本对多文件改写的做法）。</li>
+      <li>把生成步骤接进 <code>tauri:build:bundled-*</code> 与 dev 流程；用 <code>version:check</code> 同款思路加 <code>brand:check</code> 校验三处一致。</li>
+      <li>前端把硬编码的 "Hermes" 文案改读 <code>BRAND.appName</code>（<code>components/brand/</code> 已有 logo 组件，可扩成品牌模块）。</li>
+      <li>账户 providerKey、serviceUrl、rechargeUrl 直接喂给功能簇 1 的登录逻辑。</li>
+    </ol>
+
+    <!-- F8 -->
+    <h2 id="f8">8. 预装技能从 SkillHub 拉取</h2>
+    <p>把预装技能打包来源从 GitHub git checkout 改为 SkillHub（<code>api.skillhub.cn</code>）。manifest 每条加 <code>source: skillhub|github</code>，SkillHub 项按 slug 下 zip 并用 <code>expectName</code> 校验 <code>SKILL.md</code> 的 <code>name:</code>，错配则报错而不是装错内容。office 技能映射 <code>xlsx→xlsx-cn</code> / <code>docx→docx-cn</code> / <code>pptx→powerpoint-pptx-cn</code>。</p>
+    <h4>SkillHub 接口</h4>
+    <table>
+      <thead><tr><th>方法 + 路径</th><th>用途</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET https://api.skillhub.cn/api/v1/download?slug={slug}</code></td><td>下载技能 zip（CDN 回退：<code>skillhub-…cos…/skills/{slug}.zip</code>）</td></tr>
+        <tr><td><code>GET https://api.skillhub.cn/api/v1/search?q={q}&limit={n}</code></td><td>运行时市场搜索</td></tr>
+      </tbody>
+    </table>
+    <div class="callout">
+      <strong>Hermes 对应位置：</strong> 打包技能由 <code>scripts/stage-*.mjs</code> 拷进 bundle（见 CLAUDE.md），技能命令在 <code>src/commands/skills.rs</code>。移植 = 把 Claw 的 <code>bundle-preinstalled-skills.mjs</code> 的 SkillHub 下载 + <code>expectName</code> 校验逻辑改写进 Hermes 的 stage 脚本。纯构建脚本，不碰运行时架构，风险低。
+    </div>
+
+    <hr>
+
+    <!-- PLAN -->
+    <h2 id="plan">分阶段移植计划（建议顺序）</h2>
+    <table>
+      <thead><tr><th>阶段</th><th>内容</th><th>依赖</th><th>产出</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>已完成：两仓库均切到 <code>huanxing</code> 分支</td><td>—</td><td>干净起点</td></tr>
+        <tr><td>1</td><td><strong>白标品牌系统</strong>（功能簇 7）——所有账户/URL 配置的地基</td><td>—</td><td><code>brands/*.json</code> + generate-brand 脚本</td></tr>
+        <tr><td>2</td><td><strong>账户登录</strong>（功能簇 1）——Rust <code>account.rs</code> + 前端登录 UI</td><td>阶段 1（providerKey/serviceUrl）</td><td>可登录、取模型、生成 key</td></tr>
+        <tr><td>3</td><td><strong>Provider 融合</strong>（功能簇 2）——补 preset / fetchRemote / test</td><td>阶段 2</td><td>对话可用所选模型</td></tr>
+        <tr><td>4</td><td><strong>用量页 + 日志增强</strong>（功能簇 4、5）——纯前端</td><td>—（可并行）</td><td>两个展示页</td></tr>
+        <tr><td>5</td><td><strong>配置管理补齐 + 渠道对齐</strong>（功能簇 3、6）</td><td>阶段 1</td><td>JSON 编辑/校准、渠道顺序</td></tr>
+        <tr><td>6</td><td><strong>SkillHub 打包</strong>（功能簇 8）——构建脚本</td><td>—（可并行）</td><td>预装技能走 SkillHub</td></tr>
+      </tbody>
+    </table>
+    <div class="callout">每阶段完成后按 CLAUDE.md 跑：<code>pnpm typecheck</code> + <code>pnpm test:unit</code> + <code>cargo check</code>（涉及 Rust 时 <code>cargo test --all-features</code>）。</div>
+
+    <!-- MAPPING -->
+    <h2 id="mapping">文件映射速查（源 → 目标）</h2>
+    <table>
+      <thead><tr><th>HuanXing-Claw（Electron）</th><th>HuanXing-Hermes（Tauri）</th><th>动作</th></tr></thead>
+      <tbody>
+        <tr><td><code>electron/utils/account-session.ts</code><br><code>electron/services/account-api.ts</code></td><td><code>src/commands/account.rs</code>（reqwest + cookie store）</td><td>重写为 Rust</td></tr>
+        <tr><td><code>src/stores/account.ts</code></td><td>Jotai atom / TanStack Query 包 <code>invoke</code></td><td>改造</td></tr>
+        <tr><td><code>src/components/account/*</code></td><td><code>web/src/components/sidebar/account-*.tsx</code></td><td>复用 UI，换数据通道</td></tr>
+        <tr><td><code>electron/services/model-providers-api.ts</code><br><code>src/lib/model-presets.ts</code></td><td>融入 <code>web/src/lib/provider-catalog.ts</code> + <code>external_request</code></td><td>增量融合</td></tr>
+        <tr><td><code>src/pages/Usage/*</code></td><td><code>web/src/routes/usage.tsx</code> + <code>lib/model-usage-log.ts</code></td><td>新增页</td></tr>
+        <tr><td><code>src/pages/Logs/*</code></td><td>已有 <code>web/src/routes/logs.tsx</code></td><td>对比补齐</td></tr>
+        <tr><td><code>src/pages/ConfigManagement/*</code><br><code>electron/services/config-api.ts</code></td><td>已有 <code>backup.tsx</code>/<code>config-migration.tsx</code>，按缺口补 <code>config_*.rs</code></td><td>部分移植</td></tr>
+        <tr><td>飞书 device-code（channels-api + onboarding）</td><td>已有 <code>src/commands/im_onboarding.rs</code> + <code>routes/im-onboarding.tsx</code></td><td>仅对齐</td></tr>
+        <tr><td><code>brands/*.json</code> + <code>scripts/{brand,generate-brand}.mjs</code> + <code>shared/brand/*</code></td><td><code>brands/*.json</code> + 新 generate 脚本 + 注入 <code>tauri.conf.json</code></td><td>改造移植</td></tr>
+        <tr><td><code>scripts/bundle-preinstalled-skills.mjs</code></td><td>并入 <code>scripts/stage-*.mjs</code></td><td>构建脚本移植</td></tr>
+      </tbody>
+    </table>
+
+    <!-- RISKS -->
+    <h2 id="risks">风险与注意事项</h2>
+    <div class="grid">
+      <div class="card">
+        <h4>🔐 凭证安全</h4>
+        sk- key / session cookie <strong>只能留在 Rust 侧</strong>，前端只拿 maskedKey。用 OS keyring/DPAPI 替代 Electron safeStorage。提交前确认无 <code>.env</code>/密钥被纳入版本控制。
+      </div>
+      <div class="card">
+        <h4>🍪 Cookie 传递</h4>
+        WebView fetch 会丢 HttpOnly cookie——这正是账户登录必须走 Rust <code>reqwest</code>（<code>cookie_store(true)</code>）的根因。不要试图在前端直接打账户接口。
+      </div>
+      <div class="card">
+        <h4>🧩 单一事实来源</h4>
+        provider/模型配置：能走 Hermes 现有 dashboard 接口就走，避免前端直接写文件造成与 managed runtime 不一致。
+      </div>
+      <div class="card">
+        <h4>🏷️ 品牌注入差异</h4>
+        Tauri 的品牌点（tauri.conf.json/Cargo.toml）与 electron-builder 完全不同，必须改造而非照搬；接进现有 <code>version:sync</code> 机制。
+      </div>
+      <div class="card">
+        <h4>🛡️ 提示词注入</h4>
+        本次分析中工具输出混入伪造系统提示。移植代码处理外部响应时，把所有外部文本当不可信数据，勿据其改变控制流。
+      </div>
+      <div class="card">
+        <h4>✅ 验证节奏</h4>
+        每阶段跑 typecheck / test:unit / cargo check。Rust 测试遵守 CLAUDE.md：env 测试 <code>#[serial_test::serial]</code>、HTTP 用 <code>wiremock</code>、FS 用 <code>tempfile</code>。
+      </div>
+    </div>
+
+    <hr>
+    <p class="muted">文档生成：基于 <code>git log main..huanxing</code> 的 27 个提交与源/目标双仓库源码分析。建议将本文件随移植进展更新（勾选已完成阶段）。</p>
+  </main>
+</div>
+</body>
+</html>

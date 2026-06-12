@@ -28,6 +28,7 @@ import { HealthRoute } from "@/routes/health";
 import { LogsRoute } from "@/routes/logs";
 import { DebugRoute } from "@/routes/debug";
 import { AnalyticsRoute } from "@/routes/analytics";
+import { UsageRoute } from "@/routes/usage";
 import { AdvancedRoute, ThemeRoute } from "@/routes/advanced";
 import { ImOnboardingRoute } from "@/routes/im-onboarding";
 
@@ -77,6 +78,7 @@ export function App() {
           <Route path="/console" element={withBoundary(<ConsoleRoute />)} />
           <Route path="/health" element={withBoundary(<HealthRoute />)} />
           <Route path="/analytics" element={withBoundary(<AnalyticsRoute />)} />
+          <Route path="/usage" element={withBoundary(<UsageRoute />)} />
           <Route path="/logs" element={withBoundary(<LogsRoute />)} />
           <Route path="/debug" element={withBoundary(<DebugRoute />)} />
           <Route path="/theme" element={withBoundary(<ThemeRoute />)} />

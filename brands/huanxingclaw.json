@@ -1,0 +1,17 @@
+{
+  "id": "huanxingclaw",
+  "appName": "幻形 Agent",
+  "productName": "HuanxingClaw Desktop",
+  "identifier": "app.huanxingclaw.desktop",
+  "windowTitle": "幻形 Agent 桌面版",
+  "dataDirName": ".huanxingclaw",
+  "providerKey": "huanxingclaw",
+  "serviceUrl": "https://api.huanxing.ai/",
+  "rechargeUrl": "https://api.huanxing.ai/wallet",
+  "copyright": "Copyright © 2026 HuanxingClaw",
+  "publisher": "HuanxingClaw",
+  "homepage": "https://api.huanxing.ai",
+  "shortDescription": "HuanxingClaw AI Assistant Desktop",
+  "longDescription": "Desktop app for HuanxingClaw AI Assistant.",
+  "tagline": "AI Assistant"
+}

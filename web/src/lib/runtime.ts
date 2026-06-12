@@ -57,6 +57,69 @@ export interface ElectronSimpleResult {
   message?: string | null;
 }
 
+// --- Account login (mirror commands/account.rs serde shapes). Defined here so
+// both runtime.ts (the window.hermesDesktop type) and tauri-bridge.ts (the
+// invoke wrappers) share one source without a circular import. The full sk-
+// key never crosses IPC — only a masked preview + hasKey are exposed.
+export interface AccountLoginInput {
+  baseUrl: string;
+  username: string;
+  password: string;
+}
+
+export interface AccountUser {
+  id: number;
+  username: string;
+  displayName: string;
+  role: number;
+  status: number;
+  group: string;
+}
+
+export interface AccountStatusResult {
+  loggedIn: boolean;
+  user?: AccountUser;
+  serverUrl?: string;
+  hasKey: boolean;
+  maskedKey?: string;
+}
+
+export interface AccountSetupResult {
+  user: AccountUser;
+  baseUrl: string;
+  models: string[];
+  hasKey: boolean;
+  maskedKey?: string;
+}
+
+export interface AccountTokenInfo {
+  id: number;
+  name: string;
+  group: string;
+  status: number;
+}
+
+export interface AccountBalanceInfo {
+  quota: number;
+  usedQuota: number;
+  quotaPerUnit: number;
+  displayInCurrency: boolean;
+  topUpUrl: string;
+}
+
+export interface AccountSaveModelsInput {
+  models: string[];
+  primaryModelId?: string;
+  tokenId?: number;
+}
+
+export interface AccountTestModelResult {
+  ok: boolean;
+  latencyMs?: number;
+  reply?: string;
+  error?: string;
+}
+
 export interface MemoryEntry {
   index: number;
   content: string;
@@ -234,6 +297,14 @@ declare global {
       windowType: "electron" | "tauri";
       request(input: ElectronApiRequestInput): Promise<ElectronApiRequestResult>;
       externalRequest?(input: ElectronApiRequestInput): Promise<ElectronApiRequestResult>;
+      accountLogin?(input: AccountLoginInput): Promise<AccountUser>;
+      accountStatus?(): Promise<AccountStatusResult>;
+      accountFetchSetup?(): Promise<AccountSetupResult>;
+      accountListTokens?(): Promise<AccountTokenInfo[]>;
+      accountBalance?(): Promise<AccountBalanceInfo>;
+      accountSaveModels?(input: AccountSaveModelsInput): Promise<AccountStatusResult>;
+      accountTestModel?(modelId: string): Promise<AccountTestModelResult>;
+      accountLogout?(): Promise<AccountStatusResult>;
       uploadFile?(input: FileUploadInput): Promise<ElectronApiRequestResult>;
       pickFiles?(): Promise<ElectronFilePickerResult>;
       pickDirectory?(): Promise<ElectronFilePickerResult>;

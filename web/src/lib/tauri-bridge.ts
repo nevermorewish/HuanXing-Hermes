@@ -51,8 +51,17 @@ import type {
   UiEventInput,
   UiStoreSnapshot,
   UiTurnStats,
+  AccountLoginInput,
+  AccountUser,
+  AccountStatusResult,
+  AccountSetupResult,
+  AccountTokenInfo,
+  AccountBalanceInfo,
+  AccountSaveModelsInput,
+  AccountTestModelResult,
 } from "./runtime";
 import { BUILD_COMMIT, DESKTOP_VERSION, versionLabel } from "./build-info";
+import { BRAND } from "./brand.generated";
 import hermesLogoSvg from "../../../icons/icon.svg?raw";
 
 let invoke: typeof import("@tauri-apps/api/core").invoke;
@@ -150,6 +159,40 @@ const tauriBridge = {
 
   async externalRequest(input: ApiRequestInput): Promise<ApiRequestResult> {
     return invokeCommand("external_request", { input });
+  },
+
+  // --- Account login (commands/account.rs). The full sk- key never crosses
+  // this boundary; commands return only a masked preview + hasKey.
+  async accountLogin(input: AccountLoginInput): Promise<AccountUser> {
+    return invokeCommand("account_login", { input });
+  },
+
+  async accountStatus(): Promise<AccountStatusResult> {
+    return invokeCommand("account_status");
+  },
+
+  async accountFetchSetup(): Promise<AccountSetupResult> {
+    return invokeCommand("account_fetch_setup");
+  },
+
+  async accountListTokens(): Promise<AccountTokenInfo[]> {
+    return invokeCommand("account_list_tokens");
+  },
+
+  async accountBalance(): Promise<AccountBalanceInfo> {
+    return invokeCommand("account_balance");
+  },
+
+  async accountSaveModels(input: AccountSaveModelsInput): Promise<AccountStatusResult> {
+    return invokeCommand("account_save_models", { input });
+  },
+
+  async accountTestModel(modelId: string): Promise<AccountTestModelResult> {
+    return invokeCommand("account_test_model", { modelId });
+  },
+
+  async accountLogout(): Promise<AccountStatusResult> {
+    return invokeCommand("account_logout");
   },
 
   async uploadFile(input: FileUploadInput): Promise<ApiRequestResult> {
@@ -423,7 +466,7 @@ function showBootstrapOverlay(initialMessage: string): {
     "style",
     "font-size:16px;font-weight:700;letter-spacing:0.02em;color:#fbfaf6;",
   );
-  title.textContent = "Hermes Agent 中文社区桌面版";
+  title.textContent = BRAND.windowTitle;
   panel.appendChild(title);
 
   const brand = document.createElement("div");
@@ -432,7 +475,7 @@ function showBootstrapOverlay(initialMessage: string): {
     "margin-top:-10px;font-size:12px;font-weight:600;color:rgba(251,250,246,0.54);" +
       "letter-spacing:0.08em;text-transform:uppercase;",
   );
-  brand.textContent = "Hermes Agent 中文社区 · hermesagent.org.cn";
+  brand.textContent = `${BRAND.appName} · ${BRAND.homepage.replace(/^https?:\/\//, "").replace(/\/$/, "")}`;
   panel.appendChild(brand);
 
   const message = document.createElement("div");
@@ -522,7 +565,7 @@ function showBootstrapOverlay(initialMessage: string): {
     "font-family:'JetBrains Mono',ui-monospace,monospace;font-size:11px;" +
       "color:rgba(255,255,255,0.45);letter-spacing:0.06em;text-transform:uppercase;",
   );
-  sub.textContent = "Hermes Agent 中文社区桌面版 · 首次启动";
+  sub.textContent = `${BRAND.windowTitle} · 首次启动`;
   panel.appendChild(sub);
 
   root.appendChild(panel);

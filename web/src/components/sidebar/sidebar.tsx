@@ -25,6 +25,7 @@ import {
   type WorkspaceProject,
 } from "@/lib/workspaces";
 import { ProfileSelector } from "./profile-selector";
+import { AccountLoginButton } from "./account-login-button";
 import s from "./sidebar.module.css";
 
 const PROJECT_QUICK_LIMIT = 6;
@@ -302,6 +303,7 @@ export function Sidebar() {
           </span>
         </div>
       </div>
+      <AccountLoginButton />
       <button
         type="button"
         className={s.settingsBtn}

@@ -3,6 +3,7 @@ import {
   BarChart3,
   Bug,
   FileText,
+  Gauge,
   HeartPulse,
   type LucideIcon,
 } from "lucide-react";
@@ -17,6 +18,7 @@ interface ObservabilityItem {
 const ITEMS: readonly ObservabilityItem[] = [
   { label: "健康检查", path: "/health", icon: HeartPulse },
   { label: "数据分析", path: "/analytics", icon: BarChart3 },
+  { label: "模型用量", path: "/usage", icon: Gauge },
   { label: "日志", path: "/logs", icon: FileText },
   { label: "Debug", path: "/debug", icon: Bug },
 ];
