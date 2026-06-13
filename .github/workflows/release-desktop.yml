@@ -1,20 +1,21 @@
 # Build hermes-agent-cn-desktop installers and attach them to a GitHub
 # Release. Triggers on tags matching `v*` (e.g. `v0.3.2`).
 #
-# Desktop release build runs in parallel for Windows and macOS. Each job:
+# Desktop release build runs in parallel for every brand and platform. Each job:
 #   1. Installs Node + pnpm + Rust toolchain
 #   2. Caches cargo registry and target dir
 #   3. `pnpm install`
-#   4. Stages the bundled dashboard frontend, bundled skills, bundled plugins,
+#   4. Applies the active brand from brands/<BRAND>.json
+#   5. Stages the bundled dashboard frontend, bundled skills, bundled plugins,
 #      and bundled Hermes-CN-Core runtime payload + manifest for the target platform.
 #      macOS keeps the upstream signed zip opaque and verifies nested Mach-O
 #      signatures before notarization.
-#   5. Builds the Tauri release bundle. The HERMES_RUNTIME_UPDATE_*_DEFAULT
+#   6. Builds the Tauri release bundle. The HERMES_RUNTIME_UPDATE_*_DEFAULT
 #      env vars are NOT set here; src/process/runtime.rs ships hardcoded
 #      production fallbacks. Set them only if you fork the project and
 #      want to point the auto-update at a different runtime release
 #      pipeline.
-#   6. tauri-action uploads .exe / .dmg to the GitHub Release
+#   7. tauri-action uploads .exe / .dmg to the GitHub Release
 #      it creates on first run, or appends to an existing tag's release.
 
 name: release-desktop
@@ -37,23 +38,72 @@ permissions:
   contents: write
 
 jobs:
+  resolve-brands:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      brands: ${{ steps.matrix.outputs.brands }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve brand/platform matrix
+        id: matrix
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+
+          const platforms = [
+            {
+              runner: "windows-latest",
+              target: "x86_64-pc-windows-msvc",
+              runtime_platform: "win32",
+              runtime_arch: "x64",
+            },
+            {
+              runner: "macos-14",
+              target: "aarch64-apple-darwin",
+              runtime_platform: "darwin",
+              runtime_arch: "arm64",
+            },
+            {
+              runner: "macos-15-intel",
+              target: "x86_64-apple-darwin",
+              runtime_platform: "darwin",
+              runtime_arch: "x64",
+            },
+          ];
+
+          const brandsDir = path.join(process.cwd(), "brands");
+          const brands = fs.readdirSync(brandsDir)
+            .filter((name) => name.endsWith(".json"))
+            .map((name) => path.basename(name, ".json"))
+            .filter((brand) => brand !== "deepclaw")
+            .sort();
+
+          if (brands.length === 0) {
+            throw new Error("No brand configs found under brands/");
+          }
+
+          const include = brands.flatMap((brand) => platforms.map((platform) => ({
+            brand,
+            ...platform,
+          })));
+
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `brands=${brands.join(", ")}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(include)}\n`);
+          console.log(`Resolved brands: ${brands.join(", ")}`);
+          console.log(`Resolved ${include.length} brand/platform build jobs.`);
+          NODE
+
   build:
+    needs: resolve-brands
+    name: Build ${{ matrix.brand }} / ${{ matrix.target }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: windows-latest
-            target: x86_64-pc-windows-msvc
-            runtime_platform: win32
-            runtime_arch: x64
-          - runner: macos-14
-            target: aarch64-apple-darwin
-            runtime_platform: darwin
-            runtime_arch: arm64
-          - runner: macos-15-intel
-            target: x86_64-apple-darwin
-            runtime_platform: darwin
-            runtime_arch: x64
+        include: ${{ fromJson(needs.resolve-brands.outputs.matrix) }}
 
     runs-on: ${{ matrix.runner }}
 
@@ -80,6 +130,11 @@ jobs:
 
       - name: Install JS deps
         run: pnpm install --frozen-lockfile
+
+      - name: Synchronize brand
+        env:
+          BRAND: ${{ matrix.brand }}
+        run: pnpm run brand:sync
 
       - name: Resolve bundled runtime manifest
         id: runtime_manifest
@@ -201,6 +256,7 @@ jobs:
       - name: Build + upload installers
         uses: tauri-apps/tauri-action@v0
         env:
+          BRAND: ${{ matrix.brand }}
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -213,6 +269,8 @@ jobs:
           releaseName: "Hermes Agent 中文社区桌面版 ${{ github.event.inputs.tag || github.ref_name }}"
           releaseBody: |
             自动构建的 Hermes Agent 中文社区桌面版安装包。
+
+            本次按 brands/*.json 构建多品牌安装包：${{ needs.resolve-brands.outputs.brands }}。
 
             Windows 系统安装名称、安装目录和卸载注册表项使用英文名
             Hermes Agent CN Desktop，避免中文路径造成兼容性问题。
