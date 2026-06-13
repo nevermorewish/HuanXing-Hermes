@@ -11,6 +11,7 @@ import {
   useSaveCredentials,
   useSavedCredentials,
 } from "@/hooks/use-account";
+import { useGateway } from "@/hooks/use-gateway";
 import type { AccountSetupResult, AccountTokenInfo } from "@/lib/runtime";
 import s from "./account-login-dialog.module.css";
 
@@ -48,6 +49,7 @@ export function AccountLoginDialog({
   const savedCredentials = useSavedCredentials();
   const saveCredentials = useSaveCredentials();
   const loginSaved = useLoginSaved();
+  const { setRuntimeModel } = useGateway();
   const clearCredentials = useClearCredentials();
 
   // Guard so re-opening the dialog after a successful login doesn't wipe a
@@ -167,6 +169,16 @@ export function AccountLoginDialog({
         primaryModelId: models[0],
         tokenId: tokenId ?? undefined,
       });
+      // Saving only writes config.yaml — the running gateway keeps its old
+      // in-memory provider/model list until restarted. Drive a config.set
+      // (the same RPC normal model switching uses) so the gateway rebuilds
+      // its live state and the new models show in the picker without a
+      // restart. Best-effort: a gateway hiccup must not fail the save.
+      try {
+        await setRuntimeModel(models[0], `custom:${BRAND.providerKey}`);
+      } catch {
+        /* gateway refresh is best-effort; config is already persisted */
+      }
       onOpenChange(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
