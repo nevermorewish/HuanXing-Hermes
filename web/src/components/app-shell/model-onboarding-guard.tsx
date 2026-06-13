@@ -32,7 +32,7 @@ export function ModelOnboardingGuard() {
     !available ||
     isLoading ||
     isError ||
-    loggedIn ||
+    (loggedIn && !loginOpen) ||
     dismissed ||
     location.pathname.startsWith("/models") ||
     location.pathname.startsWith("/console")

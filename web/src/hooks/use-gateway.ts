@@ -478,10 +478,14 @@ export function useGateway() {
       ensureSubscribed();
       const result = parseGatewayResult(
         ConfigSetResult,
-        await getGatewayClient().request("config.set", {
-          key: "model",
-          value: buildGatewayModelConfigValue(model, provider),
-        }),
+        await getGatewayClient().request(
+          "config.set",
+          {
+            key: "model",
+            value: buildGatewayModelConfigValue(model, provider),
+          },
+          { timeoutMs: 8_000 },
+        ),
         "config.set",
       );
       invalidateModelOptionsCache();

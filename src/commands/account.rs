@@ -189,9 +189,7 @@ fn account_api_base(base_url: &str) -> String {
         .rsplit('/')
         .next()
         .map(|seg| {
-            seg.len() >= 2
-                && seg.starts_with('v')
-                && seg[1..].chars().all(|c| c.is_ascii_digit())
+            seg.len() >= 2 && seg.starts_with('v') && seg[1..].chars().all(|c| c.is_ascii_digit())
         })
         .unwrap_or(false);
     if already_versioned {
@@ -225,6 +223,85 @@ fn is_full_key(key: &str) -> bool {
     !key.is_empty() && !key.contains('*') && !key.contains('…') && !key.contains("...")
 }
 
+fn push_unique_model(
+    names: &mut Vec<String>,
+    seen: &mut std::collections::HashSet<String>,
+    name: &str,
+) {
+    let name = name.trim();
+    if !name.is_empty() && seen.insert(name.to_string()) {
+        names.push(name.to_string());
+    }
+}
+
+fn collect_model_names(value: &Value) -> Vec<String> {
+    fn walk(value: &Value, names: &mut Vec<String>, seen: &mut std::collections::HashSet<String>) {
+        match value {
+            Value::String(s) => push_unique_model(names, seen, s),
+            Value::Array(items) => {
+                for item in items {
+                    walk(item, names, seen);
+                }
+            }
+            Value::Object(map) => {
+                for key in ["data", "models", "items"] {
+                    if let Some(child) = map.get(key) {
+                        walk(child, names, seen);
+                    }
+                }
+                for key in ["model_name", "model", "id", "name"] {
+                    if let Some(s) = map.get(key).and_then(Value::as_str) {
+                        push_unique_model(names, seen, s);
+                        return;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut names = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    walk(value, &mut names, &mut seen);
+    names
+}
+
+fn extract_token_items(body: &Value) -> Vec<Value> {
+    if let Some(items) = body
+        .get("data")
+        .and_then(|d| d.get("items"))
+        .and_then(Value::as_array)
+    {
+        return items.clone();
+    }
+    if let Some(items) = body.get("data").and_then(Value::as_array) {
+        return items.clone();
+    }
+    if let Some(items) = body.get("items").and_then(Value::as_array) {
+        return items.clone();
+    }
+    Vec::new()
+}
+
+fn extract_full_key(body: &Value) -> Option<String> {
+    let key = body
+        .get("data")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            body.get("data")
+                .and_then(|d| d.get("key"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| {
+            body.get("data")
+                .and_then(|d| d.get("token"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| body.get("key").and_then(Value::as_str))
+        .or_else(|| body.get("token").and_then(Value::as_str))?;
+    is_full_key(key).then(|| ensure_sk_prefix(key))
+}
+
 /// Pull `session=...` out of one or more Set-Cookie header values.
 fn extract_session_cookie(values: &[String]) -> Option<String> {
     for v in values {
@@ -235,7 +312,29 @@ fn extract_session_cookie(values: &[String]) -> Option<String> {
             }
         }
     }
-    None
+    values
+        .iter()
+        .filter_map(|v| v.split(';').next().map(str::trim))
+        .find(|v| !v.is_empty() && v.contains('='))
+        .map(str::to_string)
+}
+
+fn join_cookie_values(values: &[String]) -> Option<String> {
+    let pairs: Vec<String> = values
+        .iter()
+        .filter_map(|v| v.split(';').next().map(str::trim))
+        .filter(|v| !v.is_empty() && v.contains('='))
+        .map(str::to_string)
+        .collect();
+    if pairs.is_empty() {
+        None
+    } else {
+        Some(pairs.join("; "))
+    }
+}
+
+fn extract_auth_cookie(values: &[String]) -> Option<String> {
+    join_cookie_values(values).or_else(|| extract_session_cookie(values))
 }
 
 fn snippet(raw: &str) -> String {
@@ -337,7 +436,10 @@ mod secret_store {
     }
 
     pub fn get(account: &str) -> Result<Option<String>, AppError> {
-        match keyring::Entry::new(SERVICE, account).map_err(map)?.get_password() {
+        match keyring::Entry::new(SERVICE, account)
+            .map_err(map)?
+            .get_password()
+        {
             Ok(secret) => Ok(Some(secret)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(map(e)),
@@ -345,7 +447,10 @@ mod secret_store {
     }
 
     pub fn delete(account: &str) -> Result<(), AppError> {
-        match keyring::Entry::new(SERVICE, account).map_err(map)?.delete_credential() {
+        match keyring::Entry::new(SERVICE, account)
+            .map_err(map)?
+            .delete_credential()
+        {
             Ok(()) => Ok(()),
             Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(map(e)),
@@ -363,7 +468,9 @@ mod secret_store {
         LazyLock::new(|| Mutex::new(HashMap::new()));
 
     pub fn set(account: &str, secret: &str) -> Result<(), AppError> {
-        STORE.lock()?.insert(account.to_string(), secret.to_string());
+        STORE
+            .lock()?
+            .insert(account.to_string(), secret.to_string());
         Ok(())
     }
 
@@ -415,9 +522,21 @@ fn load_credentials() -> Result<Option<(String, String, String)>, AppError> {
     };
     let parsed: Value = serde_json::from_str(&blob)
         .map_err(|e| AppError::Internal(format!("已保存凭据解析失败: {}", e)))?;
-    let base_url = parsed.get("baseUrl").and_then(Value::as_str).unwrap_or("").to_string();
-    let username = parsed.get("username").and_then(Value::as_str).unwrap_or("").to_string();
-    let password = parsed.get("password").and_then(Value::as_str).unwrap_or("").to_string();
+    let base_url = parsed
+        .get("baseUrl")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let username = parsed
+        .get("username")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let password = parsed
+        .get("password")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     if username.is_empty() || password.is_empty() {
         return Ok(None);
     }
@@ -440,7 +559,11 @@ fn load_session_state() -> Result<Option<SessionState>, AppError> {
     };
     let parsed: Value = serde_json::from_str(&blob)
         .map_err(|e| AppError::Internal(format!("已保存会话解析失败: {}", e)))?;
-    let base_url = parsed.get("baseUrl").and_then(Value::as_str).unwrap_or("").to_string();
+    let base_url = parsed
+        .get("baseUrl")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     let session_cookie = parsed
         .get("sessionCookie")
         .and_then(Value::as_str)
@@ -510,11 +633,12 @@ async fn do_login(base_url: &str, username: &str, password: &str) -> Result<Acco
             "该账号开启了两步验证，暂不支持".to_string(),
         ));
     }
-    let cookie = extract_session_cookie(&set_cookies)
+    let cookie = extract_auth_cookie(&set_cookies)
         .ok_or_else(|| AppError::ProxyError("登录失败：服务未返回会话凭证".to_string()))?;
-    let id = data.get("id").and_then(Value::as_i64).ok_or_else(|| {
-        AppError::ProxyError("登录失败：服务未返回用户信息".to_string())
-    })?;
+    let id = data
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| AppError::ProxyError("登录失败：服务未返回用户信息".to_string()))?;
     let username_s = data
         .get("username")
         .and_then(Value::as_str)
@@ -552,7 +676,12 @@ async fn do_login(base_url: &str, username: &str, password: &str) -> Result<Acco
 /// (newer newapi), fall back to the legacy flat list.
 async fn fetch_models(session: &SessionState) -> Result<Vec<String>, AppError> {
     match fetch_models_pricing(session).await {
-        Ok(models) => Ok(models),
+        Ok(models) if !models.is_empty() => Ok(models),
+        Ok(_) => match fetch_models_legacy(session).await {
+            Ok(models) if !models.is_empty() => Ok(models),
+            Ok(models) => Ok(models),
+            Err(e) => Err(e),
+        },
         Err(pricing_err) => match fetch_models_legacy(session).await {
             Ok(models) => Ok(models),
             Err(_) => Err(pricing_err),
@@ -584,7 +713,11 @@ async fn fetch_models_pricing(session: &SessionState) -> Result<Vec<String>, App
         usable_groups.insert(session.user.group.clone());
     }
 
-    let data = body.get("data").and_then(Value::as_array).cloned().unwrap_or_default();
+    let data = body
+        .get("data")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     let mut names: Vec<String> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for entry in data {
@@ -609,7 +742,7 @@ async fn fetch_models_pricing(session: &SessionState) -> Result<Vec<String>, App
 
 async fn fetch_models_legacy(session: &SessionState) -> Result<Vec<String>, AppError> {
     let mut last_err: Option<AppError> = None;
-    for path in ["/api/user/self/models", "/api/user/models"] {
+    for path in ["/api/user/self/models", "/api/user/models", "/api/models"] {
         match account_json(
             reqwest::Method::GET,
             &format!("{}{}", session.base_url, path),
@@ -624,17 +757,10 @@ async fn fetch_models_legacy(session: &SessionState) -> Result<Vec<String>, AppE
                     last_err = Some(envelope_error("获取模型列表", status, &body));
                     continue;
                 }
-                let data = body.get("data").and_then(Value::as_array).cloned().unwrap_or_default();
-                let mut names = Vec::new();
-                let mut seen = std::collections::HashSet::new();
-                for v in data {
-                    if let Some(s) = v.as_str() {
-                        if !s.is_empty() && seen.insert(s.to_string()) {
-                            names.push(s.to_string());
-                        }
-                    }
+                let names = collect_model_names(&body);
+                if !names.is_empty() {
+                    return Ok(names);
                 }
-                return Ok(names);
             }
             Err(e) => last_err = Some(e),
         }
@@ -643,6 +769,7 @@ async fn fetch_models_legacy(session: &SessionState) -> Result<Vec<String>, AppE
 }
 
 /// GET /api/token/?p=0&size=100 — raw token rows (id, name, group, status, key).
+#[allow(dead_code)]
 async fn fetch_token_items(session: &SessionState) -> Result<Vec<Value>, AppError> {
     let (status, body) = account_json(
         reqwest::Method::GET,
@@ -663,6 +790,43 @@ async fn fetch_token_items(session: &SessionState) -> Result<Vec<Value>, AppErro
         .unwrap_or_default())
 }
 
+async fn fetch_token_items_compat(session: &SessionState) -> Result<Vec<Value>, AppError> {
+    let mut last_err: Option<AppError> = None;
+    let mut saw_success = false;
+    for url in [
+        format!("{}/api/token/?p=0&size=100", session.base_url),
+        format!("{}/api/token?p=0&size=100", session.base_url),
+    ] {
+        match account_json(
+            reqwest::Method::GET,
+            &url,
+            &session.session_cookie,
+            session.user.id,
+            None,
+        )
+        .await
+        {
+            Ok((status, body)) => {
+                if body.get("success").and_then(Value::as_bool) == Some(false) {
+                    last_err = Some(envelope_error("token list", status, &body));
+                    continue;
+                }
+                saw_success = true;
+                let items = extract_token_items(&body);
+                if !items.is_empty() {
+                    return Ok(items);
+                }
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+    if saw_success {
+        return Ok(Vec::new());
+    }
+    Err(last_err.unwrap_or_else(|| AppError::ProxyError("token list is empty".to_string())))
+}
+
+#[allow(dead_code)]
 async fn create_token(session: &SessionState) -> Result<(), AppError> {
     let (status, body) = account_json(
         reqwest::Method::POST,
@@ -683,6 +847,41 @@ async fn create_token(session: &SessionState) -> Result<(), AppError> {
     Ok(())
 }
 
+async fn create_token_compat(session: &SessionState) -> Result<Option<String>, AppError> {
+    let payload = json!({
+        "name": BRAND_APP_NAME,
+        "unlimited_quota": true,
+        "expired_time": -1,
+        "remain_quota": 0,
+    });
+    let mut last_err: Option<AppError> = None;
+    for path in ["/api/token/", "/api/token"] {
+        match account_json(
+            reqwest::Method::POST,
+            &format!("{}{}", session.base_url, path),
+            &session.session_cookie,
+            session.user.id,
+            Some(payload.clone()),
+        )
+        .await
+        {
+            Ok((status, body)) => {
+                if body.get("success").and_then(Value::as_bool) != Some(true) {
+                    last_err = Some(envelope_error("create token", status, &body));
+                    continue;
+                }
+                if let Some(key) = extract_full_key(&body) {
+                    store_key(&key)?;
+                    return Ok(Some(key));
+                }
+                return Ok(None);
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| AppError::ProxyError("create token failed".to_string())))
+}
+
 /// Fetch the full key for a token id: POST /api/token/{id}/key, fall back to
 /// GET /api/token/{id} (inline key on the detail).
 async fn fetch_token_key(session: &SessionState, token_id: i64) -> Result<String, AppError> {
@@ -697,10 +896,8 @@ async fn fetch_token_key(session: &SessionState, token_id: i64) -> Result<String
     .await
     {
         if body.get("success").and_then(Value::as_bool) == Some(true) {
-            if let Some(k) = body.get("data").and_then(|d| d.get("key")).and_then(Value::as_str) {
-                if is_full_key(k) {
-                    return Ok(ensure_sk_prefix(k));
-                }
+            if let Some(key) = extract_full_key(&body) {
+                return Ok(key);
             }
         }
     }
@@ -714,10 +911,8 @@ async fn fetch_token_key(session: &SessionState, token_id: i64) -> Result<String
     )
     .await?;
     if body.get("success").and_then(Value::as_bool) == Some(true) {
-        if let Some(k) = body.get("data").and_then(|d| d.get("key")).and_then(Value::as_str) {
-            if is_full_key(k) {
-                return Ok(ensure_sk_prefix(k));
-            }
+        if let Some(key) = extract_full_key(&body) {
+            return Ok(key);
         }
     }
     Err(AppError::ProxyError(
@@ -736,11 +931,13 @@ async fn ensure_api_key(session: &SessionState, token_id: Option<i64>) -> Result
         }
     }
 
-    let mut items = fetch_token_items(session).await?;
+    let mut items = fetch_token_items_compat(session).await?;
     let mut picked = pick_token(&items, token_id);
     if picked.is_none() && token_id.is_none() {
-        create_token(session).await?;
-        items = fetch_token_items(session).await?;
+        if let Some(key) = create_token_compat(session).await? {
+            return Ok(key);
+        }
+        items = fetch_token_items_compat(session).await?;
         picked = pick_token(&items, None);
     }
     let token = picked.ok_or_else(|| {
@@ -758,9 +955,10 @@ async fn ensure_api_key(session: &SessionState, token_id: Option<i64>) -> Result
             return Ok(key);
         }
     }
-    let id = token.get("id").and_then(Value::as_i64).ok_or_else(|| {
-        AppError::ProxyError("令牌缺少 id".to_string())
-    })?;
+    let id = token
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| AppError::ProxyError("令牌缺少 id".to_string()))?;
     let key = fetch_token_key(session, id).await?;
     store_key(&key)?;
     Ok(key)
@@ -809,8 +1007,7 @@ async fn read_config(api_base: &str, token: Option<&str>) -> Result<Value, AppEr
             snippet(&raw)
         )));
     }
-    serde_json::from_str(&raw)
-        .map_err(|e| AppError::ProxyError(format!("配置解析失败: {}", e)))
+    serde_json::from_str(&raw).map_err(|e| AppError::ProxyError(format!("配置解析失败: {}", e)))
 }
 
 /// PUT /api/config with the `{ config }` envelope the dashboard expects.
@@ -840,9 +1037,11 @@ fn build_provider_entry(
     models: &[String],
     primary_model: &str,
     api_key: &str,
-    token_id: Option<i64>,
+    _token_id: Option<i64>,
 ) -> Value {
     let mut entry = existing.as_object().cloned().unwrap_or_default();
+    entry.remove("token_id");
+    entry.remove("tokenId");
     entry.insert("name".into(), json!(BRAND_APP_NAME));
     entry.insert("base_url".into(), json!(api_base));
     entry.insert("api_mode".into(), json!("chat_completions"));
@@ -871,9 +1070,6 @@ fn build_provider_entry(
     if !api_key.is_empty() {
         entry.insert("api_key".into(), json!(api_key));
     }
-    if let Some(token_id) = token_id {
-        entry.insert("token_id".into(), json!(token_id));
-    }
     Value::Object(entry)
 }
 
@@ -899,8 +1095,18 @@ fn merge_account_provider(
         .or_insert_with(|| json!({}))
         .as_object_mut()
         .expect("providers is an object");
-    let existing = providers.get(&provider_id).cloned().unwrap_or_else(|| json!({}));
-    let entry = build_provider_entry(&existing, api_base, models, &primary_model, api_key, token_id);
+    let existing = providers
+        .get(&provider_id)
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let entry = build_provider_entry(
+        &existing,
+        api_base,
+        models,
+        &primary_model,
+        api_key,
+        token_id,
+    );
     providers.insert(provider_id.clone(), entry);
 
     if let Some(model_id) = primary_model_id.filter(|m| !m.is_empty()) {
@@ -965,7 +1171,7 @@ pub async fn account_fetch_setup() -> Result<SetupResult, AppError> {
 #[tauri::command]
 pub async fn account_list_tokens() -> Result<Vec<AccountToken>, AppError> {
     let session = require_session()?;
-    let items = fetch_token_items(&session).await?;
+    let items = fetch_token_items_compat(&session).await?;
     Ok(items
         .iter()
         .map(|t| {
@@ -979,7 +1185,11 @@ pub async fn account_list_tokens() -> Result<Vec<AccountToken>, AppError> {
                     .filter(|s| !s.is_empty())
                     .map(str::to_string)
                     .unwrap_or_else(|| format!("令牌 #{}", id)),
-                group: t.get("group").and_then(Value::as_str).unwrap_or("").to_string(),
+                group: t
+                    .get("group")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
                 status: t.get("status").and_then(Value::as_i64).unwrap_or(0),
             }
         })
@@ -999,7 +1209,10 @@ pub async fn account_balance() -> Result<AccountBalance, AppError> {
     .await?;
     let data = self_body.get("data").cloned().unwrap_or_else(|| json!({}));
     let quota = data.get("quota").and_then(Value::as_f64).unwrap_or(0.0);
-    let used_quota = data.get("used_quota").and_then(Value::as_f64).unwrap_or(0.0);
+    let used_quota = data
+        .get("used_quota")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
 
     let (_, status_body) = account_json(
         reqwest::Method::GET,
@@ -1009,14 +1222,21 @@ pub async fn account_balance() -> Result<AccountBalance, AppError> {
         None,
     )
     .await?;
-    let sdata = status_body.get("data").cloned().unwrap_or_else(|| json!({}));
+    let sdata = status_body
+        .get("data")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     let quota_per_unit = sdata
         .get("quota_per_unit")
         .and_then(Value::as_f64)
         .filter(|v| *v > 0.0)
         .unwrap_or(500000.0);
-    let display_in_currency = sdata.get("display_in_currency").and_then(Value::as_bool) != Some(false);
-    let top_up_link = sdata.get("top_up_link").and_then(Value::as_str).unwrap_or("");
+    let display_in_currency =
+        sdata.get("display_in_currency").and_then(Value::as_bool) != Some(false);
+    let top_up_link = sdata
+        .get("top_up_link")
+        .and_then(Value::as_str)
+        .unwrap_or("");
 
     let base = session.base_url.trim_end_matches('/');
     let top_up_url = if top_up_link.is_empty() {
@@ -1050,14 +1270,18 @@ pub async fn account_save_models(
     let session = require_session()?;
     let api_base = account_api_base(&session.base_url);
     if api_base.is_empty() {
-        return Err(AppError::InvalidRequest("缺少服务地址，请重新登录账户".to_string()));
+        return Err(AppError::InvalidRequest(
+            "缺少服务地址，请重新登录账户".to_string(),
+        ));
     }
     let key = ensure_api_key(&session, input.token_id).await?;
 
     let (dash_base, token) = dashboard_state(&state)?;
     let config = read_config(&dash_base, token.as_deref()).await?;
     if !config.is_object() {
-        return Err(AppError::ProxyError("配置格式异常，应为 JSON 对象".to_string()));
+        return Err(AppError::ProxyError(
+            "配置格式异常，应为 JSON 对象".to_string(),
+        ));
     }
     let merged = merge_account_provider(
         config,
@@ -1103,16 +1327,14 @@ pub async fn account_test_model(model_id: String) -> Result<TestModelResult, App
         });
     }
     let latency = started.elapsed().as_millis() as u64;
-    let reply = serde_json::from_str::<Value>(&raw)
-        .ok()
-        .and_then(|v| {
-            v.get("choices")
-                .and_then(|c| c.get(0))
-                .and_then(|c| c.get("message"))
-                .and_then(|m| m.get("content"))
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        });
+    let reply = serde_json::from_str::<Value>(&raw).ok().and_then(|v| {
+        v.get("choices")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("message"))
+            .and_then(|m| m.get("content"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    });
     Ok(TestModelResult {
         ok: true,
         latency_ms: Some(latency),
@@ -1134,7 +1356,11 @@ pub async fn account_has_saved_credentials() -> Result<SavedCredentialsInfo, App
         Some((base_url, username, _password)) => Ok(SavedCredentialsInfo {
             has_saved: true,
             username: Some(username),
-            base_url: if base_url.is_empty() { None } else { Some(base_url) },
+            base_url: if base_url.is_empty() {
+                None
+            } else {
+                Some(base_url)
+            },
         }),
         None => Ok(SavedCredentialsInfo {
             has_saved: false,
@@ -1173,8 +1399,14 @@ mod tests {
 
     #[test]
     fn account_api_base_appends_v1() {
-        assert_eq!(account_api_base("https://api.huanxing.ai/"), "https://api.huanxing.ai/v1");
-        assert_eq!(account_api_base("https://api.huanxing.ai"), "https://api.huanxing.ai/v1");
+        assert_eq!(
+            account_api_base("https://api.huanxing.ai/"),
+            "https://api.huanxing.ai/v1"
+        );
+        assert_eq!(
+            account_api_base("https://api.huanxing.ai"),
+            "https://api.huanxing.ai/v1"
+        );
         assert_eq!(account_api_base("https://x.ai/v1"), "https://x.ai/v1");
         assert_eq!(account_api_base("https://x.ai/v2/"), "https://x.ai/v2");
         assert_eq!(account_api_base(""), "");
@@ -1206,8 +1438,11 @@ mod tests {
     #[serial_test::serial]
     #[test]
     fn load_credentials_ignores_blank_username_or_password() {
-        secret_store::set(&credentials_account(), r#"{"baseUrl":"x","username":"","password":"p"}"#)
-            .unwrap();
+        secret_store::set(
+            &credentials_account(),
+            r#"{"baseUrl":"x","username":"","password":"p"}"#,
+        )
+        .unwrap();
         assert!(load_credentials().unwrap().is_none());
         secret_store::delete(&credentials_account()).unwrap();
     }
@@ -1233,8 +1468,75 @@ mod tests {
             "other=1; Path=/".to_string(),
             "session=abc123; HttpOnly; Path=/".to_string(),
         ];
-        assert_eq!(extract_session_cookie(&cookies), Some("session=abc123".to_string()));
-        assert_eq!(extract_session_cookie(&["nope=1".to_string()]), None);
+        assert_eq!(
+            extract_session_cookie(&cookies),
+            Some("session=abc123".to_string())
+        );
+        assert_eq!(
+            extract_session_cookie(&["nope=1; Path=/".to_string()]),
+            Some("nope=1".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_auth_cookie_preserves_multiple_cookie_pairs() {
+        let cookies = vec![
+            "csrf=abc; Path=/".to_string(),
+            "one-api-session=def; HttpOnly; Path=/".to_string(),
+        ];
+        assert_eq!(
+            extract_auth_cookie(&cookies),
+            Some("csrf=abc; one-api-session=def".to_string())
+        );
+    }
+
+    #[test]
+    fn collect_model_names_supports_legacy_shapes() {
+        assert_eq!(
+            collect_model_names(&json!({ "success": true, "data": ["a", "b"] })),
+            vec!["a".to_string(), "b".to_string()]
+        );
+        assert_eq!(
+            collect_model_names(&json!({
+                "data": [
+                    { "name": "endpoint", "models": [{ "model_name": "m1" }, { "id": "m2" }] }
+                ]
+            })),
+            vec!["m1".to_string(), "m2".to_string()]
+        );
+    }
+
+    #[test]
+    fn extract_token_items_supports_legacy_shapes() {
+        assert_eq!(
+            extract_token_items(&json!({ "data": { "items": [{ "id": 1 }] } })).len(),
+            1
+        );
+        assert_eq!(
+            extract_token_items(&json!({ "data": [{ "id": 2 }] })).len(),
+            1
+        );
+        assert_eq!(
+            extract_token_items(&json!({ "items": [{ "id": 3 }] })).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn extract_full_key_supports_legacy_shapes() {
+        assert_eq!(
+            extract_full_key(&json!({ "data": "abc123" })),
+            Some("sk-abc123".to_string())
+        );
+        assert_eq!(
+            extract_full_key(&json!({ "data": { "token": "sk-token123" } })),
+            Some("sk-token123".to_string())
+        );
+        assert_eq!(
+            extract_full_key(&json!({ "key": "top123" })),
+            Some("sk-top123".to_string())
+        );
+        assert_eq!(extract_full_key(&json!({ "data": "sk-abc***xyz" })), None);
     }
 
     #[test]
@@ -1256,7 +1558,7 @@ mod tests {
         assert_eq!(entry["discover_models"], false);
         assert_eq!(entry["model"], "gpt-x");
         assert_eq!(entry["api_key"], "sk-secret");
-        assert_eq!(entry["token_id"], 42);
+        assert!(entry.get("token_id").is_none());
         assert!(entry["models"]["gpt-x"].is_object());
         assert!(entry["models"]["claude-y"].is_object());
         // primary model also written to config.model

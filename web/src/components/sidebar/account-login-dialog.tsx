@@ -193,12 +193,10 @@ export function AccountLoginDialog({
       // (the same RPC normal model switching uses) so the gateway rebuilds
       // its live state and the new models show in the picker without a
       // restart. Best-effort: a gateway hiccup must not fail the save.
-      try {
-        await setRuntimeModel(models[0], `custom:${BRAND.providerKey}`);
-      } catch {
-        /* gateway refresh is best-effort; config is already persisted */
-      }
       onOpenChange(false);
+      void setRuntimeModel(models[0], `custom:${BRAND.providerKey}`).catch(() => {
+        /* gateway refresh is best-effort; config is already persisted */
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }

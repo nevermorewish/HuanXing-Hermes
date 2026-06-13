@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { forgetLastUsedModel } from "@/lib/last-used-model";
+import { rememberLastUsedModel } from "@/lib/last-used-model";
 import { invalidateModelOptionsCache } from "@/lib/model-options-cache";
+import { BRAND } from "@/lib/brand.generated";
 import type {
   AccountBalanceInfo,
   AccountLoginInput,
@@ -79,10 +80,23 @@ export function useAccountSaveModels() {
   const qc = useQueryClient();
   return useMutation<AccountStatusResult, Error, AccountSaveModelsInput>({
     mutationFn: (input) => bridge().accountSaveModels!(input),
-    onSuccess: () => {
+    onSuccess: (_result, input) => {
       // The account provider was written into the runtime config; refresh the
       // config-derived caches so the new models show up in the chat switcher.
-      forgetLastUsedModel();
+      const primaryModel = input.primaryModelId || input.models[0];
+      if (primaryModel) {
+        const provider = `custom:${BRAND.providerKey}`;
+        rememberLastUsedModel({
+          model: primaryModel,
+          provider,
+          providerName: BRAND.appName,
+        });
+        qc.setQueriesData<Record<string, unknown>>({ queryKey: ["model-info"] }, (old) => ({
+          ...(old ?? {}),
+          model: primaryModel,
+          provider,
+        }));
+      }
       invalidateModelOptionsCache();
       qc.invalidateQueries({ queryKey: ["account-status"] });
       qc.invalidateQueries({ queryKey: ["config"] });

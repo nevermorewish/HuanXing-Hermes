@@ -67,9 +67,19 @@ export function AccountLoginButton() {
       tokenId,
     });
     if (primaryModel) {
-      await setRuntimeModel(primaryModel, `custom:${BRAND.providerKey}`);
+      void setRuntimeModel(primaryModel, `custom:${BRAND.providerKey}`).catch(() => {
+        /* gateway refresh is best-effort; config is already persisted */
+      });
     }
   };
+
+  const dialog = (
+    <AccountLoginDialog
+      open={dialogOpen}
+      onOpenChange={setDialogOpen}
+      defaultUsername={status?.user?.username}
+    />
+  );
 
   if (!loggedIn) {
     return (
@@ -77,7 +87,7 @@ export function AccountLoginButton() {
         <button type="button" className={s.loginBtn} onClick={() => setDialogOpen(true)}>
           <LogIn size={14} /> 登录 {BRAND.appName}
         </button>
-        <AccountLoginDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+        {dialog}
       </>
     );
   }
@@ -168,11 +178,7 @@ export function AccountLoginButton() {
           </button>
         </div>
       </div>
-      <AccountLoginDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        defaultUsername={status?.user?.username}
-      />
+      {dialog}
     </>
   );
 }

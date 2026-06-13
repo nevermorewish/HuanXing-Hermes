@@ -147,7 +147,9 @@ export function PanelComposer() {
       primaryModelId: models[0],
       tokenId,
     });
-    await setRuntimeModel(models[0], accountProviderId);
+    void setRuntimeModel(models[0], accountProviderId).catch(() => {
+      /* gateway refresh is best-effort; config is already persisted */
+    });
   }, [accountProviderId, configuredAccountModels, saveAccountModels, setRuntimeModel]);
 
   const onSelectAndSetDefault = useCallback((selection: ComposerModelSelection) => {
