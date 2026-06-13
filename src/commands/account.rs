@@ -247,6 +247,21 @@ fn snippet(raw: &str) -> String {
     }
 }
 
+fn account_http_error(action: &str, status: u16, raw: &str) -> AppError {
+    if status == 429 {
+        return AppError::ProxyError(format!(
+            "{}失败：账户服务请求过于频繁，请稍后再试 (HTTP 429)",
+            action
+        ));
+    }
+    AppError::ProxyError(format!(
+        "{}失败：账户服务返回非 JSON (HTTP {}): {}",
+        action,
+        status,
+        snippet(raw)
+    ))
+}
+
 /// Issue an authenticated GET/POST to the account server and parse the JSON
 /// envelope (`{ success, message, data }`). Cookie + New-Api-User are set from
 /// the live session.
@@ -267,12 +282,13 @@ async fn account_json(
     let res = req.send().await?;
     let status = res.status().as_u16();
     let raw = res.text().await.unwrap_or_default();
+    if status == 429 {
+        return Err(account_http_error("账户请求", status, &raw));
+    }
     let parsed: Value = if raw.trim().is_empty() {
         json!({})
     } else {
-        serde_json::from_str(&raw).map_err(|_| {
-            AppError::ProxyError(format!("账户服务返回非 JSON (HTTP {}): {}", status, snippet(&raw)))
-        })?
+        serde_json::from_str(&raw).map_err(|_| account_http_error("账户请求", status, &raw))?
     };
     Ok((status, parsed))
 }
@@ -376,6 +392,10 @@ fn credentials_account() -> String {
     format!("{}-account-login", BRAND_PROVIDER_KEY)
 }
 
+fn session_account() -> String {
+    format!("{}-account-session", BRAND_PROVIDER_KEY)
+}
+
 /// Persist login credentials in the OS keyring. The password never leaves the
 /// secret store after this — it is only read back by `account_login_saved`.
 fn store_credentials(base_url: &str, username: &str, password: &str) -> Result<(), AppError> {
@@ -404,6 +424,56 @@ fn load_credentials() -> Result<Option<(String, String, String)>, AppError> {
     Ok(Some((base_url, username, password)))
 }
 
+fn store_session_state(session: &SessionState) -> Result<(), AppError> {
+    let blob = json!({
+        "baseUrl": session.base_url,
+        "sessionCookie": session.session_cookie,
+        "user": session.user,
+    })
+    .to_string();
+    secret_store::set(&session_account(), &blob)
+}
+
+fn load_session_state() -> Result<Option<SessionState>, AppError> {
+    let Some(blob) = secret_store::get(&session_account())? else {
+        return Ok(None);
+    };
+    let parsed: Value = serde_json::from_str(&blob)
+        .map_err(|e| AppError::Internal(format!("已保存会话解析失败: {}", e)))?;
+    let base_url = parsed.get("baseUrl").and_then(Value::as_str).unwrap_or("").to_string();
+    let session_cookie = parsed
+        .get("sessionCookie")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let user = parsed
+        .get("user")
+        .cloned()
+        .and_then(|v| serde_json::from_value::<AccountUser>(v).ok());
+    if base_url.is_empty() || session_cookie.is_empty() {
+        return Ok(None);
+    }
+    let Some(user) = user else {
+        return Ok(None);
+    };
+    Ok(Some(SessionState {
+        base_url,
+        session_cookie,
+        user,
+    }))
+}
+
+fn restore_session_from_store() -> Result<Option<SessionState>, AppError> {
+    if let Some(session) = SESSION.lock()?.clone() {
+        return Ok(Some(session));
+    }
+    let Some(session) = load_session_state()? else {
+        return Ok(None);
+    };
+    *SESSION.lock()? = Some(session.clone());
+    Ok(Some(session))
+}
+
 // ---- account server calls ----------------------------------------------
 
 /// POST /api/user/login — stores the session cookie + user on success.
@@ -425,9 +495,11 @@ async fn do_login(base_url: &str, username: &str, password: &str) -> Result<Acco
         .filter_map(|v| v.to_str().ok().map(|s| s.to_string()))
         .collect();
     let raw = res.text().await.unwrap_or_default();
-    let body: Value = serde_json::from_str(&raw).map_err(|_| {
-        AppError::ProxyError(format!("账户服务返回非 JSON (HTTP {}): {}", status, snippet(&raw)))
-    })?;
+    if status == 429 {
+        return Err(account_http_error("登录", status, &raw));
+    }
+    let body: Value =
+        serde_json::from_str(&raw).map_err(|_| account_http_error("登录", status, &raw))?;
 
     if body.get("success").and_then(Value::as_bool) != Some(true) {
         return Err(envelope_error("登录", status, &body));
@@ -466,11 +538,13 @@ async fn do_login(base_url: &str, username: &str, password: &str) -> Result<Acco
             .to_string(),
     };
 
-    *SESSION.lock()? = Some(SessionState {
+    let session = SessionState {
         base_url: normalized,
         session_cookie: cookie,
         user: user.clone(),
-    });
+    };
+    store_session_state(&session)?;
+    *SESSION.lock()? = Some(session);
     Ok(user)
 }
 
@@ -654,6 +728,14 @@ async fn fetch_token_key(session: &SessionState, token_id: i64) -> Result<String
 /// Resolve a usable sk- key, creating a token if needed, and cache it in the
 /// OS secret store.
 async fn ensure_api_key(session: &SessionState, token_id: Option<i64>) -> Result<String, AppError> {
+    if token_id.is_none() {
+        if let Some(key) = stored_key()? {
+            if is_full_key(&key) {
+                return Ok(key);
+            }
+        }
+    }
+
     let mut items = fetch_token_items(session).await?;
     let mut picked = pick_token(&items, token_id);
     if picked.is_none() && token_id.is_none() {
@@ -758,6 +840,7 @@ fn build_provider_entry(
     models: &[String],
     primary_model: &str,
     api_key: &str,
+    token_id: Option<i64>,
 ) -> Value {
     let mut entry = existing.as_object().cloned().unwrap_or_default();
     entry.insert("name".into(), json!(BRAND_APP_NAME));
@@ -788,6 +871,9 @@ fn build_provider_entry(
     if !api_key.is_empty() {
         entry.insert("api_key".into(), json!(api_key));
     }
+    if let Some(token_id) = token_id {
+        entry.insert("token_id".into(), json!(token_id));
+    }
     Value::Object(entry)
 }
 
@@ -798,6 +884,7 @@ fn merge_account_provider(
     models: &[String],
     primary_model_id: Option<&str>,
     api_key: &str,
+    token_id: Option<i64>,
 ) -> Value {
     let provider_id = account_provider_id();
     let primary_model = primary_model_id
@@ -813,7 +900,7 @@ fn merge_account_provider(
         .as_object_mut()
         .expect("providers is an object");
     let existing = providers.get(&provider_id).cloned().unwrap_or_else(|| json!({}));
-    let entry = build_provider_entry(&existing, api_base, models, &primary_model, api_key);
+    let entry = build_provider_entry(&existing, api_base, models, &primary_model, api_key, token_id);
     providers.insert(provider_id.clone(), entry);
 
     if let Some(model_id) = primary_model_id.filter(|m| !m.is_empty()) {
@@ -821,6 +908,7 @@ fn merge_account_provider(
             "model".into(),
             json!({
                 "provider": provider_id,
+                "default": model_id,
                 "model": model_id,
                 "api_key": api_key,
             }),
@@ -838,7 +926,7 @@ pub async fn account_login(input: LoginInput) -> Result<AccountUser, AppError> {
 
 #[tauri::command]
 pub async fn account_status() -> Result<StatusResult, AppError> {
-    let session = SESSION.lock()?.clone();
+    let session = restore_session_from_store()?;
     let key = stored_key()?;
     Ok(match session {
         Some(s) => StatusResult {
@@ -864,13 +952,13 @@ pub async fn account_status() -> Result<StatusResult, AppError> {
 pub async fn account_fetch_setup() -> Result<SetupResult, AppError> {
     let session = require_session()?;
     let models = fetch_models(&session).await?;
-    let key = ensure_api_key(&session, None).await?;
+    let key = stored_key()?;
     Ok(SetupResult {
         user: session.user.clone(),
         base_url: session.base_url.clone(),
         models,
-        has_key: true,
-        masked_key: Some(mask_key(&key)),
+        has_key: key.is_some(),
+        masked_key: key.as_deref().map(mask_key),
     })
 }
 
@@ -977,6 +1065,7 @@ pub async fn account_save_models(
         &input.models,
         input.primary_model_id.as_deref(),
         &key,
+        input.token_id,
     );
     write_config(&dash_base, token.as_deref(), &merged).await?;
 
@@ -1072,6 +1161,7 @@ pub async fn account_clear_credentials() -> Result<(), AppError> {
 #[tauri::command]
 pub async fn account_logout() -> Result<StatusResult, AppError> {
     *SESSION.lock()? = None;
+    secret_store::delete(&session_account())?;
     secret_store::delete(&secret_account())?;
     account_status().await
 }
@@ -1156,18 +1246,22 @@ mod tests {
             &["gpt-x".to_string(), "claude-y".to_string()],
             Some("gpt-x"),
             "sk-secret",
+            Some(42),
         );
         let id = account_provider_id();
         let entry = &merged["providers"][&id];
         assert_eq!(entry["base_url"], "https://api.huanxing.ai/v1");
         assert_eq!(entry["api_mode"], "chat_completions");
         assert_eq!(entry["transport"], "openai_chat");
+        assert_eq!(entry["discover_models"], false);
         assert_eq!(entry["model"], "gpt-x");
         assert_eq!(entry["api_key"], "sk-secret");
-        assert_eq!(entry["models"][0]["id"], "gpt-x");
-        assert_eq!(entry["models"][1]["id"], "claude-y");
+        assert_eq!(entry["token_id"], 42);
+        assert!(entry["models"]["gpt-x"].is_object());
+        assert!(entry["models"]["claude-y"].is_object());
         // primary model also written to config.model
         assert_eq!(merged["model"]["provider"], id);
+        assert_eq!(merged["model"]["default"], "gpt-x");
         assert_eq!(merged["model"]["model"], "gpt-x");
     }
 
@@ -1179,6 +1273,7 @@ mod tests {
             &["a".to_string(), "b".to_string()],
             None,
             "sk-k",
+            None,
         );
         let id = account_provider_id();
         assert_eq!(merged["providers"][&id]["model"], "a");

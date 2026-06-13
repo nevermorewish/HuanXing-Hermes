@@ -2,11 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   getCachedModelOptions,
   invalidateModelOptionsCache,
-  MODEL_OPTIONS_CACHE_TTL_MS,
 } from "./model-options-cache";
 
 describe("model options cache", () => {
-  it("deduplicates concurrent loads and returns fresh cached values", async () => {
+  it("deduplicates concurrent loads and fetches fresh values afterward", async () => {
     invalidateModelOptionsCache();
     let calls = 0;
     let now = 1000;
@@ -22,13 +21,13 @@ describe("model options cache", () => {
     expect(calls).toBe(1);
     expect(first).toBe(second);
 
-    now += MODEL_OPTIONS_CACHE_TTL_MS - 1;
-    const cached = await getCachedModelOptions(undefined, loader, () => now);
-    expect(cached).toBe(first);
-    expect(calls).toBe(1);
+    now += 1;
+    const fresh = await getCachedModelOptions(undefined, loader, () => now);
+    expect(fresh).not.toBe(first);
+    expect(calls).toBe(2);
   });
 
-  it("invalidates session-scoped entries independently", async () => {
+  it("keeps in-flight requests session-scoped", async () => {
     invalidateModelOptionsCache();
     let calls = 0;
     const loader = async () => {
@@ -41,10 +40,13 @@ describe("model options cache", () => {
     expect(first.providers[0]?.slug).toBe("p1");
     expect(second.providers[0]?.slug).toBe("p2");
 
-    invalidateModelOptionsCache("s1");
-    const refreshed = await getCachedModelOptions("s1", loader);
-    const stillCached = await getCachedModelOptions("s2", loader);
+    const [refreshed, stillFresh] = await Promise.all([
+      getCachedModelOptions("s1", loader),
+      getCachedModelOptions("s2", loader),
+    ]);
     expect(refreshed.providers[0]?.slug).toBe("p3");
-    expect(stillCached).toBe(second);
+    expect(stillFresh.providers[0]?.slug).toBe("p4");
+    expect(refreshed).not.toBe(first);
+    expect(stillFresh).not.toBe(second);
   });
 });

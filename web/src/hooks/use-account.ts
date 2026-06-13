@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { forgetLastUsedModel } from "@/lib/last-used-model";
 import { invalidateModelOptionsCache } from "@/lib/model-options-cache";
 import type {
   AccountBalanceInfo,
@@ -61,6 +62,7 @@ export function useAccountTokens() {
     queryKey: ["account-tokens"],
     queryFn: () => bridge().accountListTokens!(),
     enabled: false, // fetched on demand when the model-select step opens
+    retry: false,
   });
 }
 
@@ -80,6 +82,7 @@ export function useAccountSaveModels() {
     onSuccess: () => {
       // The account provider was written into the runtime config; refresh the
       // config-derived caches so the new models show up in the chat switcher.
+      forgetLastUsedModel();
       invalidateModelOptionsCache();
       qc.invalidateQueries({ queryKey: ["account-status"] });
       qc.invalidateQueries({ queryKey: ["config"] });
@@ -88,6 +91,8 @@ export function useAccountSaveModels() {
       // RPC), which has its own 5-min staleTime — without this the newly saved
       // account models don't appear until the cache expires.
       qc.invalidateQueries({ queryKey: ["model-options"] });
+      void qc.refetchQueries({ queryKey: ["model-info"], type: "active" });
+      void qc.refetchQueries({ queryKey: ["model-options"], type: "active" });
     },
   });
 }

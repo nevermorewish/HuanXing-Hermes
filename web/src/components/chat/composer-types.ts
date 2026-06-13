@@ -64,6 +64,13 @@ export interface ComposerModelPickerProps {
   /** Called when the user clicks "去设置" on an unconfigured provider card.
    * Host routes wire this to React Router navigation (/models#<provider>). */
   onConfigureProvider?: (providerId: string) => void;
+  onReconfigureAccountModels?: (configuredModels: string[]) => void;
+  accountTokenId?: number | null;
+  accountTokenOptions?: Array<{ id: number; name: string; group?: string }>;
+  accountTokenLoading?: boolean;
+  accountTokenSaving?: boolean;
+  onLoadAccountTokens?: () => void;
+  onSelectAccountToken?: (tokenId: number, configuredModels: string[]) => void | Promise<void>;
   disabled?: boolean;
 }
 

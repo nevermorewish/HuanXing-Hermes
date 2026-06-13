@@ -1,12 +1,16 @@
 import { useState } from "react";
 import { LogIn, RefreshCw } from "lucide-react";
+import { useConfig } from "@/hooks/use-config";
+import { useGateway } from "@/hooks/use-gateway";
 import { BRAND } from "@/lib/brand.generated";
 import { openExternalUrl } from "@/lib/external-links";
 import {
   isAccountLoginAvailable,
   useAccountBalance,
   useAccountLogout,
+  useAccountSaveModels,
   useAccountStatus,
+  useAccountTokens,
 } from "@/hooks/use-account";
 import { AccountLoginDialog } from "./account-login-dialog";
 import s from "./account-login-button.module.css";
@@ -28,6 +32,10 @@ export function AccountLoginButton() {
   const available = isAccountLoginAvailable();
   const statusQuery = useAccountStatus();
   const balanceQuery = useAccountBalance();
+  const { data: config } = useConfig();
+  const accountTokens = useAccountTokens();
+  const saveModels = useAccountSaveModels();
+  const { setRuntimeModel } = useGateway();
   const logout = useAccountLogout();
 
   // Hide entirely on non-desktop runtimes where the bridge is absent.
@@ -35,6 +43,33 @@ export function AccountLoginButton() {
 
   const status = statusQuery.data;
   const loggedIn = Boolean(status?.loggedIn);
+  const providerEntry = config?.providers?.[`custom:${BRAND.providerKey}`];
+  const providerModels =
+    providerEntry?.models && typeof providerEntry.models === "object" && !Array.isArray(providerEntry.models)
+      ? Object.keys(providerEntry.models)
+      : Array.isArray(providerEntry?.models)
+        ? providerEntry.models.filter((model: unknown): model is string => typeof model === "string")
+        : [];
+  const primaryModel = typeof providerEntry?.model === "string"
+    ? providerEntry.model
+    : providerModels[0];
+  const selectedTokenId = typeof providerEntry?.token_id === "number"
+    ? providerEntry.token_id
+    : typeof providerEntry?.tokenId === "number"
+      ? providerEntry.tokenId
+      : "";
+
+  const handleTokenSelect = async (tokenId: number) => {
+    if (!Number.isFinite(tokenId) || tokenId <= 0 || providerModels.length === 0) return;
+    await saveModels.mutateAsync({
+      models: providerModels,
+      primaryModelId: primaryModel,
+      tokenId,
+    });
+    if (primaryModel) {
+      await setRuntimeModel(primaryModel, `custom:${BRAND.providerKey}`);
+    }
+  };
 
   if (!loggedIn) {
     return (
@@ -69,6 +104,45 @@ export function AccountLoginButton() {
             余额 {formatBalance(balance.quota, balance.quotaPerUnit, balance.displayInCurrency)}
           </div>
         )}
+        <label className={s.tokenSelectRow}>
+          <span>令牌</span>
+          <select
+            className={s.tokenSelect}
+            value={selectedTokenId}
+            disabled={accountTokens.isFetching || saveModels.isPending || providerModels.length === 0}
+            onFocus={() => {
+              if (!accountTokens.data && !accountTokens.isFetching && !accountTokens.isError) {
+                void accountTokens.refetch();
+              }
+            }}
+            onMouseDown={() => {
+              if (!accountTokens.data && !accountTokens.isFetching && !accountTokens.isError) {
+                void accountTokens.refetch();
+              }
+            }}
+            onChange={(event) => {
+              const tokenId = Number(event.target.value);
+              void handleTokenSelect(tokenId);
+            }}
+          >
+            <option value="">
+              {providerModels.length === 0
+                ? "先选择模型"
+                : saveModels.isPending
+                  ? "保存中..."
+                  : accountTokens.isError
+                    ? "令牌限流"
+                  : accountTokens.isFetching
+                    ? "加载中..."
+                    : "选择令牌"}
+            </option>
+            {(accountTokens.data ?? []).map((token) => (
+              <option key={token.id} value={token.id}>
+                {token.name}{token.group ? ` (${token.group})` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className={s.links}>
           <button
             type="button"

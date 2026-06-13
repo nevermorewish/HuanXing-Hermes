@@ -385,6 +385,13 @@ interface ModelPickerViewProps {
    * to /models with the provider id so the settings page can scroll to + focus
    * the relevant section. */
   onConfigureProvider?: (providerId: string) => void;
+  onReconfigureAccountModels?: (configuredModels: string[]) => void;
+  accountTokenId?: number | null;
+  accountTokenOptions?: Array<{ id: number; name: string; group?: string }>;
+  accountTokenLoading?: boolean;
+  accountTokenSaving?: boolean;
+  onLoadAccountTokens?: () => void;
+  onSelectAccountToken?: (tokenId: number, configuredModels: string[]) => void | Promise<void>;
 }
 
 interface ModelPickerPanelProps extends ModelPickerViewProps {
@@ -407,6 +414,13 @@ function ModelPickerBody({
   onSelectModel,
   onSelectAndSetDefault,
   onConfigureProvider,
+  onReconfigureAccountModels,
+  accountTokenId,
+  accountTokenOptions,
+  accountTokenLoading,
+  accountTokenSaving,
+  onLoadAccountTokens,
+  onSelectAccountToken,
   searchInputRef,
   closeControl,
 }: ModelPickerBodyProps) {
@@ -546,9 +560,10 @@ function ModelPickerBody({
       <button
         key={candidate.key}
         type="button"
-        className={s.mpCard}
-        data-current={isCurrent ? "true" : undefined}
-        disabled={switchingModel}
+          className={s.mpCard}
+          data-current={isCurrent ? "true" : undefined}
+          data-brand={isAccountModel ? "true" : undefined}
+          disabled={switchingModel}
         title="↵ 仅本会话 · ⌘↵ 同时设为全局默认"
         onClick={(event) => {
           const selection = {
@@ -677,10 +692,50 @@ function ModelPickerBody({
             ) : (
               <>
                 {showGroup("brand") && visible.brand.length > 0 && (
-                  <section className={s.mpGroup}>
+                  <section className={s.mpGroup} data-brand="true">
                     <header className={s.mpGroupHeader}>
-                      <span>{GROUP_LABELS.brand.name}</span>
-                      <span className={s.mpGroupSub}>{GROUP_LABELS.brand.subtitle}</span>
+                      <div className={s.mpGroupTitle}>
+                        <span>{GROUP_LABELS.brand.name}</span>
+                        <span className={s.mpGroupSub}>{GROUP_LABELS.brand.subtitle}</span>
+                      </div>
+                      {(onReconfigureAccountModels || onSelectAccountToken) && (
+                        <div className={s.mpGroupActions}>
+                          {onReconfigureAccountModels && (
+                            <button
+                              type="button"
+                              className={s.mpGroupAction}
+                              data-primary="true"
+                              onClick={() => onReconfigureAccountModels(buckets.brand.map((c) => c.model))}
+                            >
+                              重新选择模型
+                            </button>
+                          )}
+                          {onSelectAccountToken && (
+                            <select
+                              className={s.mpGroupSelect}
+                              value={accountTokenId ?? ""}
+                              disabled={accountTokenLoading || accountTokenSaving}
+                              onFocus={onLoadAccountTokens}
+                              onMouseDown={onLoadAccountTokens}
+                              onChange={(event) => {
+                                const tokenId = Number(event.target.value);
+                                if (Number.isFinite(tokenId) && tokenId > 0) {
+                                  void onSelectAccountToken(tokenId, buckets.brand.map((c) => c.model));
+                                }
+                              }}
+                            >
+                              <option value="">
+                                {accountTokenSaving ? "保存令牌中..." : accountTokenLoading ? "加载令牌中..." : "选择令牌"}
+                              </option>
+                              {(accountTokenOptions ?? []).map((token) => (
+                                <option key={token.id} value={token.id}>
+                                  {token.name}{token.group ? ` (${token.group})` : ""}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                      )}
                     </header>
                     {visible.brand.map(renderCard)}
                   </section>

@@ -85,6 +85,39 @@
   color: var(--h-text-2);
 }
 
+.tokenSelectRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: var(--h-text-3);
+  font-size: 11.5px;
+}
+
+.tokenSelect {
+  min-width: 0;
+  height: 28px;
+  border: 1px solid color-mix(in srgb, var(--h-accent) 38%, var(--h-line));
+  border-radius: var(--h-r-sm, 6px);
+  background: color-mix(in srgb, var(--h-accent) 10%, var(--h-bg-soft));
+  color: var(--h-text);
+  font-family: inherit;
+  font-size: 11.5px;
+  outline: 0;
+  padding: 0 7px;
+}
+
+.tokenSelect:hover,
+.tokenSelect:focus {
+  border-color: var(--h-accent);
+  background: color-mix(in srgb, var(--h-accent) 16%, var(--h-bg-soft));
+}
+
+.tokenSelect:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .links {
   display: flex;
   gap: 4px;

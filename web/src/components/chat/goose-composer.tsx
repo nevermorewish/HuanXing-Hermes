@@ -645,14 +645,13 @@ export function GooseComposer({
     };
   }, [loadModelOptions, modelOptions, modelPicker?.loadOptions, modelPickerDisabled]);
 
-  // When the parent's useModelOptions query resolves *after* this composer
-  // mounts (cache miss on first ever load), backfill our local state so the
-  // picker opens with data instead of a spinner.
+  // Keep local picker options aligned with the parent's query cache. Account
+  // model changes replace the configured provider list without remounting.
   useEffect(() => {
-    if (modelPicker?.initialOptions && !modelOptions) {
+    if (modelPicker?.initialOptions) {
       setModelOptions(modelPicker.initialOptions);
     }
-  }, [modelPicker?.initialOptions, modelOptions]);
+  }, [modelPicker?.initialOptions]);
 
   const modelText = modelButtonText(modelPicker, modelOptions);
 
@@ -923,6 +922,16 @@ export function GooseComposer({
             setModelOpen(false);
             modelPicker?.onConfigureProvider?.(providerId);
           }}
+          onReconfigureAccountModels={(configuredModels) => {
+            setModelOpen(false);
+            modelPicker?.onReconfigureAccountModels?.(configuredModels);
+          }}
+          accountTokenId={modelPicker?.accountTokenId}
+          accountTokenOptions={modelPicker?.accountTokenOptions}
+          accountTokenLoading={modelPicker?.accountTokenLoading}
+          accountTokenSaving={modelPicker?.accountTokenSaving}
+          onLoadAccountTokens={modelPicker?.onLoadAccountTokens}
+          onSelectAccountToken={modelPicker?.onSelectAccountToken}
         />
       ) : null}
       {workspacePickerOpen ? (

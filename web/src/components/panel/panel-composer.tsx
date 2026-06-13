@@ -6,8 +6,10 @@ import { useCreateAndSendSession } from "@/hooks/use-create-and-send-session";
 import { useConfig, useModelInfo, useSaveConfig } from "@/hooks/use-config";
 import { useModelOptions } from "@/hooks/use-model-options";
 import { useSkills } from "@/hooks/use-skills";
+import { useAccountSaveModels, useAccountTokens } from "@/hooks/use-account";
+import { BRAND } from "@/lib/brand.generated";
 import { resolveModelContextWindow } from "@/lib/model-context";
-import { readLastUsedModel, rememberLastUsedModel } from "@/lib/last-used-model";
+import { readLastUsedModel, rememberLastUsedModel, useLastUsedModel } from "@/lib/last-used-model";
 import { recordModelUsage } from "@/lib/model-usage-log";
 import { composerSubmitShortcutHint } from "@/lib/composer-submit-shortcut";
 import {
@@ -18,6 +20,7 @@ import {
 import { composerPrefillAtom } from "@/stores/panel";
 import { composerSubmitShortcutAtom } from "@/stores/ui";
 import { GooseComposer } from "@/components/chat/goose-composer";
+import { AccountLoginDialog } from "@/components/sidebar/account-login-dialog";
 import type {
   ComposerModelSelection,
   ComposerSubmitControls,
@@ -30,6 +33,7 @@ export function PanelComposer() {
   const {
     connect,
     getModelOptions,
+    setRuntimeModel,
   } = useGateway();
   const createAndSendSession = useCreateAndSendSession();
   const { data: config } = useConfig();
@@ -37,10 +41,15 @@ export function PanelComposer() {
   const { data: modelOptionsCache } = useModelOptions();
   const skillsQuery = useSkills();
   const saveConfig = useSaveConfig();
+  const accountTokens = useAccountTokens();
+  const saveAccountModels = useAccountSaveModels();
   const [sending, setSending] = useState(false);
+  const [accountDialogOpen, setAccountDialogOpen] = useState(false);
+  const [accountDialogModels, setAccountDialogModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<ComposerModelSelection | null>(
     () => readLastUsedModel(),
   );
+  const lastUsedModel = useLastUsedModel();
   const [prefilledDraft, setPrefilledDraft] = useState({ text: "", nonce: 0 });
   const [prefill, setPrefill] = useAtom(composerPrefillAtom);
   const composerSubmitShortcut = useAtomValue(composerSubmitShortcutAtom);
@@ -50,6 +59,20 @@ export function PanelComposer() {
   const enabledSkills = useMemo(
     () => (skillsQuery.data ?? []).filter((skill) => skill.enabled),
     [skillsQuery.data],
+  );
+  const accountProviderId = `custom:${BRAND.providerKey}`;
+  const accountProviderEntry = config?.providers?.[accountProviderId];
+  const accountTokenId = typeof accountProviderEntry?.token_id === "number"
+    ? accountProviderEntry.token_id
+    : typeof accountProviderEntry?.tokenId === "number"
+      ? accountProviderEntry.tokenId
+      : null;
+  const configuredAccountModels = useMemo(
+    () =>
+      modelOptionsCache?.providers
+        ?.find((provider) => provider.slug === accountProviderId)
+        ?.models ?? [],
+    [accountProviderId, modelOptionsCache?.providers],
   );
 
   useEffect(() => {
@@ -69,6 +92,10 @@ export function PanelComposer() {
   useEffect(() => {
     void connect().catch(() => {});
   }, [connect]);
+
+  useEffect(() => {
+    setSelectedModel(lastUsedModel);
+  }, [lastUsedModel]);
 
   const contextSelection = useMemo(() => {
     const model = selectedModel?.model ?? modelInfo?.model;
@@ -102,6 +129,26 @@ export function PanelComposer() {
   const onConfigureProvider = useCallback((providerId: string) => {
     navigate(`/models#provider-${providerId}`);
   }, [navigate]);
+
+  const onReconfigureAccountModels = useCallback((configuredModels: string[]) => {
+    setAccountDialogModels(configuredModels);
+    setAccountDialogOpen(true);
+  }, []);
+
+  const onSelectAccountToken = useCallback(async (tokenId: number, configuredModels: string[]) => {
+    const models = configuredModels.length > 0 ? configuredModels : configuredAccountModels;
+    if (models.length === 0) {
+      setAccountDialogModels([]);
+      setAccountDialogOpen(true);
+      return;
+    }
+    await saveAccountModels.mutateAsync({
+      models,
+      primaryModelId: models[0],
+      tokenId,
+    });
+    await setRuntimeModel(models[0], accountProviderId);
+  }, [accountProviderId, configuredAccountModels, saveAccountModels, setRuntimeModel]);
 
   const onSelectAndSetDefault = useCallback((selection: ComposerModelSelection) => {
     onModelSelect(selection);
@@ -162,6 +209,17 @@ export function PanelComposer() {
           onSelect: onModelSelect,
           onSelectAndSetDefault,
           onConfigureProvider,
+          onReconfigureAccountModels,
+          accountTokenId,
+          accountTokenOptions: accountTokens.data ?? [],
+          accountTokenLoading: accountTokens.isFetching,
+          accountTokenSaving: saveAccountModels.isPending,
+          onLoadAccountTokens: () => {
+            if (!accountTokens.data && !accountTokens.isFetching && !accountTokens.isError) {
+              void accountTokens.refetch();
+            }
+          },
+          onSelectAccountToken,
           disabled: sending,
         }}
         skillPicker={{
@@ -180,6 +238,11 @@ export function PanelComposer() {
               }
             : null
         }
+      />
+      <AccountLoginDialog
+        open={accountDialogOpen}
+        onOpenChange={setAccountDialogOpen}
+        configuredModels={accountDialogModels.length > 0 ? accountDialogModels : configuredAccountModels}
       />
     </div>
   );

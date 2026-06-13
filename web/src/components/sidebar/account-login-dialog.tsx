@@ -6,6 +6,7 @@ import {
   useAccountFetchSetup,
   useAccountLogin,
   useAccountSaveModels,
+  useAccountStatus,
   useClearCredentials,
   useLoginSaved,
   useSaveCredentials,
@@ -44,6 +45,7 @@ export function AccountLoginDialog({
   const [tokenId, setTokenId] = useState<number | null>(null);
 
   const login = useAccountLogin();
+  const statusQuery = useAccountStatus();
   const fetchSetup = useAccountFetchSetup();
   const saveModels = useAccountSaveModels();
   const savedCredentials = useSavedCredentials();
@@ -55,10 +57,12 @@ export function AccountLoginDialog({
   // Guard so re-opening the dialog after a successful login doesn't wipe a
   // selection the user is mid-way through (mirrors Claw's ref-guarded reset).
   const initializedFor = useRef<string | null>(null);
+  const autoProceedStarted = useRef(false);
 
   useEffect(() => {
     if (!open) {
       initializedFor.current = null;
+      autoProceedStarted.current = false;
       return;
     }
     if (initializedFor.current === "open") return;
@@ -70,6 +74,7 @@ export function AccountLoginDialog({
     setTokens([]);
     setTokenId(null);
     setPassword("");
+    autoProceedStarted.current = false;
     // Prefill from saved credentials when available, else brand defaults.
     const saved = savedCredentials.data;
     if (saved?.hasSaved) {
@@ -85,6 +90,7 @@ export function AccountLoginDialog({
 
   // Shared post-login flow: fetch setup, preselect models, load tokens.
   const proceedAfterLogin = async () => {
+    autoProceedStarted.current = true;
     const result = await fetchSetup.mutateAsync();
     setSetup(result);
     // Pre-check already-configured models, else default to all.
@@ -105,6 +111,19 @@ export function AccountLoginDialog({
     }
     setStep("models");
   };
+
+  useEffect(() => {
+    if (!open) return;
+    if (step !== "credentials") return;
+    if (!statusQuery.data?.loggedIn) return;
+    if (fetchSetup.isPending) return;
+    if (autoProceedStarted.current) return;
+    autoProceedStarted.current = true;
+    void proceedAfterLogin().catch((e) => {
+      autoProceedStarted.current = false;
+      setError(e instanceof Error ? e.message : String(e));
+    });
+  }, [open, step, statusQuery.data?.loggedIn, fetchSetup.isPending]);
 
   const handleLogin = async () => {
     setError(null);

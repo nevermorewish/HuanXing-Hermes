@@ -889,6 +889,16 @@
   border-bottom: 1px solid var(--h-line-soft);
 }
 
+.mpGroup[data-brand="true"] {
+  margin: 6px 10px 10px;
+  border: 1px solid color-mix(in srgb, var(--h-accent) 34%, var(--h-line));
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--h-accent) 13%, transparent), transparent 32%),
+    color-mix(in srgb, var(--h-accent-soft) 42%, var(--h-bg));
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--h-accent) 10%, transparent);
+}
+
 .mpGroup:last-child {
   border-bottom: none;
 }
@@ -905,11 +915,77 @@
   text-transform: uppercase;
 }
 
+.mpGroup[data-brand="true"] .mpGroupHeader {
+  justify-content: space-between;
+  padding: 12px 14px 6px;
+}
+
+.mpGroupTitle {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.mpGroupActions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
 .mpGroupSub {
   text-transform: none;
   letter-spacing: 0.02em;
   font-size: 11px;
   color: var(--h-text-3);
+}
+
+.mpGroupAction,
+.mpGroupSelect {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--h-accent) 52%, var(--h-line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--h-accent) 18%, var(--h-bg-input));
+  color: var(--h-accent);
+  cursor: pointer;
+  font-family: var(--h-font-cn);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1;
+  padding: 8px 12px;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--h-accent) 12%, transparent);
+}
+
+.mpGroupSelect {
+  min-width: 104px;
+  appearance: none;
+  background:
+    linear-gradient(45deg, transparent 50%, currentColor 50%) right 11px center / 5px 5px no-repeat,
+    linear-gradient(135deg, currentColor 50%, transparent 50%) right 6px center / 5px 5px no-repeat,
+    color-mix(in srgb, var(--h-accent) 18%, var(--h-bg-input));
+  padding-right: 24px;
+}
+
+.mpGroupAction[data-primary="true"] {
+  border-color: var(--h-accent);
+  background: var(--h-accent);
+  color: #fff;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--h-accent) 24%, transparent);
+}
+
+.mpGroupAction:hover,
+.mpGroupSelect:hover,
+.mpGroupSelect:focus {
+  border-color: var(--h-accent);
+  background: color-mix(in srgb, var(--h-accent) 28%, var(--h-bg-input));
+  color: var(--h-text);
+  outline: 0;
+}
+
+.mpGroupAction[data-primary="true"]:hover {
+  background: color-mix(in srgb, var(--h-accent) 86%, var(--h-text));
+  color: #fff;
 }
 
 .mpGroupCollapsible {
@@ -976,6 +1052,25 @@
 .mpCard[data-current="true"] {
   border-color: var(--h-accent);
   background: color-mix(in srgb, var(--h-accent) 6%, var(--h-bg));
+}
+
+.mpCard[data-brand="true"] {
+  width: calc(100% - 20px);
+  margin-left: 10px;
+  margin-right: 10px;
+  border-color: color-mix(in srgb, var(--h-accent) 30%, var(--h-line));
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--h-accent) 8%, var(--h-bg)),
+      var(--h-bg));
+}
+
+.mpCard[data-brand="true"]:hover {
+  border-color: color-mix(in srgb, var(--h-accent) 58%, var(--h-line));
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--h-accent) 13%, var(--h-bg)),
+      var(--h-bg-soft));
 }
 
 .mpCard[data-unconfigured="true"] {
