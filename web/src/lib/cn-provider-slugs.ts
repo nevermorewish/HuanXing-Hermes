@@ -19,7 +19,6 @@ export const CN_BACKEND_PROVIDER_SLUGS = [
   "minimax-oauth",
   "stepfun",
   "xiaomi",
-  "anthropic",   // ANTHROPIC_API_KEY widely used even in CN edition
   "openrouter",  // kept as an explicit user-requested fallback aggregator
 ] as const;
 

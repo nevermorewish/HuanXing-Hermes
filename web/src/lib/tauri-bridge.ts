@@ -483,7 +483,7 @@ function showBootstrapOverlay(initialMessage: string): {
     "style",
     "font-size:16px;font-weight:700;letter-spacing:0.02em;color:#fbfaf6;",
   );
-  title.textContent = BRAND.windowTitle;
+  title.textContent = `${BRAND.appName} ${BRAND.edition}`;
   panel.appendChild(title);
 
   const brand = document.createElement("div");
@@ -582,7 +582,7 @@ function showBootstrapOverlay(initialMessage: string): {
     "font-family:'JetBrains Mono',ui-monospace,monospace;font-size:11px;" +
       "color:rgba(255,255,255,0.45);letter-spacing:0.06em;text-transform:uppercase;",
   );
-  sub.textContent = `${BRAND.windowTitle} · 首次启动`;
+  sub.textContent = `${BRAND.appName} ${BRAND.edition} · 首次启动`;
   panel.appendChild(sub);
 
   root.appendChild(panel);
