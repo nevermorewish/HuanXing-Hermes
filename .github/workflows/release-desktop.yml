@@ -206,6 +206,7 @@ jobs:
           node "${args[@]}"
 
       - name: Prepare macOS signing credentials
+        id: macos_signing
         if: matrix.runtime_platform == 'darwin'
         shell: bash
         env:
@@ -213,13 +214,30 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
         run: |
-          test -n "$APPLE_CERTIFICATE"
-          test -n "$APPLE_CERTIFICATE_PASSWORD"
-          test -n "$APPLE_SIGNING_IDENTITY"
-          test -n "$APPLE_API_KEY"
-          test -n "$APPLE_API_PRIVATE_KEY"
+          missing=()
+          for name in \
+            APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_SIGNING_IDENTITY \
+            APPLE_API_KEY \
+            APPLE_API_ISSUER \
+            APPLE_API_PRIVATE_KEY
+          do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Skipping macOS signing/notarization because Apple secrets are missing: ${missing[*]}"
+            exit 0
+          fi
+
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
 
           mkdir -p "$RUNNER_TEMP/appstoreconnect/private_keys"
           printf '%s\n' "$APPLE_API_PRIVATE_KEY" > "$RUNNER_TEMP/appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY}.p8"
@@ -288,7 +306,7 @@ jobs:
           args: --target ${{ matrix.target }}
 
       - name: Notarize, staple, verify, and reupload macOS DMG
-        if: matrix.runtime_platform == 'darwin'
+        if: matrix.runtime_platform == 'darwin' && steps.macos_signing.outputs.enabled == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
