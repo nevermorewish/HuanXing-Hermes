@@ -4,34 +4,19 @@ import { Dialog } from "@hermes/shared-ui";
 import type { DesktopUpdateCheckResult } from "@hermes/protocol";
 import {
   checkDesktopUpdate,
-  DESKTOP_UPDATE_AUTO_CHECK_DATE_KEY,
-  DESKTOP_UPDATE_DISMISSED_VERSION_KEY,
-  desktopUpdateDateKey,
-  shouldRunAutoDesktopUpdateCheck,
   shouldShowDesktopUpdateNotice,
 } from "@/lib/desktop-update";
 import { BRAND } from "@/lib/brand.generated";
 import { openExternalUrl } from "@/lib/external-links";
 import { runtime } from "@/lib/runtime";
-import { readUiValue, writeUiValue } from "@/lib/ui-store";
 import { versionLabel } from "@/lib/build-info";
 import s from "./desktop-update-notifier.module.css";
 
 let autoCheckPromise: Promise<DesktopUpdateCheckResult> | null = null;
 
-function rememberDismissedVersion(result: DesktopUpdateCheckResult | null): void {
-  if (result?.latestVersion) {
-    writeUiValue(DESKTOP_UPDATE_DISMISSED_VERSION_KEY, result.latestVersion);
-  }
-}
-
 function startAutoCheckIfNeeded(): Promise<DesktopUpdateCheckResult> | null {
   if (autoCheckPromise) return autoCheckPromise;
 
-  const lastAutoCheckDate = readUiValue<string | null>(DESKTOP_UPDATE_AUTO_CHECK_DATE_KEY, null);
-  if (!shouldRunAutoDesktopUpdateCheck(lastAutoCheckDate)) return null;
-
-  writeUiValue(DESKTOP_UPDATE_AUTO_CHECK_DATE_KEY, desktopUpdateDateKey());
   autoCheckPromise = checkDesktopUpdate();
   return autoCheckPromise;
 }
@@ -49,8 +34,7 @@ export function DesktopUpdateNotifier() {
 
     promise.then((next) => {
       if (cancelled) return;
-      const dismissedVersion = readUiValue<string | null>(DESKTOP_UPDATE_DISMISSED_VERSION_KEY, null);
-      if (shouldShowDesktopUpdateNotice(next, dismissedVersion)) {
+      if (shouldShowDesktopUpdateNotice(next)) {
         setResult(next);
         setOpen(true);
       }
@@ -62,12 +46,10 @@ export function DesktopUpdateNotifier() {
   }, []);
 
   const close = () => {
-    rememberDismissedVersion(result);
     setOpen(false);
   };
 
   const download = async () => {
-    rememberDismissedVersion(result);
     setOpen(false);
     await openExternalUrl(result?.downloadUrl);
   };
