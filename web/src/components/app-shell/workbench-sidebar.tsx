@@ -30,6 +30,7 @@ import {
   type WorkspaceProject,
 } from "@/lib/workspaces";
 import type { SessionSummary } from "@hermes/protocol";
+import { AccountLoginButton } from "@/components/sidebar/account-login-button";
 import s from "./workbench-sidebar.module.css";
 
 function relTime(unixSec: number, now: Date) {
@@ -370,6 +371,8 @@ export function WorkbenchSidebar() {
           )}
         </section>
       </div>
+
+      <AccountLoginButton />
     </aside>
   );
 }

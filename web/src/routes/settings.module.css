@@ -250,6 +250,11 @@
   color: var(--h-accent);
   background: var(--h-accent-soft);
 }
+.statusBadge[data-tone="recommend"] {
+  color: #fff;
+  background: var(--h-accent);
+  font-weight: 600;
+}
 
 .cronFeedback {
   margin: 12px 0;

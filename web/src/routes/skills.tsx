@@ -24,6 +24,7 @@ import {
 import { MarkdownText } from "@/components/chat/markdown-renderer";
 import { TopBarActions } from "@/components/top-bar/top-bar";
 import { CopyButton } from "@/components/ui/copy-button";
+import { BRAND } from "@/lib/brand.generated";
 import s from "./skills.module.css";
 
 type Tab = "builtin" | "user" | "market";
@@ -83,7 +84,7 @@ function isUserSkill(skill: SkillInfo): boolean {
 }
 
 function sourceLabel(origin: ReturnType<typeof skillOrigin>): string {
-  if (origin === "builtin") return "Hermes 内置";
+  if (origin === "builtin") return `${BRAND.appName} 内置`;
   if (origin === "external") return "外部目录";
   return "用户自建";
 }
@@ -230,7 +231,7 @@ export function SkillsRoute() {
         <span className={s.toptabHint}>
           <Info size={13} />
           {tab === "builtin"
-            ? "内置 Skill 由 Hermes 团队维护，仅可启用 / 禁用"
+            ? `内置 Skill 由 ${BRAND.appName} 团队维护，仅可启用 / 禁用`
             : tab === "user"
               ? "自建 Skill 保存在"
               : "精选 Skill 市场与目录，点击卡片会在外部浏览器打开"}
@@ -474,7 +475,7 @@ function SkillDetail({ skill, tab, lang, setLang, onToggle }: SkillDetailProps) 
           <div className={s.readonlyNotice}>
             <Lock size={14} className={s.readonlyLock} />
             <div>
-              <strong>这是 Hermes 内置 Skill。</strong>
+              <strong>{`这是 ${BRAND.appName} 内置 Skill。`}</strong>
               只能启用 / 禁用，不能修改。下次执行 <code>同步内置</code> 时会被覆盖。
               如需自定义，请在「我的 Skills」里基于此 Skill 复制一份。
             </div>

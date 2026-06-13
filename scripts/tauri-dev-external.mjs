@@ -17,6 +17,8 @@ so this now starts the same managed dev path as pnpm tauri:dev.`);
 const child = spawn(pnpm, ["exec", "tauri", "dev"], {
   cwd: repoRoot,
   stdio: "inherit",
+  // Node >=20 on win32 refuses to spawn a .cmd shim without a shell (EINVAL).
+  shell: process.platform === "win32",
   env: {
     ...process.env,
     HERMES_DESKTOP_ALLOW_EXTERNAL_AGENT: "0",

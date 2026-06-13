@@ -6,6 +6,10 @@ import {
   useAccountFetchSetup,
   useAccountLogin,
   useAccountSaveModels,
+  useClearCredentials,
+  useLoginSaved,
+  useSaveCredentials,
+  useSavedCredentials,
 } from "@/hooks/use-account";
 import type { AccountSetupResult, AccountTokenInfo } from "@/lib/runtime";
 import s from "./account-login-dialog.module.css";
@@ -30,6 +34,7 @@ export function AccountLoginDialog({
   const [serverUrl, setServerUrl] = useState(BRAND.serviceUrl);
   const [username, setUsername] = useState(defaultUsername);
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [setup, setSetup] = useState<AccountSetupResult | null>(null);
@@ -40,6 +45,10 @@ export function AccountLoginDialog({
   const login = useAccountLogin();
   const fetchSetup = useAccountFetchSetup();
   const saveModels = useAccountSaveModels();
+  const savedCredentials = useSavedCredentials();
+  const saveCredentials = useSaveCredentials();
+  const loginSaved = useLoginSaved();
+  const clearCredentials = useClearCredentials();
 
   // Guard so re-opening the dialog after a successful login doesn't wipe a
   // selection the user is mid-way through (mirrors Claw's ref-guarded reset).
@@ -53,42 +62,87 @@ export function AccountLoginDialog({
     if (initializedFor.current === "open") return;
     initializedFor.current = "open";
     setStep("credentials");
-    setServerUrl(BRAND.serviceUrl);
-    setUsername(defaultUsername);
-    setPassword("");
     setError(null);
     setSetup(null);
     setSelected(new Set());
     setTokens([]);
     setTokenId(null);
-  }, [open, defaultUsername]);
+    setPassword("");
+    // Prefill from saved credentials when available, else brand defaults.
+    const saved = savedCredentials.data;
+    if (saved?.hasSaved) {
+      setServerUrl(saved.baseUrl ?? BRAND.serviceUrl);
+      setUsername(saved.username ?? defaultUsername);
+      setRemember(true);
+    } else {
+      setServerUrl(BRAND.serviceUrl);
+      setUsername(defaultUsername);
+      setRemember(true);
+    }
+  }, [open, defaultUsername, savedCredentials.data]);
+
+  // Shared post-login flow: fetch setup, preselect models, load tokens.
+  const proceedAfterLogin = async () => {
+    const result = await fetchSetup.mutateAsync();
+    setSetup(result);
+    // Pre-check already-configured models, else default to all.
+    const preset = configuredModels.length > 0
+      ? new Set(result.models.filter((m) => configuredModels.includes(m)))
+      : new Set(result.models);
+    setSelected(preset.size > 0 ? preset : new Set(result.models));
+    // Lazily load tokens for the selector; failure is non-fatal.
+    try {
+      const list = await window.hermesDesktop?.accountListTokens?.();
+      if (list) {
+        setTokens(list);
+        const def = list.find((t) => !t.group) ?? list.find((t) => t.status === 1) ?? list[0];
+        setTokenId(def ? def.id : null);
+      }
+    } catch {
+      /* token selector is optional */
+    }
+    setStep("models");
+  };
 
   const handleLogin = async () => {
     setError(null);
     try {
-      await login.mutateAsync({ baseUrl: serverUrl.trim(), username: username.trim(), password });
-      const result = await fetchSetup.mutateAsync();
-      setSetup(result);
-      // Pre-check already-configured models, else default to all.
-      const preset = configuredModels.length > 0
-        ? new Set(result.models.filter((m) => configuredModels.includes(m)))
-        : new Set(result.models);
-      setSelected(preset.size > 0 ? preset : new Set(result.models));
-      // Lazily load tokens for the selector; failure is non-fatal.
+      const baseUrl = serverUrl.trim();
+      const user = username.trim();
+      await login.mutateAsync({ baseUrl, username: user, password });
+      // Persist or clear credentials based on the "remember" choice.
       try {
-        const list = await window.hermesDesktop?.accountListTokens?.();
-        if (list) {
-          setTokens(list);
-          const def = list.find((t) => !t.group) ?? list.find((t) => t.status === 1) ?? list[0];
-          setTokenId(def ? def.id : null);
+        if (remember) {
+          await saveCredentials.mutateAsync({ baseUrl, username: user, password });
+        } else {
+          await clearCredentials.mutateAsync();
         }
       } catch {
-        /* token selector is optional */
+        /* credential persistence is best-effort, never blocks login */
       }
-      setStep("models");
+      await proceedAfterLogin();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
+  };
+
+  const handleLoginSaved = async () => {
+    setError(null);
+    try {
+      await loginSaved.mutateAsync();
+      await proceedAfterLogin();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleClearSaved = async () => {
+    try {
+      await clearCredentials.mutateAsync();
+    } catch {
+      /* non-fatal */
+    }
+    setPassword("");
   };
 
   const toggleModel = (id: string) => {
@@ -137,6 +191,16 @@ export function AccountLoginDialog({
 
           {step === "credentials" ? (
             <div className={s.body}>
+              {savedCredentials.data?.hasSaved && (
+                <div className={s.savedHint}>
+                  <span>
+                    已保存 <strong>{savedCredentials.data.username}</strong> 的登录，可直接登录
+                  </span>
+                  <button type="button" className={s.clear} onClick={handleClearSaved}>
+                    清除
+                  </button>
+                </div>
+              )}
               <label className={s.field}>
                 <span className={s.label}>服务地址</span>
                 <input
@@ -164,13 +228,32 @@ export function AccountLoginDialog({
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="current-password"
+                  placeholder={savedCredentials.data?.hasSaved ? "已保存，可直接使用已保存凭据登录" : undefined}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && !busy) handleLogin();
+                    if (e.key === "Enter" && !busy && password) handleLogin();
                   }}
                 />
               </label>
+              <label className={s.remember}>
+                <input
+                  type="checkbox"
+                  checked={remember}
+                  onChange={(e) => setRemember(e.target.checked)}
+                />
+                <span>记住账号密码，下次免输</span>
+              </label>
               {error && <p className={s.error}>{error}</p>}
               <div className={s.actions}>
+                {savedCredentials.data?.hasSaved && (
+                  <button
+                    type="button"
+                    className={s.secondary}
+                    disabled={busy}
+                    onClick={handleLoginSaved}
+                  >
+                    {loginSaved.isPending ? "登录中…" : "使用已保存凭据登录"}
+                  </button>
+                )}
                 <button
                   type="button"
                   className={s.primary}
@@ -204,6 +287,25 @@ export function AccountLoginDialog({
                   </select>
                 </label>
               )}
+              <div className={s.selectToolbar}>
+                <button
+                  type="button"
+                  className={s.linkButton}
+                  onClick={() => setSelected(new Set(setup?.models ?? []))}
+                >
+                  全选
+                </button>
+                <button
+                  type="button"
+                  className={s.linkButton}
+                  onClick={() => setSelected(new Set())}
+                >
+                  全不选
+                </button>
+                <span className={s.count}>
+                  已选 {selected.size} / 共 {setup?.models.length ?? 0}
+                </span>
+              </div>
               <div className={s.modelList}>
                 {setup?.models.map((m) => (
                   <label key={m} className={s.modelRow}>

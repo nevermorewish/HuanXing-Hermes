@@ -1,0 +1,20 @@
+{
+  "id": "fengchiclaw",
+  "appName": "风驰云",
+  "appNameEn": "FengchiClaw",
+  "productName": "FengchiClaw Desktop",
+  "identifier": "app.fengchiclaw.desktop",
+  "dataDirName": ".fengchiclaw",
+  "providerKey": "fengchiclaw",
+  "serviceUrl": "https://ai.fengchiyun.com/",
+  "rechargeUrl": "https://ai.fengchiyun.com/topup",
+  "copyright": "Copyright © 2026 FengchiClaw",
+  "publisher": "FengchiClaw",
+  "homepage": "https://ai.fengchiyun.com",
+  "shortDescription": "FengchiClaw AI Assistant Desktop",
+  "longDescription": "Desktop app for FengchiClaw AI Assistant.",
+  "tagline": "AI Assistant",
+  "edition": "桌面版",
+  "updateManifestUrl": "https://ai.fengchiyun.com/downloads/fengchihermes/latest.json",
+  "updateDownloadUrl": "https://ai.fengchiyun.com/downloads/fengchihermes"
+}

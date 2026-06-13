@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use hermes_agent_cn::commands;
+use hermes_agent_cn::brand_generated::BRAND_APP_NAME;
 use hermes_agent_cn::commands::profiles::read_active_profile_sticky;
 use hermes_agent_cn::environment;
 use hermes_agent_cn::process::{dashboard, runtime};
@@ -191,7 +192,7 @@ async fn finalize_bootstrap(
     }
 
     emit_runtime_status(app, "ready", "");
-    log::info!("Hermes Agent 中文社区桌面版 ready");
+    log::info!("{} ready", BRAND_APP_NAME);
 }
 
 fn shutdown_owned_runtime(app: &tauri::AppHandle, reason: &str) {
@@ -380,7 +381,7 @@ fn main() {
                     .await;
                 });
 
-                log::info!("Hermes Agent 中文社区桌面版 bootstrapping in background");
+                log::info!("{} bootstrapping in background", BRAND_APP_NAME);
                 return Ok(());
             }
 
@@ -441,7 +442,7 @@ fn main() {
                     .await;
                 });
 
-                log::info!("Hermes Agent 中文社区桌面版 bootstrapping in background");
+                log::info!("{} bootstrapping in background", BRAND_APP_NAME);
                 return Ok(());
             }
 
@@ -498,6 +499,10 @@ fn main() {
             commands::account::account_balance,
             commands::account::account_save_models,
             commands::account::account_test_model,
+            commands::account::account_save_credentials,
+            commands::account::account_has_saved_credentials,
+            commands::account::account_login_saved,
+            commands::account::account_clear_credentials,
             commands::account::account_logout,
             commands::runtime_manager::runtime_info,
             commands::runtime_manager::runtime_check_update,
@@ -544,7 +549,7 @@ fn main() {
             _ => {}
         })
         .build(tauri::generate_context!())
-        .expect("error while building Hermes Agent 中文社区桌面版");
+        .expect("error while building desktop app");
 
     app.run(move |app_handle, event| match event {
         tauri::RunEvent::ExitRequested { .. } => {

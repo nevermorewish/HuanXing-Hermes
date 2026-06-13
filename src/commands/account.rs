@@ -149,6 +149,17 @@ pub struct TestModelResult {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedCredentialsInfo {
+    pub has_saved: bool,
+    /// Username for prefilling the login form. Never includes the password.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+}
+
 // ---- helpers ------------------------------------------------------------
 
 fn normalize_base_url(input: &str) -> String {
@@ -356,6 +367,41 @@ fn stored_key() -> Result<Option<String>, AppError> {
 
 fn store_key(key: &str) -> Result<(), AppError> {
     secret_store::set(&secret_account(), key)
+}
+
+/// keyring account name under which the login credentials (base url + username
+/// + password) are stored as a JSON blob. Separate entry from the sk- key so
+/// logout can clear the session key without forgetting the saved login.
+fn credentials_account() -> String {
+    format!("{}-account-login", BRAND_PROVIDER_KEY)
+}
+
+/// Persist login credentials in the OS keyring. The password never leaves the
+/// secret store after this — it is only read back by `account_login_saved`.
+fn store_credentials(base_url: &str, username: &str, password: &str) -> Result<(), AppError> {
+    let blob = json!({
+        "baseUrl": base_url,
+        "username": username,
+        "password": password,
+    })
+    .to_string();
+    secret_store::set(&credentials_account(), &blob)
+}
+
+/// Read saved credentials, if any. Returns (base_url, username, password).
+fn load_credentials() -> Result<Option<(String, String, String)>, AppError> {
+    let Some(blob) = secret_store::get(&credentials_account())? else {
+        return Ok(None);
+    };
+    let parsed: Value = serde_json::from_str(&blob)
+        .map_err(|e| AppError::Internal(format!("已保存凭据解析失败: {}", e)))?;
+    let base_url = parsed.get("baseUrl").and_then(Value::as_str).unwrap_or("").to_string();
+    let username = parsed.get("username").and_then(Value::as_str).unwrap_or("").to_string();
+    let password = parsed.get("password").and_then(Value::as_str).unwrap_or("").to_string();
+    if username.is_empty() || password.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((base_url, username, password)))
 }
 
 // ---- account server calls ----------------------------------------------
@@ -714,7 +760,7 @@ fn build_provider_entry(
     api_key: &str,
 ) -> Value {
     let mut entry = existing.as_object().cloned().unwrap_or_default();
-    entry.insert("name".into(), json!(format!("{} 账户", BRAND_APP_NAME)));
+    entry.insert("name".into(), json!(BRAND_APP_NAME));
     entry.insert("base_url".into(), json!(api_base));
     entry.insert("api_mode".into(), json!("chat_completions"));
     entry.insert("transport".into(), json!("openai_chat"));
@@ -971,6 +1017,43 @@ pub async fn account_test_model(model_id: String) -> Result<TestModelResult, App
 }
 
 #[tauri::command]
+pub async fn account_save_credentials(input: LoginInput) -> Result<(), AppError> {
+    store_credentials(&input.base_url, &input.username, &input.password)
+}
+
+/// Report whether login credentials are saved, returning the username + base
+/// url for prefilling the login form. The password is never returned.
+#[tauri::command]
+pub async fn account_has_saved_credentials() -> Result<SavedCredentialsInfo, AppError> {
+    match load_credentials()? {
+        Some((base_url, username, _password)) => Ok(SavedCredentialsInfo {
+            has_saved: true,
+            username: Some(username),
+            base_url: if base_url.is_empty() { None } else { Some(base_url) },
+        }),
+        None => Ok(SavedCredentialsInfo {
+            has_saved: false,
+            username: None,
+            base_url: None,
+        }),
+    }
+}
+
+/// Log in using credentials read from the OS keyring, so the password never
+/// crosses the IPC boundary. Errors if nothing is saved.
+#[tauri::command]
+pub async fn account_login_saved() -> Result<AccountUser, AppError> {
+    let (base_url, username, password) = load_credentials()?
+        .ok_or_else(|| AppError::InvalidRequest("没有已保存的登录凭据".to_string()))?;
+    do_login(&base_url, &username, &password).await
+}
+
+#[tauri::command]
+pub async fn account_clear_credentials() -> Result<(), AppError> {
+    secret_store::delete(&credentials_account())
+}
+
+#[tauri::command]
 pub async fn account_logout() -> Result<StatusResult, AppError> {
     *SESSION.lock()? = None;
     secret_store::delete(&secret_account())?;
@@ -995,6 +1078,32 @@ mod tests {
     fn mask_key_keeps_prefix_and_tail() {
         assert_eq!(mask_key("sk-abcdefabcdef1234"), "sk-****1234");
         assert_eq!(mask_key("short"), "****");
+    }
+
+    #[serial_test::serial]
+    #[test]
+    fn credentials_round_trip_and_clear() {
+        // Uses the in-memory secret_store backend on Linux CI.
+        secret_store::delete(&credentials_account()).unwrap();
+        assert!(load_credentials().unwrap().is_none());
+
+        store_credentials("https://api.example.com/", "alice", "pw-secret").unwrap();
+        let (base, user, pass) = load_credentials().unwrap().expect("saved");
+        assert_eq!(base, "https://api.example.com/");
+        assert_eq!(user, "alice");
+        assert_eq!(pass, "pw-secret");
+
+        secret_store::delete(&credentials_account()).unwrap();
+        assert!(load_credentials().unwrap().is_none());
+    }
+
+    #[serial_test::serial]
+    #[test]
+    fn load_credentials_ignores_blank_username_or_password() {
+        secret_store::set(&credentials_account(), r#"{"baseUrl":"x","username":"","password":"p"}"#)
+            .unwrap();
+        assert!(load_credentials().unwrap().is_none());
+        secret_store::delete(&credentials_account()).unwrap();
     }
 
     #[test]

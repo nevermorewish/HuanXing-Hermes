@@ -46,6 +46,8 @@ const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const child = spawn(pnpm, ["exec", "tauri", "dev"], {
   cwd: repoRoot,
   stdio: "inherit",
+  // Node >=20 on win32 refuses to spawn a .cmd shim without a shell (EINVAL).
+  shell: process.platform === "win32",
   env: {
     ...process.env,
     // Dev kernels live under dev-runtime/ so they never overwrite the packaged

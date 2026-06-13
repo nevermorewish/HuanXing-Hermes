@@ -38,6 +38,7 @@ import {
   TOP5_PROVIDER_IDS,
   type ProviderPreset,
 } from "@/lib/provider-catalog";
+import { BRAND } from "@/lib/brand.generated";
 import { useProviderCatalog } from "@/hooks/use-provider-catalog";
 import { ModelCombobox } from "@/components/settings/model-combobox";
 import { translateEnvCategory, translateEnvVar } from "@/lib/env-translations";
@@ -793,10 +794,17 @@ export function ModelsSection() {
       : config,
     [config, providerOrderOverride],
   );
-  const orderedProviders = useMemo(
-    () => sortProvidersForModelsPage(allProviders, providerOrderConfig),
-    [allProviders, providerOrderConfig],
-  );
+  const orderedProviders = useMemo(() => {
+    const sorted = sortProvidersForModelsPage(allProviders, providerOrderConfig);
+    // The brand's own account provider is always featured first as 推荐.
+    const brandId = `custom:${BRAND.providerKey}`;
+    const brandIdx = sorted.findIndex((p) => p.id === brandId);
+    if (brandIdx > 0) {
+      const [brandProvider] = sorted.splice(brandIdx, 1);
+      sorted.unshift(brandProvider);
+    }
+    return sorted;
+  }, [allProviders, providerOrderConfig]);
   const canReorderProviders = providerSearch.trim().length === 0;
   const filteredProviders = useMemo(() => {
     const query = providerSearch.trim().toLowerCase();
@@ -1965,6 +1973,9 @@ function SortableProviderPresetItem({
       <span className={s.providerPresetName}>{provider.name}</span>
       <span className={s.providerPresetVendor}>{provider.vendor}</span>
       <span className={s.providerPresetBadges}>
+        {provider.id === `custom:${BRAND.providerKey}` && (
+          <span className={s.statusBadge} data-tone="recommend">推荐</span>
+        )}
         {current && <span className={s.statusBadge} data-on="true">当前</span>}
         {provider.isCustom && <span className={s.statusBadge} data-tone="custom">{provider.vendor}</span>}
         <span className={s.statusBadge} data-on={configured}>

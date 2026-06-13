@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useActiveProfileName } from "@/hooks/use-profiles";
 import { prefetchSoul } from "@/hooks/use-soul";
+import { BRAND } from "@/lib/brand.generated";
 import s from "./debug-sidebar.module.css";
 
 interface CapabilityItem {
@@ -56,8 +57,8 @@ const AUTOMATION_ITEMS: readonly CapabilityItem[] = [
 ];
 
 const IM_ITEMS: readonly CapabilityItem[] = [
-  { label: "飞书接入", path: "/im/feishu", icon: MessageCircle, title: "将飞书消息平台接入中文社区桌面版" },
-  { label: "微信接入", path: "/im/weixin", icon: MessageSquareText, title: "将微信消息平台接入中文社区桌面版" },
+  { label: "飞书接入", path: "/im/feishu", icon: MessageCircle, title: `将飞书消息平台接入${BRAND.edition}` },
+  { label: "微信接入", path: "/im/weixin", icon: MessageSquareText, title: `将微信消息平台接入${BRAND.edition}` },
 ];
 
 export const CAPABILITY_SECTIONS: readonly {

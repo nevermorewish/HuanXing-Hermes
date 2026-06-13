@@ -1,9 +1,9 @@
 {
   "id": "huanxingclaw",
-  "appName": "幻形 Agent",
+  "appName": "寰星Agent",
+  "appNameEn": "HuanxingClaw",
   "productName": "HuanxingClaw Desktop",
   "identifier": "app.huanxingclaw.desktop",
-  "windowTitle": "幻形 Agent 桌面版",
   "dataDirName": ".huanxingclaw",
   "providerKey": "huanxingclaw",
   "serviceUrl": "https://api.huanxing.ai/",
@@ -13,5 +13,8 @@
   "homepage": "https://api.huanxing.ai",
   "shortDescription": "HuanxingClaw AI Assistant Desktop",
   "longDescription": "Desktop app for HuanxingClaw AI Assistant.",
-  "tagline": "AI Assistant"
+  "tagline": "AI Assistant",
+  "edition": "桌面版",
+  "updateManifestUrl": "https://ai.fengchiyun.com/downloads/huanxinghermes/latest.json",
+  "updateDownloadUrl": "https://ai.fengchiyun.com/downloads/huanxinghermes"
 }

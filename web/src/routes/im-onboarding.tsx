@@ -41,6 +41,7 @@ import {
 } from "@/hooks/use-im-onboarding";
 import { useCreateAndSendSession } from "@/hooks/use-create-and-send-session";
 import { openExternalUrl } from "@/lib/external-links";
+import { BRAND } from "@/lib/brand.generated";
 import {
   buildImDiagnosticBundle,
   buildImDiagnosticPrompt,
@@ -200,7 +201,7 @@ function Hero({ platform, stateSub, onPrimary, primaryBusy }: {
     <div className={s.headBand}>
       <div className={s.heroCopy}>
         <div className={s.heroKicker}><span>{isFeishu ? "№ 023A" : "№ 023B"}</span><span>IM ONBOARDING</span><em>配置 / 消息平台接入 / {isFeishu ? "飞书 · Lark" : "微信 · Weixin"}</em></div>
-        <h1>将<em>{isFeishu ? "飞书消息平台" : "微信消息平台"}</em>接入<br />中文社区桌面版</h1>
+        <h1>将<em>{isFeishu ? "飞书消息平台" : "微信消息平台"}</em>接入<br />{BRAND.edition}</h1>
         <p className={s.sub}>{isFeishu
           ? "跟着向导用手机扫码，保存到当前档案后，再按提示到飞书后台勾选权限并发布。全程不需要敲命令，新手也能一步步完成。"
           : "跟着向导用微信扫码确认，桌面端会保存接入账号并自动接收新消息。"}</p>

@@ -1,44 +1,44 @@
 import { useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
-import { KeyRound, Settings2, Sparkles } from "lucide-react";
-import { useModelInfo } from "@/hooks/use-config";
+import { useLocation } from "react-router-dom";
+import { LogIn, Sparkles } from "lucide-react";
+import { BRAND } from "@/lib/brand.generated";
+import { isAccountLoginAvailable, useAccountStatus } from "@/hooks/use-account";
+import { AccountLoginDialog } from "@/components/sidebar/account-login-dialog";
 import s from "./model-onboarding-guard.module.css";
 
-const DEFAULT_PROVIDER_HASH = "#provider-deepseek";
 let dismissedForWindow = false;
 
-function hasConfiguredModel(modelInfo: { model?: string; provider?: string } | undefined): boolean {
-  return Boolean(modelInfo?.model?.trim() && modelInfo?.provider?.trim());
+/** Brand display name (pure brand name, no "桌面版" edition suffix). */
+function brandName(): string {
+  return BRAND.appName;
 }
 
 export function ModelOnboardingGuard() {
-  const navigate = useNavigate();
   const location = useLocation();
-  const { data: modelInfo, isLoading, isError } = useModelInfo();
+  const available = isAccountLoginAvailable();
+  const { data: status, isLoading, isError } = useAccountStatus();
   const [dismissed, setDismissed] = useState(() => dismissedForWindow);
+  const [loginOpen, setLoginOpen] = useState(false);
 
-  const configured = hasConfiguredModel(modelInfo);
+  const loggedIn = Boolean(status?.loggedIn);
 
   useEffect(() => {
-    if (!configured || typeof window === "undefined") return;
+    if (!loggedIn) return;
     dismissedForWindow = false;
     setDismissed(false);
-  }, [configured]);
+  }, [loggedIn]);
 
   if (
+    !available ||
     isLoading ||
     isError ||
-    configured ||
+    loggedIn ||
     dismissed ||
     location.pathname.startsWith("/models") ||
     location.pathname.startsWith("/console")
   ) {
     return null;
   }
-
-  const goModels = () => {
-    navigate(`/models${DEFAULT_PROVIDER_HASH}`);
-  };
 
   const dismiss = () => {
     dismissedForWindow = true;
@@ -52,23 +52,21 @@ export function ModelOnboardingGuard() {
           <Sparkles size={22} />
         </div>
         <div className={s.copy}>
-          <p className={s.kicker}>首次初始化</p>
-          <h2 id="model-onboarding-title">先配置模型 API Key</h2>
+          <p className={s.kicker}>欢迎使用</p>
+          <h2 id="model-onboarding-title">请先登录 {brandName()}</h2>
           <p>
-            当前桌面端正在使用独立的 Hermes Agent runtime，新的 <code>hermes-home</code> 里还没有模型服务商和默认模型。
-            请进入模型页选择服务商，粘贴 API Key，保存后设为当前模型。
+            登录你的 {brandName()} 账户即可一键启用模型服务，无需手动配置 API Key。
+            登录后选择想用的模型，就能立即开始对话。
           </p>
-          <div className={s.steps}>
-            <span><KeyRound size={13} /> 填写 API Key</span>
-            <span><Settings2 size={13} /> 保存配置</span>
-            <span><Sparkles size={13} /> 设为当前模型</span>
-          </div>
         </div>
         <div className={s.actions}>
           <button type="button" className={s.secondary} onClick={dismiss}>先看看界面</button>
-          <button type="button" className={s.primary} onClick={goModels} autoFocus>进入模型页</button>
+          <button type="button" className={s.primary} onClick={() => setLoginOpen(true)} autoFocus>
+            <LogIn size={14} /> 登录
+          </button>
         </div>
       </section>
+      <AccountLoginDialog open={loginOpen} onOpenChange={setLoginOpen} />
     </div>
   );
 }

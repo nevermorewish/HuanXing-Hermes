@@ -1,0 +1,20 @@
+{
+  "id": "frogclaw",
+  "appName": "FrogClaw助手",
+  "appNameEn": "FrogClaw",
+  "productName": "FrogClaw Desktop",
+  "identifier": "app.frogclaw.desktop",
+  "dataDirName": ".frogclaw",
+  "providerKey": "frogclaw",
+  "serviceUrl": "https://frogclaw.com/",
+  "rechargeUrl": "https://frogclaw.com/topup",
+  "copyright": "Copyright © 2026 FrogClaw",
+  "publisher": "FrogClaw",
+  "homepage": "https://frogclaw.com",
+  "shortDescription": "FrogClaw AI Assistant Desktop",
+  "longDescription": "Desktop app for FrogClaw AI Assistant.",
+  "tagline": "AI Assistant",
+  "edition": "桌面版",
+   "updateManifestUrl": "https://ai.fengchiyun.com/downloads/froghermes/latest.json",
+  "updateDownloadUrl": "https://ai.fengchiyun.com/downloads/froghermes"
+}

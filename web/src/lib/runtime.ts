@@ -84,6 +84,13 @@ export interface AccountStatusResult {
   maskedKey?: string;
 }
 
+export interface AccountSavedCredentialsInfo {
+  hasSaved: boolean;
+  /** Username for prefilling the login form. Never includes the password. */
+  username?: string;
+  baseUrl?: string;
+}
+
 export interface AccountSetupResult {
   user: AccountUser;
   baseUrl: string;
@@ -305,6 +312,10 @@ declare global {
       accountSaveModels?(input: AccountSaveModelsInput): Promise<AccountStatusResult>;
       accountTestModel?(modelId: string): Promise<AccountTestModelResult>;
       accountLogout?(): Promise<AccountStatusResult>;
+      accountSaveCredentials?(input: AccountLoginInput): Promise<void>;
+      accountHasSavedCredentials?(): Promise<AccountSavedCredentialsInfo>;
+      accountLoginSaved?(): Promise<AccountUser>;
+      accountClearCredentials?(): Promise<void>;
       uploadFile?(input: FileUploadInput): Promise<ElectronApiRequestResult>;
       pickFiles?(): Promise<ElectronFilePickerResult>;
       pickDirectory?(): Promise<ElectronFilePickerResult>;

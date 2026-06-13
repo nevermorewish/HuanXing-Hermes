@@ -18,6 +18,7 @@ import {
 import { notifyFromGatewayEvent } from "@/lib/notifications";
 import { resolvePersistentSessionId } from "@/lib/session-map";
 import { recordUiTurnStats, stableTextHash } from "@/lib/ui-store";
+import { BRAND } from "@/lib/brand.generated";
 
 export interface ToolEntry {
   tool_id: string;
@@ -80,7 +81,7 @@ export const chatRuntimeBySessionAtom = atom<ChatRuntimeBySession>({});
 const GENERIC_TURN_FAILURE_TEXT =
   "模型服务调用未成功。常见原因：API Key 失效或不在模型权限范围、网络/服务不可达。请到 设置 → 模型 检查后重试。";
 const PROVIDER_STATUS_KINDS = new Set(["provider_wait", "provider_retry", "provider_stalled"]);
-const OPTIMISTIC_ASSISTANT_PROGRESS = "正在启动Hermes Agent内核...";
+const OPTIMISTIC_ASSISTANT_PROGRESS = `正在启动${BRAND.appName}内核...`;
 
 export function createEmptyChatRuntime(now = Date.now()): ChatSessionRuntime {
   return {

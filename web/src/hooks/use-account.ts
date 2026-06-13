@@ -3,6 +3,7 @@ import { invalidateModelOptionsCache } from "@/lib/model-options-cache";
 import type {
   AccountBalanceInfo,
   AccountLoginInput,
+  AccountSavedCredentialsInfo,
   AccountSaveModelsInput,
   AccountSetupResult,
   AccountStatusResult,
@@ -83,6 +84,10 @@ export function useAccountSaveModels() {
       qc.invalidateQueries({ queryKey: ["account-status"] });
       qc.invalidateQueries({ queryKey: ["config"] });
       qc.invalidateQueries({ queryKey: ["model-info"] });
+      // The chat model picker reads ["model-options"] (gateway model.options
+      // RPC), which has its own 5-min staleTime — without this the newly saved
+      // account models don't appear until the cache expires.
+      qc.invalidateQueries({ queryKey: ["model-options"] });
     },
   });
 }
@@ -99,6 +104,45 @@ export function useAccountLogout() {
     mutationFn: () => bridge().accountLogout!(),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["account-status"] });
+    },
+  });
+}
+
+export function useSavedCredentials() {
+  return useQuery<AccountSavedCredentialsInfo>({
+    queryKey: ["account-saved-credentials"],
+    queryFn: () => bridge().accountHasSavedCredentials!(),
+    enabled: isAccountLoginAvailable(),
+    staleTime: 30_000,
+  });
+}
+
+export function useSaveCredentials() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, AccountLoginInput>({
+    mutationFn: (input) => bridge().accountSaveCredentials!(input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["account-saved-credentials"] });
+    },
+  });
+}
+
+export function useLoginSaved() {
+  const qc = useQueryClient();
+  return useMutation<AccountUser, Error, void>({
+    mutationFn: () => bridge().accountLoginSaved!(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["account-status"] });
+    },
+  });
+}
+
+export function useClearCredentials() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, void>({
+    mutationFn: () => bridge().accountClearCredentials!(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["account-saved-credentials"] });
     },
   });
 }

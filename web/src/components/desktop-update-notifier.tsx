@@ -10,6 +10,7 @@ import {
   shouldRunAutoDesktopUpdateCheck,
   shouldShowDesktopUpdateNotice,
 } from "@/lib/desktop-update";
+import { BRAND } from "@/lib/brand.generated";
 import { openExternalUrl } from "@/lib/external-links";
 import { runtime } from "@/lib/runtime";
 import { readUiValue, writeUiValue } from "@/lib/ui-store";
@@ -78,7 +79,7 @@ export function DesktopUpdateNotifier() {
         <Dialog.Content className={s.dialog} aria-describedby="desktop-update-desc">
           <Dialog.Title className={s.title}>
             <span className={s.titleIcon}><Sparkles size={17} aria-hidden="true" /></span>
-            发现 Hermes Agent 桌面端新版本
+            {`发现 ${BRAND.appName} 桌面端新版本`}
           </Dialog.Title>
           <Dialog.Description id="desktop-update-desc" className={s.body}>
             已发布 {versionLabel(result?.latestVersion)}，建议前往官网下载新版安装包，并按系统提示覆盖安装。当前应用不会自动下载安装包，也不会静默替换正在运行的程序。

@@ -16,9 +16,9 @@ const checkOnly = process.argv.includes("--check");
 const REQUIRED_FIELDS = [
   "id",
   "appName",
+  "appNameEn",
   "productName",
   "identifier",
-  "windowTitle",
   "dataDirName",
   "providerKey",
   "serviceUrl",
@@ -29,6 +29,9 @@ const REQUIRED_FIELDS = [
   "shortDescription",
   "longDescription",
   "tagline",
+  "edition",
+  "updateManifestUrl",
+  "updateDownloadUrl",
 ];
 
 function pathOf(relativePath) {
@@ -52,7 +55,7 @@ function stableJson(value) {
 }
 
 function requireBrand() {
-  const brandId = (process.env.BRAND || "hermes").trim();
+  const brandId = (process.env.BRAND || "fengchiclaw").trim();
   if (!/^[a-z][a-z0-9-]*$/.test(brandId)) {
     throw new Error(`Invalid BRAND id: ${JSON.stringify(brandId)} (expected lowercase kebab)`);
   }
@@ -73,6 +76,9 @@ function requireBrand() {
 }
 
 const brand = requireBrand();
+// Window title is derived from appName + edition (no separate windowTitle
+// field), so the OS window/tray title stays in lock-step with the brand name.
+const windowTitle = `${brand.appName} ${brand.edition}`.trim();
 const changed = [];
 
 function updateText(relativePath, updater) {
@@ -117,7 +123,7 @@ updateJson("tauri.conf.json", (config) => {
   config.productName = brand.productName;
   config.identifier = brand.identifier;
   if (Array.isArray(config.app?.windows) && config.app.windows[0]) {
-    config.app.windows[0].title = brand.windowTitle;
+    config.app.windows[0].title = windowTitle;
   }
   if (config.bundle) {
     config.bundle.publisher = brand.publisher;
@@ -158,6 +164,8 @@ const rsModule = `${rsBanner}\n`
     rsConst("BRAND_SERVICE_URL", brand.serviceUrl),
     rsConst("BRAND_RECHARGE_URL", brand.rechargeUrl),
     rsConst("BRAND_DATA_DIR_NAME", brand.dataDirName),
+    rsConst("BRAND_WINDOW_TITLE", windowTitle),
+    rsConst("BRAND_UPDATE_MANIFEST_URL", brand.updateManifestUrl),
   ].join("\n")
   + "\n";
 writeGenerated("src/brand_generated.rs", rsModule);

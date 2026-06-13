@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { SessionSummary } from "@hermes/protocol";
 import { createEmptyChatRuntime } from "@/stores/chat";
+import { BRAND } from "@/lib/brand.generated";
 import { __resetUiStoreForTests } from "@/lib/ui-store";
 import { rememberSessionMapping } from "@/lib/session-map";
 import {
@@ -129,7 +130,7 @@ describe("session activity", () => {
             role: "assistant",
             createdAt: now,
             status: "streaming",
-            parts: [{ type: "progress", text: "正在启动Hermes Agent内核..." }],
+            parts: [{ type: "progress", text: `正在启动${BRAND.appName}内核...` }],
           },
         ],
       },

@@ -6,11 +6,13 @@ import { HermesLogoMark } from "@/components/brand/hermes-logo-mark";
 import { ProfileSelector } from "@/components/sidebar/profile-selector";
 import { DESKTOP_VERSION, versionLabel } from "@/lib/build-info";
 import { openExternalUrl } from "@/lib/external-links";
+import { BRAND } from "@/lib/brand.generated";
 import { TOP_TABS } from "./use-active-top-tab";
 import s from "./app-top-bar.module.css";
 
 const DESKTOP_VERSION_PARAM = versionLabel(DESKTOP_VERSION);
-const BRAND_URL = `https://hermesagent.org.cn?source=cn_desktop&version=${encodeURIComponent(DESKTOP_VERSION_PARAM)}`;
+const BRAND_SITE = BRAND.homepage.replace(/^https?:\/\//, "").replace(/\/$/, "");
+const BRAND_URL = `${BRAND.homepage}?source=cn_desktop&version=${encodeURIComponent(DESKTOP_VERSION_PARAM)}`;
 const THEME_SEQUENCE: ThemeConfig["theme"][] = ["light", "light-modern", "dark", "dark-modern"];
 const THEME_LABELS: Record<ThemeConfig["theme"], string> = {
   light: "浅色模式",
@@ -37,11 +39,11 @@ export function AppTopBar() {
     <header className={s.topbar} data-window-drag data-tauri-drag-region="deep">
       <a
         className={s.brand}
-        aria-label="打开 Hermes Agent 中文社区官网"
+        aria-label={`打开 ${BRAND.appName} 官网`}
         href={BRAND_URL}
         target="_blank"
         rel="noopener noreferrer"
-        title="打开 Hermes Agent 中文社区官网"
+        title={`打开 ${BRAND.appName} 官网`}
         onClick={openBrandSite}
         data-no-drag
       >
@@ -52,12 +54,15 @@ export function AppTopBar() {
         />
         <span className={s.brandText}>
           <span className={s.wordmark}>
-            Hermes <em>Agent</em>
+            {(() => {
+              const [head, ...rest] = BRAND.appName.split(" ");
+              return rest.length ? <>{head} <em>{rest.join(" ")}</em></> : <>{head}</>;
+            })()}
           </span>
           <span className={s.brandMeta}>
-            <span className={s.edition}>中文社区桌面版</span>
+            <span className={s.edition}>{BRAND.edition}</span>
             <span className={s.metaDot} aria-hidden="true">·</span>
-            <span className={s.site}>hermesagent.org.cn</span>
+            <span className={s.site}>{BRAND_SITE}</span>
           </span>
         </span>
       </a>

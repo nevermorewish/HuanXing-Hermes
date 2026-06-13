@@ -1,6 +1,7 @@
 import { createStore } from "jotai/vanilla";
 import { describe, expect, it } from "vitest";
 import type { HermesMessagePart, HermesUIMessage } from "@hermes/protocol";
+import { BRAND } from "@/lib/brand.generated";
 import {
   applyGatewayEventAtom,
   chatRuntimeBySessionAtom,
@@ -767,7 +768,7 @@ describe("startPromptAtom", () => {
         id: "live-assistant-5",
         role: "assistant",
         status: "streaming",
-        parts: [{ type: "progress", text: "正在启动Hermes Agent内核..." }],
+        parts: [{ type: "progress", text: `正在启动${BRAND.appName}内核...` }],
       }),
     ]);
     expect(runtime.activeAssistantId).toBe("live-assistant-5");

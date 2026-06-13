@@ -24,8 +24,22 @@ import {
   type ModelUsageEntry,
 } from "@/lib/model-usage-log";
 import { expandSearchQuery } from "@/lib/model-search-aliases";
+import { BRAND } from "@/lib/brand.generated";
 import type { ComposerModelPickerProps, ComposerModelSelection } from "./composer-types";
 import s from "./goose-composer.module.css";
+
+// The runtime config provider id for this brand's account provider (relay /
+// 中转站). Mirrors `account_provider_id()` in src/commands/account.rs. Models
+// under this provider come straight from the relay, so their ids carry a vendor
+// namespace prefix (e.g. "anthropic/claude-sonnet-4") that we strip for display.
+const ACCOUNT_PROVIDER_SLUG = `custom:${BRAND.providerKey}`;
+
+/** Strip the leading "vendor/" namespace from a relay model id for display.
+ * The full id (with prefix) must still be used for selection + API routing. */
+function modelDisplayName(model: string): string {
+  const slash = model.indexOf("/");
+  return slash >= 0 ? model.slice(slash + 1) : model;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public helpers (kept stable so the composer doesn't break)
@@ -94,9 +108,10 @@ const CAPABILITIES: CapDescriptor[] = [
   },
 ];
 
-type GroupKey = "recent" | "configured" | "recommended" | "more";
+type GroupKey = "brand" | "recent" | "configured" | "recommended" | "more";
 
 const GROUP_LABELS: Record<GroupKey, { name: string; subtitle: string }> = {
+  brand: { name: BRAND.appName, subtitle: "账户已配置模型" },
   recent: { name: "最近用过", subtitle: "按 7 日内调用次数排序" },
   configured: { name: "已配置", subtitle: "填了 Key 但本周未用" },
   recommended: { name: "推荐预设", subtitle: "Top 5 模型平台 · 一键跳设置页填 Key" },
@@ -149,7 +164,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 export function buildCandidates(
   modelOptions: ModelOptionsResult | null,
   usageEntries: ModelUsageEntry[],
-): { all: Candidate[]; recent: Candidate[]; configured: Candidate[]; recommended: Candidate[]; more: Candidate[] } {
+): { all: Candidate[]; brand: Candidate[]; recent: Candidate[]; configured: Candidate[]; recommended: Candidate[]; more: Candidate[] } {
   const all: Candidate[] = [];
   const seenKeys = new Set<string>();
   const gatewayProviderSlugs = new Set<string>();
@@ -243,13 +258,21 @@ export function buildCandidates(
   const usageRanked = rankRecentModels(usageEntries, { limit: 3 });
   const usageKeySet = new Set(usageRanked.map((e) => e.key));
 
+  // 品牌账户分组: the brand's own account provider models, shown first and
+  // excluded from every other bucket so they don't appear twice.
+  const brand: Candidate[] = all.filter(
+    (c) => c.providerSlug === ACCOUNT_PROVIDER_SLUG && c.configured,
+  );
+  const brandKeySet = new Set(brand.map((c) => c.key));
+
   const recent: Candidate[] = usageRanked
     .map((e) => all.find((c) => c.key === e.key))
-    .filter((c): c is Candidate => Boolean(c));
+    .filter((c): c is Candidate => Boolean(c))
+    .filter((c) => !brandKeySet.has(c.key));
 
   const topSet = new Set<string>(TOP5_PROVIDER_IDS);
   const configured: Candidate[] = all
-    .filter((c) => c.configured && !usageKeySet.has(c.key))
+    .filter((c) => c.configured && !usageKeySet.has(c.key) && !brandKeySet.has(c.key))
     .sort((a, b) => {
       const aTop = topSet.has(a.providerSlug) ? 0 : 1;
       const bTop = topSet.has(b.providerSlug) ? 0 : 1;
@@ -273,13 +296,14 @@ export function buildCandidates(
   }
 
   const placed = new Set<string>([
+    ...brand.map((c) => c.key),
     ...recent.map((c) => c.key),
     ...configured.map((c) => c.key),
     ...recommended.map((c) => c.key),
   ]);
   const more: Candidate[] = all.filter((c) => !placed.has(c.key));
 
-  return { all, recent, configured, recommended, more };
+  return { all, brand, recent, configured, recommended, more };
 }
 
 function candidateMatchesQuery(c: Candidate, expandedQuery: string): boolean {
@@ -404,6 +428,18 @@ function ModelPickerBody({
     [modelOptions, usageEntries],
   );
 
+  // Default to the brand account group when it has models, so a freshly
+  // logged-in user lands on their account models. Runs once per brand-bucket
+  // transition into non-empty; user clicks afterward are respected.
+  const brandDefaulted = useRef(false);
+  useEffect(() => {
+    if (brandDefaulted.current) return;
+    if (buckets.brand.length > 0) {
+      brandDefaulted.current = true;
+      setActiveGroup("brand");
+    }
+  }, [buckets.brand.length]);
+
   const query = expandSearchQuery(modelSearch);
   const usageByKey = useMemo(() => {
     const map = new Map<string, ModelUsageEntry>();
@@ -425,14 +461,15 @@ function ModelPickerBody({
   );
 
   const visible = useMemo(() => {
+    const brand = filterGroup(buckets.brand);
     const recent = filterGroup(buckets.recent);
     const configured = filterGroup(buckets.configured);
     const recommended = filterGroup(buckets.recommended);
     const more = filterGroup(buckets.more);
-    return { recent, configured, recommended, more };
+    return { brand, recent, configured, recommended, more };
   }, [buckets, filterGroup]);
 
-  const totalVisible = visible.recent.length + visible.configured.length + visible.recommended.length + visible.more.length;
+  const totalVisible = visible.brand.length + visible.recent.length + visible.configured.length + visible.recommended.length + visible.more.length;
 
   function toggleCap(cap: CapabilityKey) {
     setActiveCaps((prev) => {
@@ -453,6 +490,15 @@ function ModelPickerBody({
     const usage = usageByKey.get(candidate.key);
     const caps = capabilityChips(candidate.caps);
     const baseUrlHost = candidate.baseUrl ? candidate.baseUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "") : "";
+    // Models from the brand's account provider (relay/中转站) carry a vendor
+    // namespace prefix in their id (e.g. "anthropic/claude-sonnet-4"). Show the
+    // brand name as the vendor and strip the prefix from the displayed name —
+    // candidate.model (the real id) is still used for selection + API routing.
+    const isAccountModel = candidate.providerSlug === ACCOUNT_PROVIDER_SLUG;
+    const vendorLabel = isAccountModel
+      ? BRAND.appName
+      : candidate.vendor || candidate.providerName;
+    const modelName = isAccountModel ? modelDisplayName(candidate.model) : candidate.model;
 
     if (!candidate.configured) {
       return (
@@ -465,8 +511,8 @@ function ModelPickerBody({
           disabled={switchingModel}
         >
           <div className={s.mpCardHead}>
-            <span className={s.mpCardVendor}>{candidate.vendor || candidate.providerName}</span>
-            <span className={s.mpCardName}>{candidate.model}</span>
+            <span className={s.mpCardVendor}>{vendorLabel}</span>
+            <span className={s.mpCardName}>{modelName}</span>
             <span className={s.mpCardPillWarn}>未配置</span>
           </div>
           <div className={s.mpCardMeta}>
@@ -521,8 +567,8 @@ function ModelPickerBody({
       >
         {isCurrent && <span className={s.mpCardStrip} aria-hidden="true" />}
         <div className={s.mpCardHead}>
-          <span className={s.mpCardVendor}>{candidate.vendor || candidate.providerName}</span>
-          <span className={s.mpCardName}>{candidate.model}</span>
+          <span className={s.mpCardVendor}>{vendorLabel}</span>
+          <span className={s.mpCardName}>{modelName}</span>
           {isCurrent && (
             <span className={s.mpCardPillOk}>
               <Check aria-hidden="true" /> 当前
@@ -590,8 +636,9 @@ function ModelPickerBody({
                 全部
                 <span className={s.mpFilterCount}>{totalVisible}</span>
               </button>
-              {(["recent", "configured", "recommended", "more"] as const).map((group) => {
+              {(["brand", "recent", "configured", "recommended", "more"] as const).map((group) => {
                 const count = visible[group].length;
+                if (count === 0 && group === "brand") return null;
                 return (
                   <button
                     key={group}
@@ -629,6 +676,16 @@ function ModelPickerBody({
               <div className={s.modelEmpty}>没有匹配的模型</div>
             ) : (
               <>
+                {showGroup("brand") && visible.brand.length > 0 && (
+                  <section className={s.mpGroup}>
+                    <header className={s.mpGroupHeader}>
+                      <span>{GROUP_LABELS.brand.name}</span>
+                      <span className={s.mpGroupSub}>{GROUP_LABELS.brand.subtitle}</span>
+                    </header>
+                    {visible.brand.map(renderCard)}
+                  </section>
+                )}
+
                 {showGroup("recent") && visible.recent.length > 0 && (
                   <section className={s.mpGroup}>
                     <header className={s.mpGroupHeader}>

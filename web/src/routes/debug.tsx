@@ -3,6 +3,7 @@ import { Bug, FileArchive, FolderOpen } from "lucide-react";
 import { debugBus } from "@/lib/debug-bus";
 import { BUILD_COMMIT, BUILD_DATE, DESKTOP_VERSION } from "@/lib/build-info";
 import { runtime } from "@/lib/runtime";
+import { BRAND } from "@/lib/brand.generated";
 import { DebugSection } from "./settings-debug-section";
 import { SectionShell } from "./section-shell";
 import s from "./settings.module.css";
@@ -91,7 +92,7 @@ export function DebugRoute() {
       <div className={s.aboutHero}>
         <div className={s.aboutHeroMark}><Bug size={24} /></div>
         <div className={s.aboutHeroBody}>
-          <div className={s.aboutEyebrow}>Hermes Agent 中文社区桌面版排障包</div>
+          <div className={s.aboutEyebrow}>{`${BRAND.appName} ${BRAND.edition}排障包`}</div>
           <h3>一键导出 debug 包</h3>
           <p>{exportSubText}</p>
           {exportState && (

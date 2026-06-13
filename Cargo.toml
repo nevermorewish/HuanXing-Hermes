@@ -2,7 +2,7 @@
 name = "hermes-agent-cn-desktop"
 version = "0.3.2"
 edition = "2021"
-description = "Hermes Agent Chinese Community Desktop"
+description = "HuanxingClaw AI Assistant Desktop"
 authors = ["Hermes Agent CN Contributors"]
 homepage = "https://hermesagent.org.cn"
 

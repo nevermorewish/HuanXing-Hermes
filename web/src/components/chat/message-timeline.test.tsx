@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { MarkdownText } from "./markdown-renderer";
 import { MessageTimeline, resolveBottomFollowState } from "./message-timeline";
 import type { ChatMessage } from "./chat-types";
+import { BRAND } from "@/lib/brand.generated";
 
 describe("MessageTimeline", () => {
   it("keeps bottom auto-follow disabled after an explicit upward scroll", () => {
@@ -27,7 +28,7 @@ describe("MessageTimeline", () => {
         role: "assistant",
         createdAt: 1,
         status: "streaming",
-        blocks: [{ type: "progress", text: "正在启动Hermes Agent内核..." }],
+        blocks: [{ type: "progress", text: `正在启动${BRAND.appName}内核...` }],
       },
     ];
 

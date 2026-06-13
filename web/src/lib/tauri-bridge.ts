@@ -54,6 +54,7 @@ import type {
   AccountLoginInput,
   AccountUser,
   AccountStatusResult,
+  AccountSavedCredentialsInfo,
   AccountSetupResult,
   AccountTokenInfo,
   AccountBalanceInfo,
@@ -193,6 +194,22 @@ const tauriBridge = {
 
   async accountLogout(): Promise<AccountStatusResult> {
     return invokeCommand("account_logout");
+  },
+
+  async accountSaveCredentials(input: AccountLoginInput): Promise<void> {
+    return invokeCommand("account_save_credentials", { input });
+  },
+
+  async accountHasSavedCredentials(): Promise<AccountSavedCredentialsInfo> {
+    return invokeCommand("account_has_saved_credentials");
+  },
+
+  async accountLoginSaved(): Promise<AccountUser> {
+    return invokeCommand("account_login_saved");
+  },
+
+  async accountClearCredentials(): Promise<void> {
+    return invokeCommand("account_clear_credentials");
   },
 
   async uploadFile(input: FileUploadInput): Promise<ApiRequestResult> {

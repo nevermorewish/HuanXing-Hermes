@@ -68,7 +68,6 @@ import { gatewayRestartButtonLabel, gatewayRestartTitle } from "@/lib/gateway-re
 import type { ComposerSubmitShortcut } from "@/lib/composer-submit-shortcut";
 import type { ConfigSchemaField, CronJob, DesktopUpdateCheckResult, RuntimeInfo, RuntimeUpdateCheckResult } from "@hermes/protocol";
 import { CopyButton } from "@/components/ui/copy-button";
-import wechatCommunityQr from "@/assets/wechat-community-qr.png";
 import s from "./settings.module.css";
 
 /* ── General ─────────────────────────────────────────────────────────── */
@@ -430,7 +429,7 @@ function ApprovalModeSection() {
   const applyMode = async (mode: ApprovalMode) => {
     if (busy) return;
     if (mode === "smart" && !smartAvailable) {
-      setError("当前 runtime 的配置 schema 尚未声明 smart 审批模式，请先更新 Hermes Agent runtime。");
+      setError(`当前 runtime 的配置 schema 尚未声明 smart 审批模式，请先更新 ${BRAND.appName} runtime。`);
       return;
     }
     if (mode === "yolo") {
@@ -633,7 +632,7 @@ export function ConfigSection({ showHeading = true }: SettingsSectionProps) {
     <div>
       {showHeading && <h2 className={s.heading}>配置</h2>}
       <p className={s.desc}>
-        Hermes Agent 全部 {Object.keys(schema.fields).length} 个配置项，
+        {BRAND.appName} 全部 {Object.keys(schema.fields).length} 个配置项，
         共 {categories.length} 个分类。修改后点击字段旁的"保存"按钮生效。
       </p>
 
@@ -1132,7 +1131,7 @@ export function KernelSection({ showHeading = true }: SettingsSectionProps) {
       <div className={s.aboutHero} data-ok={isolationOk}>
         <div className={s.aboutHeroMark}>{isolationOk ? <ShieldCheck size={24} /> : <Bug size={24} />}</div>
         <div className={s.aboutHeroBody}>
-          <div className={s.aboutEyebrow}>Hermes Agent 中文社区桌面版内核</div>
+          <div className={s.aboutEyebrow}>{`${BRAND.appName} ${BRAND.edition}内核`}</div>
           <h3>{isolationOk ? (process?.ownsProcess ? "独立 runtime 内核正在运行" : "已连接到 managed runtime dashboard") : "正在读取内核隔离状态"}</h3>
           <p>
             {isolationOk && process?.ownsProcess
@@ -1398,7 +1397,7 @@ export function AboutSection({ showHeading = true }: SettingsSectionProps) {
       <div className={s.aboutHero}>
         <div className={s.aboutHeroMark}><Heart size={24} /></div>
         <div className={s.aboutHeroBody}>
-          <div className={s.aboutEyebrow}>Hermes Agent 中文社区桌面版</div>
+          <div className={s.aboutEyebrow}>{`${BRAND.appName} ${BRAND.edition}`}</div>
           <h3>联系与致谢</h3>
           <p>
             致谢，联系方式及项目链接。
@@ -1420,7 +1419,7 @@ export function AboutSection({ showHeading = true }: SettingsSectionProps) {
             />
             <RuntimeField
               label="清单地址"
-              value={desktopUpdateResult?.manifestUrl ?? "https://desktop.hermesagent.org.cn/latest.json"}
+              value={desktopUpdateResult?.manifestUrl ?? BRAND.updateManifestUrl}
               mono
               wide
             />
@@ -1471,7 +1470,7 @@ export function AboutSection({ showHeading = true }: SettingsSectionProps) {
         <DebugCard icon={<MessageCircle size={15} />} title="联系方式" sub="社区入口和反馈渠道" wide>
           <div className={s.contactLayout}>
             <div className={s.runtimeGrid}>
-              <ExternalLinkField label="官网" href="https://hermesagent.org.cn" text="hermesagent.org.cn" />
+              <ExternalLinkField label="官网" href={BRAND.homepage} text={BRAND.homepage.replace(/^https?:\/\//, "").replace(/\/$/, "")} />
               <ContactField label="反馈">
                 <ExternalTextLink href="https://github.com/Eynzof/hermes-agent-cn-desktop/issues">
                   到桌面端仓库 UI 层提交 issue 或建议
@@ -1486,10 +1485,6 @@ export function AboutSection({ showHeading = true }: SettingsSectionProps) {
                   <ContactCopyLine label="微信号" value="Eynzof" />
                 </div>
               </ContactField>
-            </div>
-            <div className={s.wechatQrPanel}>
-              <img src={wechatCommunityQr} alt="Hermes Agent 中文社区微信群二维码" />
-              <p>这是 Hermes Agent 中文社区微信群入口，微信扫码即可加入。</p>
             </div>
           </div>
         </DebugCard>
@@ -1515,11 +1510,11 @@ export function AboutSection({ showHeading = true }: SettingsSectionProps) {
           </p>
         </DebugCard>
 
-        <DebugCard icon={<Globe2 size={15} />} title="中文社区" sub="本地化体验和使用文档" wide>
+        <DebugCard icon={<Globe2 size={15} />} title="官网" sub="本地化体验和使用文档" wide>
           <p className={s.desc}>
-            中文社区桌面版会把常用配置、消息平台接入、运行状态和排障入口收进一个桌面工作台，尽量减少命令行门槛。
-            后续社区入口和使用文档会同步到
-            <ExternalTextLink href="https://hermesagent.org.cn">中文社区官网</ExternalTextLink>。
+            {BRAND.edition}会把常用配置、消息平台接入、运行状态和排障入口收进一个桌面工作台，尽量减少命令行门槛。
+            后续入口和使用文档会同步到
+            <ExternalTextLink href={BRAND.homepage}>官网</ExternalTextLink>。
           </p>
         </DebugCard>
       </div>
