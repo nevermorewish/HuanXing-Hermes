@@ -1,5 +1,5 @@
 # Build hermes-agent-cn-desktop installers and attach them to a GitHub
-# Release. Triggers on tags matching `v*` (e.g. `v0.3.4`).
+# Release. Triggers on tags matching `v*` (e.g. `v0.3.5`).
 #
 # Desktop release build runs in parallel for every brand and platform. Each job:
 #   1. Installs Node + pnpm + Rust toolchain
@@ -20,9 +20,9 @@
 #   8. The generated installer payload is uploaded to the configured Linux
 #      download server under <remoteRoot>/<brand>/<channel>/ and
 #      <remoteRoot>/<brand>/releases/v<version>/.
-#   9. After all platforms finish, each brand's latest.json update manifest
-#      is generated from the GitHub Release assets and uploaded to the same
-#      download server.
+#   9. Each brand's latest.json update manifest is merged and uploaded while
+#      its platform artifacts are uploaded, so the server manifest does not
+#      depend on a separate GitHub Release asset aggregation job.
 
 name: release-desktop
 
@@ -33,7 +33,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag name to associate the build with (e.g. v0.3.4)"
+        description: "Tag name to associate the build with (e.g. v0.3.5)"
         required: true
       bundled_runtime_tag:
         description: "Hermes-CN-Core runtime release tag to embed in desktop installers, or latest"
@@ -297,18 +297,25 @@ jobs:
           # trigger it falls back to GITHUB_REF, but we pass it explicitly
           # so workflow_dispatch also works.
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: "Hermes Agent 涓枃绀惧尯妗岄潰鐗?${{ github.event.inputs.tag || github.ref_name }}"
+          releaseName: "Hermes Agent CN Desktop ${{ github.event.inputs.tag || github.ref_name }}"
           releaseBody: |
-            鑷姩鏋勫缓鐨?Hermes Agent 涓枃绀惧尯妗岄潰鐗堝畨瑁呭寘銆?
-            鏈鎸?brands/*.json 鏋勫缓澶氬搧鐗屽畨瑁呭寘锛?{{ needs.resolve-brands.outputs.brands }}銆?
-            Windows 绯荤粺瀹夎鍚嶇О銆佸畨瑁呯洰褰曞拰鍗歌浇娉ㄥ唽琛ㄩ」浣跨敤鑻辨枃鍚?            Hermes Agent CN Desktop锛岄伩鍏嶄腑鏂囪矾寰勯€犳垚鍏煎鎬ч棶棰樸€?
-            瀹夎鍖呭凡鍐呯疆鏉ヨ嚜 ${{ steps.runtime_manifest.outputs.source_repo }}
-            ${{ steps.runtime_manifest.outputs.source_commit }} 鐨?Dashboard 鍓嶇銆佸唴缃妧鑳藉拰鍐呯疆鎻掍欢銆?
+            Automated Hermes Agent CN Desktop installers.
 
-            Windows 鍜?macOS 瀹夎鍖呭悓鏃跺唴缃?Hermes-CN-Core runtime
-            ${{ steps.runtime_manifest.outputs.runtime_version }}锛屽畨瑁呭悗鍙洿鎺ュ惎鍔ㄦ湰鍦板唴鏍搞€?
+            Built brands: ${{ needs.resolve-brands.outputs.brands }}.
 
-            濡傞渶瑕嗙洊 runtime 鏇存柊婧愶紝鍙缃?HERMES_RUNTIME_UPDATE_* 鐜鍙橀噺銆?
+            Windows installer name, install directory, and uninstall registry
+            entries use the English name Hermes Agent CN Desktop to avoid
+            compatibility issues caused by non-ASCII install paths.
+
+            Bundled dashboard/runtime source:
+            ${{ steps.runtime_manifest.outputs.source_repo }}
+            ${{ steps.runtime_manifest.outputs.source_commit }}.
+
+            Bundled Hermes-CN-Core runtime:
+            ${{ steps.runtime_manifest.outputs.runtime_version }}.
+
+            Override HERMES_RUNTIME_UPDATE_* only when using a custom runtime
+            update source.
           releaseDraft: false
           # Mark SemVer prerelease tags as prerelease on GitHub Releases.
           prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
@@ -328,22 +335,25 @@ jobs:
           # trigger it falls back to GITHUB_REF, but we pass it explicitly
           # so workflow_dispatch also works.
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: "Hermes Agent 中文社区桌面版 ${{ github.event.inputs.tag || github.ref_name }}"
+          releaseName: "Hermes Agent CN Desktop ${{ github.event.inputs.tag || github.ref_name }}"
           releaseBody: |
-            自动构建的 Hermes Agent 中文社区桌面版安装包。
+            Automated Hermes Agent CN Desktop installers.
 
-            本次按 brands/*.json 构建多品牌安装包：${{ needs.resolve-brands.outputs.brands }}。
+            Built brands: ${{ needs.resolve-brands.outputs.brands }}.
 
-            Windows 系统安装名称、安装目录和卸载注册表项使用英文名
-            Hermes Agent CN Desktop，避免中文路径造成兼容性问题。
+            Windows installer name, install directory, and uninstall registry
+            entries use the English name Hermes Agent CN Desktop to avoid
+            compatibility issues caused by non-ASCII install paths.
 
-            安装包已内置来自 ${{ steps.runtime_manifest.outputs.source_repo }}
-            ${{ steps.runtime_manifest.outputs.source_commit }} 的 Dashboard 前端、内置技能和内置插件。
+            Bundled dashboard/runtime source:
+            ${{ steps.runtime_manifest.outputs.source_repo }}
+            ${{ steps.runtime_manifest.outputs.source_commit }}.
 
-            Windows 和 macOS 安装包同时内置 Hermes-CN-Core runtime
-            ${{ steps.runtime_manifest.outputs.runtime_version }}，安装后可直接启动本地内核。
+            Bundled Hermes-CN-Core runtime:
+            ${{ steps.runtime_manifest.outputs.runtime_version }}.
 
-            如需覆盖 runtime 更新源，可设置 HERMES_RUNTIME_UPDATE_* 环境变量。
+            Override HERMES_RUNTIME_UPDATE_* only when using a custom runtime
+            update source.
           releaseDraft: false
           # Mark SemVer prerelease tags as prerelease on GitHub Releases.
           prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
@@ -417,7 +427,9 @@ jobs:
         env:
           BRAND: ${{ matrix.brand }}
           RUNTIME_PLATFORM: ${{ matrix.runtime_platform }}
+          RUNTIME_ARCH: ${{ matrix.runtime_arch }}
           TARGET: ${{ matrix.target }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         shell: pwsh
         run: |
           $package = Get-Content package.json -Raw | ConvertFrom-Json
@@ -456,16 +468,60 @@ jobs:
             Copy-Item $_.FullName -Destination $archiveOut -Force
           }
 
+          $platformKey = if ($env:RUNTIME_PLATFORM -eq 'win32') {
+            'windows'
+          } elseif ($env:RUNTIME_PLATFORM -eq 'darwin' -and $env:RUNTIME_ARCH -eq 'arm64') {
+            'macos-arm64'
+          } elseif ($env:RUNTIME_PLATFORM -eq 'darwin') {
+            'macos-x64'
+          } else {
+            $env:RUNTIME_PLATFORM
+          }
+
+          $platformLabel = switch ($platformKey) {
+            'windows' { 'Windows installer' }
+            'macos-arm64' { 'macOS Apple Silicon DMG' }
+            'macos-x64' { 'macOS Intel DMG' }
+            default { $platformKey }
+          }
+
+          $assetFile = $files |
+            Where-Object { $_.Extension -in @('.exe', '.msi', '.dmg') } |
+            Select-Object -First 1
+          if (-not $assetFile) {
+            throw "No installer asset found under $source"
+          }
+
+          $encodedFileName = [Uri]::EscapeDataString($assetFile.Name)
+          $assetSha256 = (Get-FileHash -Algorithm SHA256 $assetFile.FullName).Hash.ToLowerInvariant()
+          $assetPatchPath = "release-upload/$env:BRAND/$platformKey-asset.json"
+          $assetPatch = [ordered]@{
+            platformKey = $platformKey
+            asset = [ordered]@{
+              label = $platformLabel
+              platform = $platformKey
+              fileName = $assetFile.Name
+              size = $assetFile.Length
+              sha256 = $assetSha256
+              url = "$env:UPDATE_FEED_BASE_URL/$env:BRAND/$channel/$encodedFileName"
+              versionedUrl = "$env:UPDATE_FEED_BASE_URL/$env:BRAND/releases/v$version/$encodedFileName"
+              sourceUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:RELEASE_TAG/$encodedFileName"
+            }
+          }
+          $assetPatch | ConvertTo-Json -Depth 20 | Set-Content -Path $assetPatchPath -Encoding utf8
+
           Write-Host "version=$version"
           Write-Host "channel=$channel"
           Write-Host "source=$source"
           Write-Host "upload_dir=$channelOut"
+          Write-Host "asset_patch=$assetPatchPath"
           Get-ChildItem $channelOut | Select-Object Name, Length
 
           "version=$version" >> $env:GITHUB_OUTPUT
           "channel=$channel" >> $env:GITHUB_OUTPUT
           "channel_dir=$channelOut" >> $env:GITHUB_OUTPUT
           "archive_dir=$archiveOut" >> $env:GITHUB_OUTPUT
+          "asset_patch=$assetPatchPath" >> $env:GITHUB_OUTPUT
 
       - name: Configure SSH for Linux upload
         env:
@@ -539,6 +595,7 @@ jobs:
           VERSION: ${{ steps.upload_payload.outputs.version }}
           CHANNEL_DIR: ${{ steps.upload_payload.outputs.channel_dir }}
           ARCHIVE_DIR: ${{ steps.upload_payload.outputs.archive_dir }}
+          ASSET_PATCH: ${{ steps.upload_payload.outputs.asset_patch }}
         shell: pwsh
         run: |
           function Quote-RemotePath([string]$value) {
@@ -607,302 +664,57 @@ jobs:
             Invoke-RemoteUpload $file $archiveDestination "archive"
           }
 
+          $assetPatch = Get-Content $env:ASSET_PATCH -Raw | ConvertFrom-Json
+          $latestDir = Join-Path $env:RUNNER_TEMP "$env:BRAND-latest"
+          New-Item -ItemType Directory -Force -Path $latestDir | Out-Null
+          $latestPath = Join-Path $latestDir "latest.json"
+          $remoteLatest = Quote-RemotePath "$destinationRoot/latest.json"
+          $remoteJsonLines = ssh `
+            -i $env:SSH_KEY_PATH `
+            -p $env:LINUX_DEPLOY_PORT `
+            -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
+            -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
+            -o "ConnectTimeout=30" `
+            -o "ServerAliveInterval=30" `
+            -o "ServerAliveCountMax=10" `
+            $remote "if [ -f $remoteLatest ]; then cat $remoteLatest; fi"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to read remote latest.json for $env:BRAND"
+          }
+
+          $now = (Get-Date).ToUniversalTime().ToString("o")
+          $remoteJson = ($remoteJsonLines -join "`n").Trim()
+          $manifest = $null
+          if (-not [string]::IsNullOrWhiteSpace($remoteJson)) {
+            try {
+              $candidate = $remoteJson | ConvertFrom-Json
+              if ([string]$candidate.semver -eq [string]$env:VERSION) {
+                $manifest = $candidate
+              }
+            } catch {
+              Write-Host "Ignoring invalid remote latest.json for ${env:BRAND}: $($_.Exception.Message)"
+            }
+          }
+
+          if (-not $manifest) {
+            $manifest = [pscustomobject]@{
+              repository = $env:GITHUB_REPOSITORY
+              version = "v$env:VERSION"
+              semver = $env:VERSION
+              publishedAt = $now
+              sourceUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/tag/v$env:VERSION"
+              updatedAt = $now
+              assets = [pscustomobject]@{}
+            }
+          }
+          if (-not $manifest.PSObject.Properties['assets'] -or -not $manifest.assets) {
+            $manifest | Add-Member -MemberType NoteProperty -Name assets -Value ([pscustomobject]@{}) -Force
+          }
+          $manifest.updatedAt = $now
+          $manifest.assets | Add-Member -MemberType NoteProperty -Name $assetPatch.platformKey -Value $assetPatch.asset -Force
+          $manifest | ConvertTo-Json -Depth 20 | Set-Content -Path $latestPath -Encoding utf8
+          Invoke-RemoteUpload $latestPath $destinationRoot "latest.json"
+
           Write-Host "Uploaded $env:BRAND channel files to $env:UPDATE_FEED_BASE_URL/$env:BRAND/$env:CHANNEL/"
           Write-Host "Uploaded $env:BRAND archive files to $env:UPDATE_FEED_BASE_URL/$env:BRAND/releases/v$env:VERSION/"
-
-  publish-manifests:
-    needs:
-      - resolve-brands
-      - build
-    name: Publish desktop update manifests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Generate brand latest.json manifests
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
-          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: |
-          node - <<'NODE'
-          const crypto = require("node:crypto");
-          const fs = require("node:fs");
-          const path = require("node:path");
-
-          const token = process.env.GH_TOKEN;
-          const repo = process.env.GITHUB_REPOSITORY;
-          const tag = process.env.RELEASE_TAG;
-          const updateFeedBaseUrl = process.env.UPDATE_FEED_BASE_URL.replace(/\/+$/, "");
-
-          if (!token) throw new Error("GH_TOKEN is required");
-          if (!repo) throw new Error("GITHUB_REPOSITORY is required");
-          if (!tag) throw new Error("RELEASE_TAG is required");
-
-          function normalizeMatchKey(value) {
-            return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-          }
-
-          function encodePathSegment(value) {
-            return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
-          }
-
-          function channelFromSemver(semver) {
-            const match = /-([0-9A-Za-z]+)/.exec(semver);
-            return match ? match[1] : "latest";
-          }
-
-          function platformKey(fileName) {
-            const name = fileName.toLowerCase();
-            if (name.endsWith(".exe") || name.endsWith(".msi")) return "windows";
-            if (name.endsWith(".dmg")) {
-              if (name.includes("aarch64") || name.includes("arm64")) return "macos-arm64";
-              if (name.includes("x86_64") || name.includes("x64")) return "macos-x64";
-              return "macos";
-            }
-            return null;
-          }
-
-          function platformLabel(key) {
-            switch (key) {
-              case "windows":
-                return "Windows installer";
-              case "macos-arm64":
-                return "macOS Apple Silicon DMG";
-              case "macos-x64":
-                return "macOS Intel DMG";
-              case "macos":
-                return "macOS DMG";
-              default:
-                return key;
-            }
-          }
-
-          async function githubJson(url) {
-            const response = await fetch(url, {
-              headers: {
-                Accept: "application/vnd.github+json",
-                Authorization: `Bearer ${token}`,
-                "User-Agent": "hermes-agent-cn-desktop-release-workflow",
-                "X-GitHub-Api-Version": "2022-11-28",
-              },
-            });
-            if (!response.ok) {
-              throw new Error(`GitHub API request failed: ${url} HTTP ${response.status}`);
-            }
-            return response.json();
-          }
-
-          async function downloadAsset(asset) {
-            const response = await fetch(asset.url, {
-              headers: {
-                Accept: "application/octet-stream",
-                Authorization: `Bearer ${token}`,
-                "User-Agent": "hermes-agent-cn-desktop-release-workflow",
-                "X-GitHub-Api-Version": "2022-11-28",
-              },
-            });
-            if (!response.ok) {
-              throw new Error(`Asset download failed: ${asset.name} HTTP ${response.status}`);
-            }
-            return Buffer.from(await response.arrayBuffer());
-          }
-
-          async function main() {
-            const release = await githubJson(`https://api.github.com/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`);
-            const semver = tag.replace(/^v/, "");
-            const channel = channelFromSemver(semver);
-            const generatedAt = new Date().toISOString();
-            const brandsDir = path.join(process.cwd(), "brands");
-            const brandIds = fs.readdirSync(brandsDir)
-              .filter((name) => name.endsWith(".json"))
-              .map((name) => path.basename(name, ".json"))
-              .filter((brand) => brand !== "deepclaw")
-              .sort();
-
-            fs.mkdirSync("release-manifests", { recursive: true });
-
-            for (const brandId of brandIds) {
-              const brand = JSON.parse(fs.readFileSync(path.join(brandsDir, `${brandId}.json`), "utf8"));
-              const matchKeys = [brand.id, brand.productName, brand.appNameEn]
-                .map(normalizeMatchKey)
-                .filter(Boolean);
-
-              const matchingAssets = release.assets
-                .filter((asset) => platformKey(asset.name))
-                .filter((asset) => {
-                  const assetKey = normalizeMatchKey(asset.name);
-                  return matchKeys.some((key) => assetKey.includes(key));
-                })
-                .sort((left, right) => left.name.localeCompare(right.name, "en"));
-
-              if (matchingAssets.length === 0) {
-                throw new Error(`No installer release assets found for brand ${brandId}`);
-              }
-
-              const assets = {};
-              for (const asset of matchingAssets) {
-                const key = platformKey(asset.name);
-                const bytes = await downloadAsset(asset);
-                const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
-                const fileName = asset.name;
-                const encodedFileName = encodePathSegment(fileName);
-
-                assets[key] = {
-                  label: platformLabel(key),
-                  platform: key,
-                  fileName,
-                  size: Number(asset.size) || bytes.length,
-                  sha256,
-                  url: `${updateFeedBaseUrl}/${brandId}/${channel}/${encodedFileName}`,
-                  versionedUrl: `${updateFeedBaseUrl}/${brandId}/releases/${tag}/${encodedFileName}`,
-                  sourceUrl: asset.browser_download_url,
-                };
-              }
-
-              const manifest = {
-                repository: repo,
-                version: tag,
-                semver,
-                publishedAt: release.published_at || generatedAt,
-                sourceUrl: release.html_url,
-                updatedAt: generatedAt,
-                assets,
-              };
-
-              const brandOut = path.join("release-manifests", brandId);
-              fs.mkdirSync(brandOut, { recursive: true });
-              fs.writeFileSync(path.join(brandOut, "latest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-              console.log(`Generated ${brandId}/latest.json with assets: ${Object.keys(assets).join(", ")}`);
-            }
-          }
-
-          main().catch((error) => {
-            console.error(error);
-            process.exit(1);
-          });
-          NODE
-
-      - name: Configure SSH for Linux upload
-        env:
-          SECRET_LINUX_DEPLOY_HOST: ${{ secrets.LINUX_DEPLOY_HOST }}
-          SECRET_LINUX_DEPLOY_PORT: ${{ secrets.LINUX_DEPLOY_PORT }}
-          SECRET_LINUX_DEPLOY_USER: ${{ secrets.LINUX_DEPLOY_USER }}
-          VAR_LINUX_DEPLOY_HOST: ${{ vars.LINUX_DEPLOY_HOST }}
-          VAR_LINUX_DEPLOY_PORT: ${{ vars.LINUX_DEPLOY_PORT }}
-          VAR_LINUX_DEPLOY_USER: ${{ vars.LINUX_DEPLOY_USER }}
-          LINUX_DEPLOY_KEY: ${{ secrets.LINUX_DEPLOY_KEY }}
-          LINUX_DEPLOY_KNOWN_HOSTS: ${{ secrets.LINUX_DEPLOY_KNOWN_HOSTS }}
-          SECRET_LINUX_DEPLOY_PATH: ${{ secrets.LINUX_DEPLOY_PATH }}
-          VAR_LINUX_DEPLOY_PATH: ${{ vars.LINUX_DEPLOY_PATH }}
-          INPUT_REMOTE_PATH: ${{ inputs.remote_path }}
-        shell: pwsh
-        run: |
-          $deployHost = if ([string]::IsNullOrWhiteSpace($env:SECRET_LINUX_DEPLOY_HOST)) { $env:VAR_LINUX_DEPLOY_HOST } else { $env:SECRET_LINUX_DEPLOY_HOST }
-          $deployPort = if ([string]::IsNullOrWhiteSpace($env:SECRET_LINUX_DEPLOY_PORT)) { $env:VAR_LINUX_DEPLOY_PORT } else { $env:SECRET_LINUX_DEPLOY_PORT }
-          $deployUser = if ([string]::IsNullOrWhiteSpace($env:SECRET_LINUX_DEPLOY_USER)) { $env:VAR_LINUX_DEPLOY_USER } else { $env:SECRET_LINUX_DEPLOY_USER }
-          $configuredRemotePath = if ([string]::IsNullOrWhiteSpace($env:SECRET_LINUX_DEPLOY_PATH)) { $env:VAR_LINUX_DEPLOY_PATH } else { $env:SECRET_LINUX_DEPLOY_PATH }
-
-          if ([string]::IsNullOrWhiteSpace($deployHost)) { $deployHost = '43.224.248.112' }
-          if ([string]::IsNullOrWhiteSpace($deployUser)) { $deployUser = 'root' }
-
-          $missing = @()
-          if ([string]::IsNullOrWhiteSpace($env:LINUX_DEPLOY_KEY)) { $missing += 'secrets.LINUX_DEPLOY_KEY' }
-          if ([string]::IsNullOrWhiteSpace($env:INPUT_REMOTE_PATH) -and [string]::IsNullOrWhiteSpace($configuredRemotePath)) {
-            $missing += 'workflow input remote_path, secrets.LINUX_DEPLOY_PATH, or vars.LINUX_DEPLOY_PATH'
-          }
-          if ($missing.Count -gt 0) {
-            throw "Missing Linux upload configuration: $($missing -join ', ')"
-          }
-
-          $port = if ([string]::IsNullOrWhiteSpace($deployPort)) { '22' } else { $deployPort }
-          $remotePath = if ([string]::IsNullOrWhiteSpace($env:INPUT_REMOTE_PATH)) { $configuredRemotePath } else { $env:INPUT_REMOTE_PATH }
-          $remotePath = $remotePath.TrimEnd('/')
-
-          $sshDir = Join-Path $HOME '.ssh'
-          New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
-
-          $keyPath = Join-Path $sshDir 'linux_deploy_key'
-          ($env:LINUX_DEPLOY_KEY -replace "`r`n", "`n") | Set-Content -Path $keyPath -NoNewline -Encoding ascii
-          chmod 600 $keyPath
-
-          $knownHostsPath = Join-Path $sshDir 'known_hosts'
-          if ([string]::IsNullOrWhiteSpace($env:LINUX_DEPLOY_KNOWN_HOSTS)) {
-            New-Item -ItemType File -Force -Path $knownHostsPath | Out-Null
-            $strictHostKeyChecking = 'accept-new'
-          } else {
-            ($env:LINUX_DEPLOY_KNOWN_HOSTS -replace "`r`n", "`n") | Set-Content -Path $knownHostsPath -NoNewline -Encoding ascii
-            $strictHostKeyChecking = 'yes'
-          }
-
-          "SSH_KEY_PATH=$keyPath" >> $env:GITHUB_ENV
-          "SSH_KNOWN_HOSTS_PATH=$knownHostsPath" >> $env:GITHUB_ENV
-          "SSH_STRICT_HOST_KEY_CHECKING=$strictHostKeyChecking" >> $env:GITHUB_ENV
-          "LINUX_DEPLOY_HOST=$deployHost" >> $env:GITHUB_ENV
-          "LINUX_DEPLOY_PORT=$port" >> $env:GITHUB_ENV
-          "LINUX_DEPLOY_USER=$deployUser" >> $env:GITHUB_ENV
-          "LINUX_DEPLOY_REMOTE_PATH=$remotePath" >> $env:GITHUB_ENV
-
-      - name: Upload latest.json manifests to Linux server
-        shell: pwsh
-        run: |
-          function Quote-RemotePath([string]$value) {
-            return "'" + $value.Replace("'", "'\''") + "'"
-          }
-
-          function Invoke-SshCommand([string]$command, [string]$failureMessage) {
-            ssh `
-              -i $env:SSH_KEY_PATH `
-              -p $env:LINUX_DEPLOY_PORT `
-              -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
-              -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
-              -o "ConnectTimeout=30" `
-              -o "ServerAliveInterval=30" `
-              -o "ServerAliveCountMax=10" `
-              $remote $command
-            if ($LASTEXITCODE -ne 0) { throw $failureMessage }
-          }
-
-          function Invoke-RemoteUpload([string]$filePath, [string]$remoteFilePath, [string]$label) {
-            $attempt = 1
-            while ($attempt -le 3) {
-              Write-Host "Uploading $label attempt $attempt/3: $filePath"
-              scp `
-                -i $env:SSH_KEY_PATH `
-                -P $env:LINUX_DEPLOY_PORT `
-                -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
-                -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
-                -o "ConnectTimeout=30" `
-                -o "ServerAliveInterval=30" `
-                -o "ServerAliveCountMax=10" `
-                $filePath "${remote}:$remoteFilePath"
-              if ($LASTEXITCODE -eq 0) { return }
-              if ($attempt -eq 3) { throw "Failed to upload $label after 3 attempts: $filePath" }
-              Start-Sleep -Seconds (10 * $attempt)
-              $attempt += 1
-            }
-          }
-
-          $remoteRoot = $env:LINUX_DEPLOY_REMOTE_PATH.TrimEnd('/', '\')
-          $feedPath = ([Uri]$env:UPDATE_FEED_BASE_URL).AbsolutePath.Trim('/')
-          $feedDir = if ($feedPath) { ($feedPath -split '/')[-1] } else { '' }
-          $remoteLeaf = Split-Path -Path $remoteRoot -Leaf
-          if ($feedDir -and $remoteLeaf -ne $feedDir) {
-            $remoteRoot = "$remoteRoot/$feedDir"
-          }
-
-          $remote = "$env:LINUX_DEPLOY_USER@$env:LINUX_DEPLOY_HOST"
-          Get-ChildItem release-manifests -Directory | ForEach-Object {
-            $brand = $_.Name
-            $manifestPath = Join-Path $_.FullName 'latest.json'
-            $destinationRoot = "$remoteRoot/$brand"
-            $remoteDestination = Quote-RemotePath $destinationRoot
-
-            Invoke-SshCommand "mkdir -p $remoteDestination" "Failed to create remote manifest directory for $brand"
-            Invoke-RemoteUpload $manifestPath "$destinationRoot/latest.json" "$brand latest.json"
-
-            Write-Host "Uploaded $brand update manifest to $env:UPDATE_FEED_BASE_URL/$brand/latest.json"
-          }
+          Write-Host "Uploaded $env:BRAND update manifest to $env:UPDATE_FEED_BASE_URL/$env:BRAND/latest.json"
