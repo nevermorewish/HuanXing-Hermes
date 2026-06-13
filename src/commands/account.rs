@@ -765,9 +765,19 @@ fn build_provider_entry(
     entry.insert("api_mode".into(), json!("chat_completions"));
     entry.insert("transport".into(), json!("openai_chat"));
     entry.insert("model".into(), json!(primary_model));
+    // Core's config normalizer (_normalize_custom_provider_entry) only keeps a
+    // `models` map when it is a dict {id: {...}} — a list of {id} objects is
+    // silently dropped (it only preserves list items that are plain strings),
+    // which made the account's models vanish from the picker. Write the dict
+    // shape Core expects.
     entry.insert(
         "models".into(),
-        json!(models.iter().map(|id| json!({ "id": id })).collect::<Vec<_>>()),
+        Value::Object(
+            models
+                .iter()
+                .map(|id| (id.clone(), json!({})))
+                .collect::<serde_json::Map<String, Value>>(),
+        ),
     );
     if !api_key.is_empty() {
         entry.insert("api_key".into(), json!(api_key));
