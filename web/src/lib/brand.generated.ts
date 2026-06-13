@@ -40,7 +40,7 @@ export const BRAND: BrandConfig = {
   "tagline": "AI Assistant",
   "edition": "桌面版",
   "updateManifestUrl": "https://ai.fengchiyun.com/downloads/huanxinghermes/latest.json",
-  "updateDownloadUrl": "https://ai.fengchiyun.com/downloads/huanxinghermes"
+  "updateDownloadUrl": "https://api.huanxing.ai/hermes-client"
 } as const;
 
 export default BRAND;
