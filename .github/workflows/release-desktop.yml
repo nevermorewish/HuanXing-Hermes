@@ -116,6 +116,7 @@ jobs:
     name: Build ${{ matrix.brand }} / ${{ matrix.target }}
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         include: ${{ fromJson(needs.resolve-brands.outputs.matrix) }}
 
@@ -544,6 +545,39 @@ jobs:
             return "'" + $value.Replace("'", "'\''") + "'"
           }
 
+          function Invoke-SshCommand([string]$command, [string]$failureMessage) {
+            ssh `
+              -i $env:SSH_KEY_PATH `
+              -p $env:LINUX_DEPLOY_PORT `
+              -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
+              -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
+              -o "ConnectTimeout=30" `
+              -o "ServerAliveInterval=30" `
+              -o "ServerAliveCountMax=10" `
+              $remote $command
+            if ($LASTEXITCODE -ne 0) { throw $failureMessage }
+          }
+
+          function Invoke-RemoteUpload([string]$filePath, [string]$remoteDirectory, [string]$label) {
+            $attempt = 1
+            while ($attempt -le 3) {
+              Write-Host "Uploading $label attempt $attempt/3: $filePath"
+              scp `
+                -i $env:SSH_KEY_PATH `
+                -P $env:LINUX_DEPLOY_PORT `
+                -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
+                -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
+                -o "ConnectTimeout=30" `
+                -o "ServerAliveInterval=30" `
+                -o "ServerAliveCountMax=10" `
+                $filePath "${remote}:$remoteDirectory/"
+              if ($LASTEXITCODE -eq 0) { return }
+              if ($attempt -eq 3) { throw "Failed to upload $label file after 3 attempts: $filePath" }
+              Start-Sleep -Seconds (10 * $attempt)
+              $attempt += 1
+            }
+          }
+
           $remoteRoot = $env:LINUX_DEPLOY_REMOTE_PATH.TrimEnd('/', '\')
           $feedPath = ([Uri]$env:UPDATE_FEED_BASE_URL).AbsolutePath.Trim('/')
           $feedDir = if ($feedPath) { ($feedPath -split '/')[-1] } else { '' }
@@ -560,32 +594,18 @@ jobs:
           $remoteArchive = Quote-RemotePath $archiveDestination
           $remote = "$env:LINUX_DEPLOY_USER@$env:LINUX_DEPLOY_HOST"
 
-          ssh `
-            -i $env:SSH_KEY_PATH `
-            -p $env:LINUX_DEPLOY_PORT `
-            -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
-            -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
-            $remote "mkdir -p $remoteChannel $remoteArchive"
-          if ($LASTEXITCODE -ne 0) { throw "Failed to create remote upload directories" }
+          Invoke-SshCommand "mkdir -p $remoteChannel $remoteArchive" "Failed to create remote upload directories"
 
           $channelFiles = Get-ChildItem $env:CHANNEL_DIR -File | ForEach-Object { $_.FullName }
           $archiveFiles = Get-ChildItem $env:ARCHIVE_DIR -File | ForEach-Object { $_.FullName }
 
-          scp `
-            -i $env:SSH_KEY_PATH `
-            -P $env:LINUX_DEPLOY_PORT `
-            -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
-            -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
-            $channelFiles "${remote}:$channelDestination/"
-          if ($LASTEXITCODE -ne 0) { throw "Failed to upload channel files" }
+          foreach ($file in $channelFiles) {
+            Invoke-RemoteUpload $file $channelDestination "channel"
+          }
 
-          scp `
-            -i $env:SSH_KEY_PATH `
-            -P $env:LINUX_DEPLOY_PORT `
-            -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
-            -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
-            $archiveFiles "${remote}:$archiveDestination/"
-          if ($LASTEXITCODE -ne 0) { throw "Failed to upload archive files" }
+          foreach ($file in $archiveFiles) {
+            Invoke-RemoteUpload $file $archiveDestination "archive"
+          }
 
           Write-Host "Uploaded $env:BRAND channel files to $env:UPDATE_FEED_BASE_URL/$env:BRAND/$env:CHANNEL/"
           Write-Host "Uploaded $env:BRAND archive files to $env:UPDATE_FEED_BASE_URL/$env:BRAND/releases/v$env:VERSION/"
@@ -833,6 +853,39 @@ jobs:
             return "'" + $value.Replace("'", "'\''") + "'"
           }
 
+          function Invoke-SshCommand([string]$command, [string]$failureMessage) {
+            ssh `
+              -i $env:SSH_KEY_PATH `
+              -p $env:LINUX_DEPLOY_PORT `
+              -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
+              -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
+              -o "ConnectTimeout=30" `
+              -o "ServerAliveInterval=30" `
+              -o "ServerAliveCountMax=10" `
+              $remote $command
+            if ($LASTEXITCODE -ne 0) { throw $failureMessage }
+          }
+
+          function Invoke-RemoteUpload([string]$filePath, [string]$remoteFilePath, [string]$label) {
+            $attempt = 1
+            while ($attempt -le 3) {
+              Write-Host "Uploading $label attempt $attempt/3: $filePath"
+              scp `
+                -i $env:SSH_KEY_PATH `
+                -P $env:LINUX_DEPLOY_PORT `
+                -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
+                -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
+                -o "ConnectTimeout=30" `
+                -o "ServerAliveInterval=30" `
+                -o "ServerAliveCountMax=10" `
+                $filePath "${remote}:$remoteFilePath"
+              if ($LASTEXITCODE -eq 0) { return }
+              if ($attempt -eq 3) { throw "Failed to upload $label after 3 attempts: $filePath" }
+              Start-Sleep -Seconds (10 * $attempt)
+              $attempt += 1
+            }
+          }
+
           $remoteRoot = $env:LINUX_DEPLOY_REMOTE_PATH.TrimEnd('/', '\')
           $feedPath = ([Uri]$env:UPDATE_FEED_BASE_URL).AbsolutePath.Trim('/')
           $feedDir = if ($feedPath) { ($feedPath -split '/')[-1] } else { '' }
@@ -848,21 +901,8 @@ jobs:
             $destinationRoot = "$remoteRoot/$brand"
             $remoteDestination = Quote-RemotePath $destinationRoot
 
-            ssh `
-              -i $env:SSH_KEY_PATH `
-              -p $env:LINUX_DEPLOY_PORT `
-              -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
-              -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
-              $remote "mkdir -p $remoteDestination"
-            if ($LASTEXITCODE -ne 0) { throw "Failed to create remote manifest directory for $brand" }
-
-            scp `
-              -i $env:SSH_KEY_PATH `
-              -P $env:LINUX_DEPLOY_PORT `
-              -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
-              -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
-              $manifestPath "${remote}:$destinationRoot/latest.json"
-            if ($LASTEXITCODE -ne 0) { throw "Failed to upload latest.json for $brand" }
+            Invoke-SshCommand "mkdir -p $remoteDestination" "Failed to create remote manifest directory for $brand"
+            Invoke-RemoteUpload $manifestPath "$destinationRoot/latest.json" "$brand latest.json"
 
             Write-Host "Uploaded $brand update manifest to $env:UPDATE_FEED_BASE_URL/$brand/latest.json"
           }
