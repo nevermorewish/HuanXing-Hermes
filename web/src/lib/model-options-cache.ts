@@ -30,21 +30,15 @@ export function getCachedModelOptions(
 ): Promise<ModelOptionsResult> {
   const key = cacheKey(sessionId);
   const cached = cache.get(key);
-  const currentTime = now();
 
-  if (
-    cached?.value &&
-    cached.fetchedAt !== undefined &&
-    currentTime - cached.fetchedAt < MODEL_OPTIONS_CACHE_TTL_MS
-  ) {
-    return Promise.resolve(cached.value);
-  }
-
+  // Caching disabled: always fetch a fresh list so newly configured account
+  // models appear immediately and stale provider lists don't linger. An
+  // in-flight request is still shared to avoid duplicate concurrent fetches.
   if (cached?.promise) return cached.promise;
 
   const promise = loader().then(
     (value) => {
-      cache.set(key, { value, fetchedAt: now() });
+      cache.delete(key);
       return value;
     },
     (error) => {
@@ -52,6 +46,6 @@ export function getCachedModelOptions(
       throw error;
     },
   );
-  cache.set(key, { ...cached, promise });
+  cache.set(key, { promise });
   return promise;
 }

@@ -16,6 +16,12 @@ export function useModelOptions() {
   return useQuery<ModelOptionsResult>({
     queryKey: ["model-options"],
     queryFn: () => getModelOptions(),
-    staleTime: 5 * 60_000,
+    // No caching: always refetch so newly configured account models show up
+    // immediately and stale provider lists (e.g. relay-advertised models) don't
+    // linger in the picker.
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
 }
