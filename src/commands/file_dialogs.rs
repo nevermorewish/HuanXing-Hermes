@@ -280,8 +280,8 @@ mod tests {
     #[test]
     fn accepts_safe_external_urls() {
         assert_eq!(
-            validate_external_url(" https://hermesagent.org.cn/path?q=1 ").unwrap(),
-            "https://hermesagent.org.cn/path?q=1"
+            validate_external_url(" https://example.org/path?q=1 ").unwrap(),
+            "https://example.org/path?q=1"
         );
         assert_eq!(
             validate_external_url("http://example.com").unwrap(),

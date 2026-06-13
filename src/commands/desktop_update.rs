@@ -145,14 +145,14 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/latest.json"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "repository": "Eynzof/Hermes-CN-Desktop",
+                "repository": "example/desktop",
                 "version": "v0.3.1",
                 "semver": "0.3.1",
                 "assets": {
                     "windows": {
                         "label": "Windows 安装包",
-                        "fileName": "Hermes.Agent.CN.Desktop_0.3.1_x64-setup.exe",
-                        "url": "https://desktop.hermesagent.org.cn/download/windows/latest.exe"
+                        "fileName": "Desktop_0.3.1_x64-setup.exe",
+                        "url": "https://desktop.example.com/download/windows/latest.exe"
                     }
                 }
             })))

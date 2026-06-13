@@ -106,10 +106,10 @@ describe("isTauriDevMode", () => {
   it("exposes external URL opening through Tauri IPC", async () => {
     await installTauriBridge();
 
-    await window.hermesDesktop?.openExternalUrl?.({ url: "https://hermesagent.org.cn" });
+    await window.hermesDesktop?.openExternalUrl?.({ url: "https://example.org" });
 
     expect(mockInvoke).toHaveBeenCalledWith("open_external_url", {
-      input: { url: "https://hermesagent.org.cn" },
+      input: { url: "https://example.org" },
     });
   });
 

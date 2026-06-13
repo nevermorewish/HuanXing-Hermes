@@ -13,7 +13,7 @@ import {
 function fetchResult(overrides: Partial<DesktopUpdateManifestFetchResult> = {}): DesktopUpdateManifestFetchResult {
   return {
     ok: true,
-    manifestUrl: "https://desktop.hermesagent.org.cn/latest.json",
+    manifestUrl: "https://desktop.example.com/latest.json",
     manifest: { semver: "0.3.1", version: "v0.3.1" },
     checkedAtMs: 1_765_000_000_000,
     ...overrides,

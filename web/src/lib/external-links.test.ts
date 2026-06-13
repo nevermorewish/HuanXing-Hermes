@@ -7,8 +7,8 @@ afterEach(() => {
 
 describe("external-links", () => {
   it("normalizes safe browser URLs", () => {
-    expect(normalizeExternalUrl(" https://hermesagent.org.cn/docs?q=1 ")).toBe(
-      "https://hermesagent.org.cn/docs?q=1",
+    expect(normalizeExternalUrl(" https://example.org/docs?q=1 ")).toBe(
+      "https://example.org/docs?q=1",
     );
     expect(normalizeExternalUrl("http://example.com")).toBe("http://example.com/");
     expect(normalizeExternalUrl("mailto:hello@example.com")).toBe("mailto:hello@example.com");
@@ -33,9 +33,9 @@ describe("external-links", () => {
       open: fallbackOpen,
     };
 
-    await expect(openExternalUrl("https://hermesagent.org.cn")).resolves.toBe(true);
+    await expect(openExternalUrl("https://example.org")).resolves.toBe(true);
 
-    expect(desktopOpen).toHaveBeenCalledWith({ url: "https://hermesagent.org.cn/" });
+    expect(desktopOpen).toHaveBeenCalledWith({ url: "https://example.org/" });
     expect(fallbackOpen).not.toHaveBeenCalled();
   });
 });
