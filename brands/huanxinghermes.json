@@ -1,0 +1,20 @@
+{
+  "id": "huanxinghermes",
+  "appName": "寰星Agent",
+  "appNameEn": "HuanxingHermes",
+  "productName": "HuanxingHermes Desktop",
+  "identifier": "app.HuanxingHermes.desktop",
+  "dataDirName": ".huanxinghermes",
+  "providerKey": "huanxinghermes",
+  "serviceUrl": "https://api.huanxing.ai/",
+  "rechargeUrl": "https://api.huanxing.ai/wallet",
+  "copyright": "Copyright © 2026 HuanxingHermes",
+  "publisher": "HuanxingHermes",
+  "homepage": "https://api.huanxing.ai",
+  "shortDescription": "HuanxingHermes AI Assistant Desktop",
+  "longDescription": "Desktop app for HuanxingHermes AI Assistant.",
+  "tagline": "AI Assistant",
+  "edition": "桌面版",
+  "updateManifestUrl": "https://ai.fengchiyun.com/downloads/huanxinghermes/latest.json",
+  "updateDownloadUrl": "https://ai.fengchiyun.com/downloads/huanxinghermes"
+}
