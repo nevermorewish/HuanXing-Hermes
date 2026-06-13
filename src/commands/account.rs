@@ -764,6 +764,12 @@ fn build_provider_entry(
     entry.insert("base_url".into(), json!(api_base));
     entry.insert("api_mode".into(), json!("chat_completions"));
     entry.insert("transport".into(), json!("openai_chat"));
+    // Pin the picker to exactly the models the user selected. Without this,
+    // Core defaults discover_models=True and probes the relay's /v1/models,
+    // which advertises models the user never chose (e.g. claude-*) and
+    // overrides the configured `models` map entirely (see Core
+    // model_switch.py list_authenticated_providers).
+    entry.insert("discover_models".into(), json!(false));
     entry.insert("model".into(), json!(primary_model));
     // Core's config normalizer (_normalize_custom_provider_entry) only keeps a
     // `models` map when it is a dict {id: {...}} — a list of {id} objects is
