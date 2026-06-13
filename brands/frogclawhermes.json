@@ -15,6 +15,6 @@
   "longDescription": "Desktop app for FrogClaw AI Assistant.",
   "tagline": "AI Assistant",
   "edition": "桌面版",
-   "updateManifestUrl": "https://ai.fengchiyun.com/downloads/froghermes/latest.json",
-  "updateDownloadUrl": "https://ai.fengchiyun.com/downloads/froghermes"
+  "updateManifestUrl": "https://ai.fengchiyun.com/downloads/frogclawhermes/latest.json",
+  "updateDownloadUrl": "https://ai.fengchiyun.com/downloads/frogclawhermes"
 }

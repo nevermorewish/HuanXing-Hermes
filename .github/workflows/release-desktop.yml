@@ -17,6 +17,12 @@
 #      pipeline.
 #   7. tauri-action uploads .exe / .dmg to the GitHub Release
 #      it creates on first run, or appends to an existing tag's release.
+#   8. The generated installer payload is uploaded to the configured Linux
+#      download server under <remoteRoot>/<brand>/<channel>/ and
+#      <remoteRoot>/<brand>/releases/v<version>/.
+#   9. After all platforms finish, each brand's latest.json update manifest
+#      is generated from the GitHub Release assets and uploaded to the same
+#      download server.
 
 name: release-desktop
 
@@ -33,9 +39,17 @@ on:
         description: "Hermes-CN-Core runtime release tag to embed in desktop installers, or latest"
         default: "runtime-v0.16.0-cn.6"
         required: false
+      remote_path:
+        description: "Linux server download root. Use /www/wwwroot/downloads, or leave empty to use LINUX_DEPLOY_PATH."
+        required: false
+        default: ""
 
 permissions:
   contents: write
+
+env:
+  SERVICE_URL: https://ai.fengchiyun.com
+  UPDATE_FEED_BASE_URL: https://ai.fengchiyun.com/downloads
 
 jobs:
   resolve-brands:
@@ -367,3 +381,459 @@ jobs:
             # final notarized + stapled DMG so the release asset is the one users download.
             gh release upload "$RELEASE_TAG" "$dmg" --clobber
           done
+
+      - name: Prepare Linux upload payload
+        id: upload_payload
+        env:
+          BRAND: ${{ matrix.brand }}
+          RUNTIME_PLATFORM: ${{ matrix.runtime_platform }}
+          TARGET: ${{ matrix.target }}
+        shell: pwsh
+        run: |
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $version = [string]$package.version
+          $channel = 'latest'
+          if ($version -match '-([A-Za-z]+)') {
+            $channel = $Matches[1]
+          }
+
+          $source = if ($env:RUNTIME_PLATFORM -eq 'win32') {
+            "target/$env:TARGET/release/bundle/nsis"
+          } elseif ($env:RUNTIME_PLATFORM -eq 'darwin') {
+            "target/$env:TARGET/release/bundle/dmg"
+          } else {
+            throw "Unsupported runtime platform: $env:RUNTIME_PLATFORM"
+          }
+
+          if (!(Test-Path $source)) {
+            throw "Missing Tauri bundle output: $source"
+          }
+
+          $channelOut = "release-upload/$env:BRAND/$channel"
+          $archiveOut = "release-upload/$env:BRAND/releases/v$version"
+
+          New-Item -ItemType Directory -Force -Path $channelOut, $archiveOut | Out-Null
+
+          $files = Get-ChildItem $source -File |
+            Where-Object { $_.Name -ne 'builder-debug.yml' -and $_.Name -notmatch '\.dSYM$' }
+
+          if ($files.Count -eq 0) {
+            throw "No release files found under $source"
+          }
+
+          $files | ForEach-Object {
+            Copy-Item $_.FullName -Destination $channelOut -Force
+            Copy-Item $_.FullName -Destination $archiveOut -Force
+          }
+
+          Write-Host "version=$version"
+          Write-Host "channel=$channel"
+          Write-Host "source=$source"
+          Write-Host "upload_dir=$channelOut"
+          Get-ChildItem $channelOut | Select-Object Name, Length
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "channel=$channel" >> $env:GITHUB_OUTPUT
+          "channel_dir=$channelOut" >> $env:GITHUB_OUTPUT
+          "archive_dir=$archiveOut" >> $env:GITHUB_OUTPUT
+
+      - name: Configure SSH for Linux upload
+        env:
+          SECRET_LINUX_DEPLOY_HOST: ${{ secrets.LINUX_DEPLOY_HOST }}
+          SECRET_LINUX_DEPLOY_PORT: ${{ secrets.LINUX_DEPLOY_PORT }}
+          SECRET_LINUX_DEPLOY_USER: ${{ secrets.LINUX_DEPLOY_USER }}
+          VAR_LINUX_DEPLOY_HOST: ${{ vars.LINUX_DEPLOY_HOST }}
+          VAR_LINUX_DEPLOY_PORT: ${{ vars.LINUX_DEPLOY_PORT }}
+          VAR_LINUX_DEPLOY_USER: ${{ vars.LINUX_DEPLOY_USER }}
+          LINUX_DEPLOY_KEY: ${{ secrets.LINUX_DEPLOY_KEY }}
+          LINUX_DEPLOY_KNOWN_HOSTS: ${{ secrets.LINUX_DEPLOY_KNOWN_HOSTS }}
+          SECRET_LINUX_DEPLOY_PATH: ${{ secrets.LINUX_DEPLOY_PATH }}
+          VAR_LINUX_DEPLOY_PATH: ${{ vars.LINUX_DEPLOY_PATH }}
+          INPUT_REMOTE_PATH: ${{ inputs.remote_path }}
+        shell: pwsh
+        run: |
+          $deployHost = if ([string]::IsNullOrWhiteSpace($env:SECRET_LINUX_DEPLOY_HOST)) { $env:VAR_LINUX_DEPLOY_HOST } else { $env:SECRET_LINUX_DEPLOY_HOST }
+          $deployPort = if ([string]::IsNullOrWhiteSpace($env:SECRET_LINUX_DEPLOY_PORT)) { $env:VAR_LINUX_DEPLOY_PORT } else { $env:SECRET_LINUX_DEPLOY_PORT }
+          $deployUser = if ([string]::IsNullOrWhiteSpace($env:SECRET_LINUX_DEPLOY_USER)) { $env:VAR_LINUX_DEPLOY_USER } else { $env:SECRET_LINUX_DEPLOY_USER }
+          $configuredRemotePath = if ([string]::IsNullOrWhiteSpace($env:SECRET_LINUX_DEPLOY_PATH)) { $env:VAR_LINUX_DEPLOY_PATH } else { $env:SECRET_LINUX_DEPLOY_PATH }
+
+          if ([string]::IsNullOrWhiteSpace($deployHost)) { $deployHost = '43.224.248.112' }
+          if ([string]::IsNullOrWhiteSpace($deployUser)) { $deployUser = 'root' }
+
+          $missing = @()
+          if ([string]::IsNullOrWhiteSpace($env:LINUX_DEPLOY_KEY)) { $missing += 'secrets.LINUX_DEPLOY_KEY' }
+          if ([string]::IsNullOrWhiteSpace($env:INPUT_REMOTE_PATH) -and [string]::IsNullOrWhiteSpace($configuredRemotePath)) {
+            $missing += 'workflow input remote_path, secrets.LINUX_DEPLOY_PATH, or vars.LINUX_DEPLOY_PATH'
+          }
+          if ($missing.Count -gt 0) {
+            throw "Missing Linux upload configuration: $($missing -join ', ')"
+          }
+
+          $port = if ([string]::IsNullOrWhiteSpace($deployPort)) { '22' } else { $deployPort }
+          $remotePath = if ([string]::IsNullOrWhiteSpace($env:INPUT_REMOTE_PATH)) { $configuredRemotePath } else { $env:INPUT_REMOTE_PATH }
+          $remotePath = $remotePath.TrimEnd('/')
+
+          $sshDir = Join-Path $HOME '.ssh'
+          New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
+
+          $keyPath = Join-Path $sshDir 'linux_deploy_key'
+          ($env:LINUX_DEPLOY_KEY -replace "`r`n", "`n") | Set-Content -Path $keyPath -NoNewline -Encoding ascii
+          if ($IsWindows) {
+            icacls $keyPath /inheritance:r | Out-Null
+            icacls $keyPath /grant:r "$($env:USERNAME):R" | Out-Null
+          } else {
+            chmod 600 $keyPath
+          }
+
+          $knownHostsPath = Join-Path $sshDir 'known_hosts'
+          if ([string]::IsNullOrWhiteSpace($env:LINUX_DEPLOY_KNOWN_HOSTS)) {
+            New-Item -ItemType File -Force -Path $knownHostsPath | Out-Null
+            $strictHostKeyChecking = 'accept-new'
+          } else {
+            ($env:LINUX_DEPLOY_KNOWN_HOSTS -replace "`r`n", "`n") | Set-Content -Path $knownHostsPath -NoNewline -Encoding ascii
+            $strictHostKeyChecking = 'yes'
+          }
+
+          "SSH_KEY_PATH=$keyPath" >> $env:GITHUB_ENV
+          "SSH_KNOWN_HOSTS_PATH=$knownHostsPath" >> $env:GITHUB_ENV
+          "SSH_STRICT_HOST_KEY_CHECKING=$strictHostKeyChecking" >> $env:GITHUB_ENV
+          "LINUX_DEPLOY_HOST=$deployHost" >> $env:GITHUB_ENV
+          "LINUX_DEPLOY_PORT=$port" >> $env:GITHUB_ENV
+          "LINUX_DEPLOY_USER=$deployUser" >> $env:GITHUB_ENV
+          "LINUX_DEPLOY_REMOTE_PATH=$remotePath" >> $env:GITHUB_ENV
+
+      - name: Upload package to Linux server
+        env:
+          BRAND: ${{ matrix.brand }}
+          CHANNEL: ${{ steps.upload_payload.outputs.channel }}
+          VERSION: ${{ steps.upload_payload.outputs.version }}
+          CHANNEL_DIR: ${{ steps.upload_payload.outputs.channel_dir }}
+          ARCHIVE_DIR: ${{ steps.upload_payload.outputs.archive_dir }}
+        shell: pwsh
+        run: |
+          function Quote-RemotePath([string]$value) {
+            return "'" + $value.Replace("'", "'\''") + "'"
+          }
+
+          $remoteRoot = $env:LINUX_DEPLOY_REMOTE_PATH.TrimEnd('/', '\')
+          $feedPath = ([Uri]$env:UPDATE_FEED_BASE_URL).AbsolutePath.Trim('/')
+          $feedDir = if ($feedPath) { ($feedPath -split '/')[-1] } else { '' }
+          $remoteLeaf = Split-Path -Path $remoteRoot -Leaf
+          if ($feedDir -and $remoteLeaf -ne $feedDir) {
+            $remoteRoot = "$remoteRoot/$feedDir"
+          }
+
+          $destinationRoot = "$remoteRoot/$env:BRAND"
+          $channelDestination = "$destinationRoot/$env:CHANNEL"
+          $archiveDestination = "$destinationRoot/releases/v$env:VERSION"
+
+          $remoteChannel = Quote-RemotePath $channelDestination
+          $remoteArchive = Quote-RemotePath $archiveDestination
+          $remote = "$env:LINUX_DEPLOY_USER@$env:LINUX_DEPLOY_HOST"
+
+          ssh `
+            -i $env:SSH_KEY_PATH `
+            -p $env:LINUX_DEPLOY_PORT `
+            -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
+            -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
+            $remote "mkdir -p $remoteChannel $remoteArchive"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to create remote upload directories" }
+
+          $channelFiles = Get-ChildItem $env:CHANNEL_DIR -File | ForEach-Object { $_.FullName }
+          $archiveFiles = Get-ChildItem $env:ARCHIVE_DIR -File | ForEach-Object { $_.FullName }
+
+          scp `
+            -i $env:SSH_KEY_PATH `
+            -P $env:LINUX_DEPLOY_PORT `
+            -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
+            -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
+            $channelFiles "${remote}:$channelDestination/"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to upload channel files" }
+
+          scp `
+            -i $env:SSH_KEY_PATH `
+            -P $env:LINUX_DEPLOY_PORT `
+            -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
+            -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
+            $archiveFiles "${remote}:$archiveDestination/"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to upload archive files" }
+
+          Write-Host "Uploaded $env:BRAND channel files to $env:UPDATE_FEED_BASE_URL/$env:BRAND/$env:CHANNEL/"
+          Write-Host "Uploaded $env:BRAND archive files to $env:UPDATE_FEED_BASE_URL/$env:BRAND/releases/v$env:VERSION/"
+
+  publish-manifests:
+    needs:
+      - resolve-brands
+      - build
+    name: Publish desktop update manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Generate brand latest.json manifests
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          node - <<'NODE'
+          const crypto = require("node:crypto");
+          const fs = require("node:fs");
+          const path = require("node:path");
+
+          const token = process.env.GH_TOKEN;
+          const repo = process.env.GITHUB_REPOSITORY;
+          const tag = process.env.RELEASE_TAG;
+          const updateFeedBaseUrl = process.env.UPDATE_FEED_BASE_URL.replace(/\/+$/, "");
+
+          if (!token) throw new Error("GH_TOKEN is required");
+          if (!repo) throw new Error("GITHUB_REPOSITORY is required");
+          if (!tag) throw new Error("RELEASE_TAG is required");
+
+          function normalizeMatchKey(value) {
+            return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+          }
+
+          function encodePathSegment(value) {
+            return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+          }
+
+          function channelFromSemver(semver) {
+            const match = /-([0-9A-Za-z]+)/.exec(semver);
+            return match ? match[1] : "latest";
+          }
+
+          function platformKey(fileName) {
+            const name = fileName.toLowerCase();
+            if (name.endsWith(".exe") || name.endsWith(".msi")) return "windows";
+            if (name.endsWith(".dmg")) {
+              if (name.includes("aarch64") || name.includes("arm64")) return "macos-arm64";
+              if (name.includes("x86_64") || name.includes("x64")) return "macos-x64";
+              return "macos";
+            }
+            return null;
+          }
+
+          function platformLabel(key) {
+            switch (key) {
+              case "windows":
+                return "Windows installer";
+              case "macos-arm64":
+                return "macOS Apple Silicon DMG";
+              case "macos-x64":
+                return "macOS Intel DMG";
+              case "macos":
+                return "macOS DMG";
+              default:
+                return key;
+            }
+          }
+
+          async function githubJson(url) {
+            const response = await fetch(url, {
+              headers: {
+                Accept: "application/vnd.github+json",
+                Authorization: `Bearer ${token}`,
+                "User-Agent": "hermes-agent-cn-desktop-release-workflow",
+                "X-GitHub-Api-Version": "2022-11-28",
+              },
+            });
+            if (!response.ok) {
+              throw new Error(`GitHub API request failed: ${url} HTTP ${response.status}`);
+            }
+            return response.json();
+          }
+
+          async function downloadAsset(asset) {
+            const response = await fetch(asset.url, {
+              headers: {
+                Accept: "application/octet-stream",
+                Authorization: `Bearer ${token}`,
+                "User-Agent": "hermes-agent-cn-desktop-release-workflow",
+                "X-GitHub-Api-Version": "2022-11-28",
+              },
+            });
+            if (!response.ok) {
+              throw new Error(`Asset download failed: ${asset.name} HTTP ${response.status}`);
+            }
+            return Buffer.from(await response.arrayBuffer());
+          }
+
+          async function main() {
+            const release = await githubJson(`https://api.github.com/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`);
+            const semver = tag.replace(/^v/, "");
+            const channel = channelFromSemver(semver);
+            const generatedAt = new Date().toISOString();
+            const brandsDir = path.join(process.cwd(), "brands");
+            const brandIds = fs.readdirSync(brandsDir)
+              .filter((name) => name.endsWith(".json"))
+              .map((name) => path.basename(name, ".json"))
+              .filter((brand) => brand !== "deepclaw")
+              .sort();
+
+            fs.mkdirSync("release-manifests", { recursive: true });
+
+            for (const brandId of brandIds) {
+              const brand = JSON.parse(fs.readFileSync(path.join(brandsDir, `${brandId}.json`), "utf8"));
+              const matchKeys = [brand.id, brand.productName, brand.appNameEn]
+                .map(normalizeMatchKey)
+                .filter(Boolean);
+
+              const matchingAssets = release.assets
+                .filter((asset) => platformKey(asset.name))
+                .filter((asset) => {
+                  const assetKey = normalizeMatchKey(asset.name);
+                  return matchKeys.some((key) => assetKey.includes(key));
+                })
+                .sort((left, right) => left.name.localeCompare(right.name, "en"));
+
+              if (matchingAssets.length === 0) {
+                throw new Error(`No installer release assets found for brand ${brandId}`);
+              }
+
+              const assets = {};
+              for (const asset of matchingAssets) {
+                const key = platformKey(asset.name);
+                const bytes = await downloadAsset(asset);
+                const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+                const fileName = asset.name;
+                const encodedFileName = encodePathSegment(fileName);
+
+                assets[key] = {
+                  label: platformLabel(key),
+                  platform: key,
+                  fileName,
+                  size: Number(asset.size) || bytes.length,
+                  sha256,
+                  url: `${updateFeedBaseUrl}/${brandId}/${channel}/${encodedFileName}`,
+                  versionedUrl: `${updateFeedBaseUrl}/${brandId}/releases/${tag}/${encodedFileName}`,
+                  sourceUrl: asset.browser_download_url,
+                };
+              }
+
+              const manifest = {
+                repository: repo,
+                version: tag,
+                semver,
+                publishedAt: release.published_at || generatedAt,
+                sourceUrl: release.html_url,
+                updatedAt: generatedAt,
+                assets,
+              };
+
+              const brandOut = path.join("release-manifests", brandId);
+              fs.mkdirSync(brandOut, { recursive: true });
+              fs.writeFileSync(path.join(brandOut, "latest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+              console.log(`Generated ${brandId}/latest.json with assets: ${Object.keys(assets).join(", ")}`);
+            }
+          }
+
+          main().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Configure SSH for Linux upload
+        env:
+          SECRET_LINUX_DEPLOY_HOST: ${{ secrets.LINUX_DEPLOY_HOST }}
+          SECRET_LINUX_DEPLOY_PORT: ${{ secrets.LINUX_DEPLOY_PORT }}
+          SECRET_LINUX_DEPLOY_USER: ${{ secrets.LINUX_DEPLOY_USER }}
+          VAR_LINUX_DEPLOY_HOST: ${{ vars.LINUX_DEPLOY_HOST }}
+          VAR_LINUX_DEPLOY_PORT: ${{ vars.LINUX_DEPLOY_PORT }}
+          VAR_LINUX_DEPLOY_USER: ${{ vars.LINUX_DEPLOY_USER }}
+          LINUX_DEPLOY_KEY: ${{ secrets.LINUX_DEPLOY_KEY }}
+          LINUX_DEPLOY_KNOWN_HOSTS: ${{ secrets.LINUX_DEPLOY_KNOWN_HOSTS }}
+          SECRET_LINUX_DEPLOY_PATH: ${{ secrets.LINUX_DEPLOY_PATH }}
+          VAR_LINUX_DEPLOY_PATH: ${{ vars.LINUX_DEPLOY_PATH }}
+          INPUT_REMOTE_PATH: ${{ inputs.remote_path }}
+        shell: pwsh
+        run: |
+          $deployHost = if ([string]::IsNullOrWhiteSpace($env:SECRET_LINUX_DEPLOY_HOST)) { $env:VAR_LINUX_DEPLOY_HOST } else { $env:SECRET_LINUX_DEPLOY_HOST }
+          $deployPort = if ([string]::IsNullOrWhiteSpace($env:SECRET_LINUX_DEPLOY_PORT)) { $env:VAR_LINUX_DEPLOY_PORT } else { $env:SECRET_LINUX_DEPLOY_PORT }
+          $deployUser = if ([string]::IsNullOrWhiteSpace($env:SECRET_LINUX_DEPLOY_USER)) { $env:VAR_LINUX_DEPLOY_USER } else { $env:SECRET_LINUX_DEPLOY_USER }
+          $configuredRemotePath = if ([string]::IsNullOrWhiteSpace($env:SECRET_LINUX_DEPLOY_PATH)) { $env:VAR_LINUX_DEPLOY_PATH } else { $env:SECRET_LINUX_DEPLOY_PATH }
+
+          if ([string]::IsNullOrWhiteSpace($deployHost)) { $deployHost = '43.224.248.112' }
+          if ([string]::IsNullOrWhiteSpace($deployUser)) { $deployUser = 'root' }
+
+          $missing = @()
+          if ([string]::IsNullOrWhiteSpace($env:LINUX_DEPLOY_KEY)) { $missing += 'secrets.LINUX_DEPLOY_KEY' }
+          if ([string]::IsNullOrWhiteSpace($env:INPUT_REMOTE_PATH) -and [string]::IsNullOrWhiteSpace($configuredRemotePath)) {
+            $missing += 'workflow input remote_path, secrets.LINUX_DEPLOY_PATH, or vars.LINUX_DEPLOY_PATH'
+          }
+          if ($missing.Count -gt 0) {
+            throw "Missing Linux upload configuration: $($missing -join ', ')"
+          }
+
+          $port = if ([string]::IsNullOrWhiteSpace($deployPort)) { '22' } else { $deployPort }
+          $remotePath = if ([string]::IsNullOrWhiteSpace($env:INPUT_REMOTE_PATH)) { $configuredRemotePath } else { $env:INPUT_REMOTE_PATH }
+          $remotePath = $remotePath.TrimEnd('/')
+
+          $sshDir = Join-Path $HOME '.ssh'
+          New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
+
+          $keyPath = Join-Path $sshDir 'linux_deploy_key'
+          ($env:LINUX_DEPLOY_KEY -replace "`r`n", "`n") | Set-Content -Path $keyPath -NoNewline -Encoding ascii
+          chmod 600 $keyPath
+
+          $knownHostsPath = Join-Path $sshDir 'known_hosts'
+          if ([string]::IsNullOrWhiteSpace($env:LINUX_DEPLOY_KNOWN_HOSTS)) {
+            New-Item -ItemType File -Force -Path $knownHostsPath | Out-Null
+            $strictHostKeyChecking = 'accept-new'
+          } else {
+            ($env:LINUX_DEPLOY_KNOWN_HOSTS -replace "`r`n", "`n") | Set-Content -Path $knownHostsPath -NoNewline -Encoding ascii
+            $strictHostKeyChecking = 'yes'
+          }
+
+          "SSH_KEY_PATH=$keyPath" >> $env:GITHUB_ENV
+          "SSH_KNOWN_HOSTS_PATH=$knownHostsPath" >> $env:GITHUB_ENV
+          "SSH_STRICT_HOST_KEY_CHECKING=$strictHostKeyChecking" >> $env:GITHUB_ENV
+          "LINUX_DEPLOY_HOST=$deployHost" >> $env:GITHUB_ENV
+          "LINUX_DEPLOY_PORT=$port" >> $env:GITHUB_ENV
+          "LINUX_DEPLOY_USER=$deployUser" >> $env:GITHUB_ENV
+          "LINUX_DEPLOY_REMOTE_PATH=$remotePath" >> $env:GITHUB_ENV
+
+      - name: Upload latest.json manifests to Linux server
+        shell: pwsh
+        run: |
+          function Quote-RemotePath([string]$value) {
+            return "'" + $value.Replace("'", "'\''") + "'"
+          }
+
+          $remoteRoot = $env:LINUX_DEPLOY_REMOTE_PATH.TrimEnd('/', '\')
+          $feedPath = ([Uri]$env:UPDATE_FEED_BASE_URL).AbsolutePath.Trim('/')
+          $feedDir = if ($feedPath) { ($feedPath -split '/')[-1] } else { '' }
+          $remoteLeaf = Split-Path -Path $remoteRoot -Leaf
+          if ($feedDir -and $remoteLeaf -ne $feedDir) {
+            $remoteRoot = "$remoteRoot/$feedDir"
+          }
+
+          $remote = "$env:LINUX_DEPLOY_USER@$env:LINUX_DEPLOY_HOST"
+          Get-ChildItem release-manifests -Directory | ForEach-Object {
+            $brand = $_.Name
+            $manifestPath = Join-Path $_.FullName 'latest.json'
+            $destinationRoot = "$remoteRoot/$brand"
+            $remoteDestination = Quote-RemotePath $destinationRoot
+
+            ssh `
+              -i $env:SSH_KEY_PATH `
+              -p $env:LINUX_DEPLOY_PORT `
+              -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
+              -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
+              $remote "mkdir -p $remoteDestination"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to create remote manifest directory for $brand" }
+
+            scp `
+              -i $env:SSH_KEY_PATH `
+              -P $env:LINUX_DEPLOY_PORT `
+              -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
+              -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
+              $manifestPath "${remote}:$destinationRoot/latest.json"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to upload latest.json for $brand" }
+
+            Write-Host "Uploaded $brand update manifest to $env:UPDATE_FEED_BASE_URL/$brand/latest.json"
+          }

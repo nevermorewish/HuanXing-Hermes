@@ -55,7 +55,7 @@ function stableJson(value) {
 }
 
 function requireBrand() {
-  const brandId = (process.env.BRAND || "fengchiclaw").trim();
+  const brandId = (process.env.BRAND || "huanxinghermes").trim();
   if (!/^[a-z][a-z0-9-]*$/.test(brandId)) {
     throw new Error(`Invalid BRAND id: ${JSON.stringify(brandId)} (expected lowercase kebab)`);
   }
