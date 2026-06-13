@@ -285,7 +285,36 @@ jobs:
         shell: bash
         run: scripts/verify-macos-runtime-payload.sh "static/bundled-runtime/hermes-agent-cn-runtime-${{ matrix.runtime_platform }}-${{ matrix.runtime_arch }}.zip"
 
-      - name: Build + upload installers
+      - name: Build + upload unsigned installers
+        if: matrix.runtime_platform != 'darwin' || steps.macos_signing.outputs.enabled != 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          BRAND: ${{ matrix.brand }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+        with:
+          # tauri-action looks up the tag from this input. On a push:tags
+          # trigger it falls back to GITHUB_REF, but we pass it explicitly
+          # so workflow_dispatch also works.
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: "Hermes Agent 涓枃绀惧尯妗岄潰鐗?${{ github.event.inputs.tag || github.ref_name }}"
+          releaseBody: |
+            鑷姩鏋勫缓鐨?Hermes Agent 涓枃绀惧尯妗岄潰鐗堝畨瑁呭寘銆?
+            鏈鎸?brands/*.json 鏋勫缓澶氬搧鐗屽畨瑁呭寘锛?{{ needs.resolve-brands.outputs.brands }}銆?
+            Windows 绯荤粺瀹夎鍚嶇О銆佸畨瑁呯洰褰曞拰鍗歌浇娉ㄥ唽琛ㄩ」浣跨敤鑻辨枃鍚?            Hermes Agent CN Desktop锛岄伩鍏嶄腑鏂囪矾寰勯€犳垚鍏煎鎬ч棶棰樸€?
+            瀹夎鍖呭凡鍐呯疆鏉ヨ嚜 ${{ steps.runtime_manifest.outputs.source_repo }}
+            ${{ steps.runtime_manifest.outputs.source_commit }} 鐨?Dashboard 鍓嶇銆佸唴缃妧鑳藉拰鍐呯疆鎻掍欢銆?
+
+            Windows 鍜?macOS 瀹夎鍖呭悓鏃跺唴缃?Hermes-CN-Core runtime
+            ${{ steps.runtime_manifest.outputs.runtime_version }}锛屽畨瑁呭悗鍙洿鎺ュ惎鍔ㄦ湰鍦板唴鏍搞€?
+
+            濡傞渶瑕嗙洊 runtime 鏇存柊婧愶紝鍙缃?HERMES_RUNTIME_UPDATE_* 鐜鍙橀噺銆?
+          releaseDraft: false
+          # Mark SemVer prerelease tags as prerelease on GitHub Releases.
+          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
+          args: --target ${{ matrix.target }}
+
+      - name: Build + upload signed macOS installers
+        if: matrix.runtime_platform == 'darwin' && steps.macos_signing.outputs.enabled == 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           BRAND: ${{ matrix.brand }}
