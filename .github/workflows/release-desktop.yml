@@ -162,6 +162,7 @@ jobs:
     name: Build ${{ matrix.brand }} / ${{ matrix.target }}
     strategy:
       fail-fast: false
+      max-parallel: 3
       matrix:
         include: ${{ fromJson(needs.resolve-brands.outputs.matrix) }}
 
