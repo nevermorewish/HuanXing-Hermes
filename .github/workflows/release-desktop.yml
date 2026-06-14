@@ -605,35 +605,76 @@ jobs:
             return "'" + $value.Replace("'", "'\''") + "'"
           }
 
+          function Get-RetryDelaySeconds([int]$attempt) {
+            return [Math]::Min(120, 15 * [Math]::Pow(2, $attempt - 1))
+          }
+
+          $sshCommonOptions = @(
+            "-i", $env:SSH_KEY_PATH,
+            "-o", "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH",
+            "-o", "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING",
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=60",
+            "-o", "ConnectionAttempts=3",
+            "-o", "ServerAliveInterval=15",
+            "-o", "ServerAliveCountMax=20",
+            "-o", "TCPKeepAlive=yes",
+            "-o", "IPQoS=throughput"
+          )
+
           function Invoke-SshCommand([string]$command, [string]$failureMessage) {
-            ssh `
-              -i $env:SSH_KEY_PATH `
-              -p $env:LINUX_DEPLOY_PORT `
-              -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
-              -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
-              -o "ConnectTimeout=30" `
-              -o "ServerAliveInterval=30" `
-              -o "ServerAliveCountMax=10" `
-              $remote $command
-            if ($LASTEXITCODE -ne 0) { throw $failureMessage }
+            $attempt = 1
+            $maxAttempts = 6
+            while ($attempt -le $maxAttempts) {
+              Write-Host "Running remote command attempt ${attempt}/${maxAttempts}"
+              ssh @sshCommonOptions -p $env:LINUX_DEPLOY_PORT $remote $command
+              $exitCode = $LASTEXITCODE
+              if ($exitCode -eq 0) { return }
+              if ($attempt -eq $maxAttempts) {
+                throw "$failureMessage (exit code $exitCode) after $maxAttempts attempts"
+              }
+              $delay = Get-RetryDelaySeconds $attempt
+              Write-Host "Remote command failed with exit code $exitCode; retrying in $delay seconds."
+              Start-Sleep -Seconds $delay
+              $attempt += 1
+            }
+          }
+
+          function Read-SshCommand([string]$command, [string]$failureMessage) {
+            $attempt = 1
+            $maxAttempts = 6
+            while ($attempt -le $maxAttempts) {
+              Write-Host "Reading remote command output attempt ${attempt}/${maxAttempts}"
+              $output = ssh @sshCommonOptions -p $env:LINUX_DEPLOY_PORT $remote $command
+              $exitCode = $LASTEXITCODE
+              if ($exitCode -eq 0) { return $output }
+              if ($attempt -eq $maxAttempts) {
+                throw "$failureMessage (exit code $exitCode) after $maxAttempts attempts"
+              }
+              $delay = Get-RetryDelaySeconds $attempt
+              Write-Host "Remote read failed with exit code $exitCode; retrying in $delay seconds."
+              Start-Sleep -Seconds $delay
+              $attempt += 1
+            }
           }
 
           function Invoke-RemoteUpload([string]$filePath, [string]$remoteDirectory, [string]$label) {
             $attempt = 1
-            while ($attempt -le 3) {
-              Write-Host "Uploading $label attempt $attempt/3: $filePath"
+            $maxAttempts = 6
+            while ($attempt -le $maxAttempts) {
+              Write-Host "Uploading $label attempt ${attempt}/${maxAttempts}: $filePath"
               scp `
-                -i $env:SSH_KEY_PATH `
+                @sshCommonOptions `
                 -P $env:LINUX_DEPLOY_PORT `
-                -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
-                -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
-                -o "ConnectTimeout=30" `
-                -o "ServerAliveInterval=30" `
-                -o "ServerAliveCountMax=10" `
                 $filePath "${remote}:$remoteDirectory/"
-              if ($LASTEXITCODE -eq 0) { return }
-              if ($attempt -eq 3) { throw "Failed to upload $label file after 3 attempts: $filePath" }
-              Start-Sleep -Seconds (10 * $attempt)
+              $exitCode = $LASTEXITCODE
+              if ($exitCode -eq 0) { return }
+              if ($attempt -eq $maxAttempts) {
+                throw "Failed to upload $label file after $maxAttempts attempts: $filePath"
+              }
+              $delay = Get-RetryDelaySeconds $attempt
+              Write-Host "Upload failed with exit code $exitCode; retrying in $delay seconds."
+              Start-Sleep -Seconds $delay
               $attempt += 1
             }
           }
@@ -672,18 +713,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $latestDir | Out-Null
           $latestPath = Join-Path $latestDir "latest.json"
           $remoteLatest = Quote-RemotePath "$destinationRoot/latest.json"
-          $remoteJsonLines = ssh `
-            -i $env:SSH_KEY_PATH `
-            -p $env:LINUX_DEPLOY_PORT `
-            -o "UserKnownHostsFile=$env:SSH_KNOWN_HOSTS_PATH" `
-            -o "StrictHostKeyChecking=$env:SSH_STRICT_HOST_KEY_CHECKING" `
-            -o "ConnectTimeout=30" `
-            -o "ServerAliveInterval=30" `
-            -o "ServerAliveCountMax=10" `
-            $remote "if [ -f $remoteLatest ]; then cat $remoteLatest; fi"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to read remote latest.json for $env:BRAND"
-          }
+          $remoteJsonLines = Read-SshCommand "if [ -f $remoteLatest ]; then cat $remoteLatest; fi" "Failed to read remote latest.json for $env:BRAND"
 
           $now = (Get-Date).ToUniversalTime().ToString("o")
           $remoteJson = ($remoteJsonLines -join "`n").Trim()
