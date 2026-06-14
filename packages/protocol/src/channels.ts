@@ -223,6 +223,17 @@ export interface DesktopUpdateCheckResult extends DesktopUpdateManifestFetchResu
   sourceUrl?: string;
 }
 
+export interface DesktopInstallUpdateResult {
+  ok: boolean;
+  manifestUrl: string;
+  asset?: DesktopUpdateAsset;
+  filePath?: string;
+  bytesDownloaded: number;
+  bytesTotal?: number;
+  launched: boolean;
+  error?: string;
+}
+
 export interface RuntimeUpdateManifest {
   schemaVersion: number;
   channel: string;

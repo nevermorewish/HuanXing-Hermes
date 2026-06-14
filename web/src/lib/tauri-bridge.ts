@@ -14,6 +14,7 @@ import type {
   ConfigMigrationImportResult,
   ConfigMigrationScanInput,
   ConfigMigrationScanResult,
+  DesktopInstallUpdateResult,
   DesktopUpdateManifestFetchResult,
   EnvironmentCheckResult,
   ExportLogSnapshotInput,
@@ -259,6 +260,10 @@ const tauriBridge = {
 
   async checkDesktopUpdate(): Promise<DesktopUpdateManifestFetchResult> {
     return invokeCommand("desktop_check_update");
+  },
+
+  async installDesktopUpdate(): Promise<DesktopInstallUpdateResult> {
+    return invokeCommand("desktop_install_update");
   },
 
   getRuntimeConfig() {

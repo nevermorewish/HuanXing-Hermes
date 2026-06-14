@@ -7,7 +7,6 @@ import {
   shouldShowDesktopUpdateNotice,
 } from "@/lib/desktop-update";
 import { BRAND } from "@/lib/brand.generated";
-import { openExternalUrl } from "@/lib/external-links";
 import { runtime } from "@/lib/runtime";
 import { versionLabel } from "@/lib/build-info";
 import s from "./desktop-update-notifier.module.css";
@@ -24,6 +23,9 @@ function startAutoCheckIfNeeded(): Promise<DesktopUpdateCheckResult> | null {
 export function DesktopUpdateNotifier() {
   const [result, setResult] = useState<DesktopUpdateCheckResult | null>(null);
   const [open, setOpen] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [installMessage, setInstallMessage] = useState<string | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
 
   useEffect(() => {
     if (runtime.platform === "web" || !window.hermesDesktop?.checkDesktopUpdate) return;
@@ -49,9 +51,33 @@ export function DesktopUpdateNotifier() {
     setOpen(false);
   };
 
-  const download = async () => {
-    setOpen(false);
-    await openExternalUrl(result?.downloadUrl);
+  const install = async () => {
+    if (!window.hermesDesktop?.installDesktopUpdate) {
+      setInstallError("当前环境没有自动安装能力");
+      return;
+    }
+    setInstalling(true);
+    setInstallError(null);
+    setInstallMessage("正在下载安装包…");
+    try {
+      const installResult = await window.hermesDesktop.installDesktopUpdate();
+      if (!installResult.ok) {
+        setInstallError(installResult.error ?? "桌面端更新安装失败");
+        setInstallMessage(null);
+        return;
+      }
+      const fileName = installResult.asset?.fileName ?? installResult.filePath?.split(/[\\/]/).pop();
+      setInstallMessage(
+        fileName
+          ? `安装包已下载并打开：${fileName}。请按系统提示完成覆盖安装。`
+          : "安装包已下载并打开。请按系统提示完成覆盖安装。",
+      );
+    } catch (error) {
+      setInstallError(error instanceof Error ? error.message : String(error || "桌面端更新安装失败"));
+      setInstallMessage(null);
+    } finally {
+      setInstalling(false);
+    }
   };
 
   return (
@@ -64,7 +90,7 @@ export function DesktopUpdateNotifier() {
             {`发现 ${BRAND.appName} 桌面端新版本`}
           </Dialog.Title>
           <Dialog.Description id="desktop-update-desc" className={s.body}>
-            已发布 {versionLabel(result?.latestVersion)}，建议前往官网下载新版安装包，并按系统提示覆盖安装。当前应用不会自动下载安装包，也不会静默替换正在运行的程序。
+            已发布 {versionLabel(result?.latestVersion)}。点击“下载安装”会下载当前系统的安装包并自动打开，请按系统提示完成覆盖安装。
           </Dialog.Description>
           <div className={s.versionPanel} aria-label="桌面端版本信息">
             <div>
@@ -76,10 +102,20 @@ export function DesktopUpdateNotifier() {
               <b>{versionLabel(result?.latestVersion)}</b>
             </div>
           </div>
+          {(installMessage || installError) && (
+            <div className={s.installMessage} data-tone={installError ? "error" : "normal"}>
+              {installError ?? installMessage}
+            </div>
+          )}
           <div className={s.actions}>
-            <button className={s.btn} type="button" onClick={close}>本版本不再提醒</button>
-            <button className={s.btnPrimary} type="button" onClick={() => void download()}>
-              <Download size={13} /> 去官网下载
+            <button className={s.btn} type="button" onClick={close} disabled={installing}>本版本不再提醒</button>
+            <button
+              className={s.btnPrimary}
+              type="button"
+              onClick={() => void install()}
+              disabled={installing || !window.hermesDesktop?.installDesktopUpdate}
+            >
+              <Download size={13} /> {installing ? "下载中…" : "下载安装"}
             </button>
           </div>
         </Dialog.Content>

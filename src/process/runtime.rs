@@ -510,8 +510,8 @@ pub fn read_current_record() -> Option<RuntimeInstallRecord> {
 // the build environment. Cascade (highest first):
 //   1. Runtime env (HERMES_RUNTIME_UPDATE_*)
 //   2. Compile-time env override (HERMES_RUNTIME_UPDATE_*_DEFAULT)
-//   3. Hardcoded fallback below — points at the Eynzof/Hermes-CN-Core
-//      production release pipeline + its Ed25519 public key.
+//   3. Hardcoded fallback below — points at the production runtime update
+//      feed + its Ed25519 public key.
 // Forks rebuilding the desktop should set the compile-time env override
 // to point at their own release pipeline + key (or edit the constants
 // below).
@@ -521,10 +521,10 @@ const BAKED_PUBLIC_KEY_PEM: Option<&str> =
     option_env!("HERMES_RUNTIME_UPDATE_PUBLIC_KEY_PEM_DEFAULT");
 
 const FALLBACK_MANIFEST_BASE_URL: &str =
-    "https://github.com/Eynzof/Hermes-CN-Core/releases/latest/download";
+    "https://ai.fengchiyun.com/downloads/Hermes-CN-Core/runtime/stable";
 const FALLBACK_PUBLIC_KEY_PEM: &str = concat!(
     "-----BEGIN PUBLIC KEY-----\n",
-    "MCowBQYDK2VwAyEAqPkLQ4o67G2GMTgkQQQZXWwDBZM/4hqq5thSZSNhoC0=\n",
+    "MCowBQYDK2VwAyEASsSMMJ+CB7YGQteH5MJcvcMW4Ib4Pq+n7pHwHm/V8ik=\n",
     "-----END PUBLIC KEY-----\n"
 );
 
@@ -593,7 +593,7 @@ fn configured_public_key() -> Option<String> {
             return Some(pem);
         }
     }
-    // 4. Hardcoded fallback — the Eynzof/Hermes-CN-Core production key.
+    // 4. Hardcoded fallback — the production runtime update public key.
     Some(FALLBACK_PUBLIC_KEY_PEM.to_string())
 }
 
@@ -3371,7 +3371,9 @@ mod tests {
         // No env, no compile-time bake (BAKED_* are option_env! and unset in
         // dev/test builds), so we get FALLBACK_MANIFEST_BASE_URL + default channel.
         let url = configured_manifest_url().unwrap();
-        assert!(url.contains("Eynzof/Hermes-CN-Core"));
+        assert!(url.contains(
+            "ai.fengchiyun.com/downloads/Hermes-CN-Core/runtime/stable"
+        ));
         assert!(url.contains("stable-"));
     }
 

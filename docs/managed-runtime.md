@@ -111,7 +111,7 @@ Runtime 版本采用 schema v2：`runtime-v<kernelVersion>-cn.<runtimeRevision>`
 8. emit runtime-status "installing"
    如果包内 runtime 不存在或不可用，runtime::install_runtime_update(None) 开始：
    a. configured_manifest_url() →
-      https://github.com/Eynzof/Hermes-CN-Core/releases/latest/download/stable-win32-x64.json
+      https://ai.fengchiyun.com/downloads/Hermes-CN-Core/runtime/stable/stable-win32-x64.json
    b. reqwest GET → 拿到 manifest JSON
    c. configured_public_key() → baked-in PEM
    d. verify_signature(manifest) → Ed25519 验证 schemaVersion/channel/

@@ -488,6 +488,7 @@ fn main() {
             commands::log_export::export_log_snapshot,
             commands::debug_bundle::export_debug_bundle,
             commands::desktop_update::desktop_check_update,
+            commands::desktop_update::desktop_install_update,
             commands::environment::environment_check,
             commands::api_proxy::api_request,
             commands::api_proxy::external_request,

@@ -87,3 +87,19 @@
   background: var(--h-accent);
   color: var(--h-accent-contrast);
 }
+
+.btn:disabled,
+.btnPrimary:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.installMessage {
+  color: var(--h-text-2);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.installMessage[data-tone="error"] {
+  color: var(--h-err);
+}

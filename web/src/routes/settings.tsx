@@ -47,8 +47,7 @@ import {
   type ConversationFontSizeMode,
 } from "@/stores/ui";
 import { playChime, shouldPlayFallbackSound } from "@/lib/notifications";
-import { openExternalUrl } from "@/lib/external-links";
-import { checkDesktopUpdate, DESKTOP_UPDATE_DOWNLOAD_URL } from "@/lib/desktop-update";
+import { checkDesktopUpdate } from "@/lib/desktop-update";
 import { DESKTOP_VERSION, versionLabel } from "@/lib/build-info";
 import { BRAND } from "@/lib/brand.generated";
 import {
@@ -1372,10 +1371,16 @@ export function KernelSection({ showHeading = true }: SettingsSectionProps) {
 export function AboutSection({ showHeading = true }: SettingsSectionProps) {
   const [desktopUpdateResult, setDesktopUpdateResult] = useState<DesktopUpdateCheckResult | null>(null);
   const [desktopUpdateChecking, setDesktopUpdateChecking] = useState(false);
+  const [desktopInstallState, setDesktopInstallState] = useState<{
+    phase: "idle" | "downloading" | "ready" | "error";
+    message?: string;
+  }>({ phase: "idle" });
   const hasDesktopUpdateBridge = typeof window !== "undefined" && Boolean(window.hermesDesktop?.checkDesktopUpdate);
+  const hasDesktopInstallBridge = typeof window !== "undefined" && Boolean(window.hermesDesktop?.installDesktopUpdate);
 
   const handleCheckDesktopUpdate = async () => {
     setDesktopUpdateChecking(true);
+    setDesktopInstallState({ phase: "idle" });
     try {
       setDesktopUpdateResult(await checkDesktopUpdate());
     } finally {
@@ -1383,9 +1388,42 @@ export function AboutSection({ showHeading = true }: SettingsSectionProps) {
     }
   };
 
-  const handleOpenDesktopDownload = () => {
-    void openExternalUrl(desktopUpdateResult?.downloadUrl ?? DESKTOP_UPDATE_DOWNLOAD_URL);
+  const handleInstallDesktopUpdate = async () => {
+    if (!window.hermesDesktop?.installDesktopUpdate) {
+      setDesktopInstallState({ phase: "error", message: "当前环境没有自动安装能力" });
+      return;
+    }
+    setDesktopInstallState({ phase: "downloading", message: "正在下载安装包…" });
+    try {
+      const result = await window.hermesDesktop.installDesktopUpdate();
+      if (!result.ok) {
+        setDesktopInstallState({
+          phase: "error",
+          message: result.error ?? "桌面端更新安装失败",
+        });
+        return;
+      }
+      const fileName = result.asset?.fileName ?? result.filePath?.split(/[\\/]/).pop();
+      setDesktopInstallState({
+        phase: "ready",
+        message: fileName
+          ? `安装包已下载并打开：${fileName}。请按系统提示完成覆盖安装。`
+          : "安装包已下载并打开。请按系统提示完成覆盖安装。",
+      });
+    } catch (error) {
+      setDesktopInstallState({
+        phase: "error",
+        message: error instanceof Error ? error.message : String(error || "桌面端更新安装失败"),
+      });
+    }
   };
+
+  const canInstallDesktopUpdate = Boolean(
+    desktopUpdateResult?.ok &&
+      desktopUpdateResult.updateAvailable &&
+      hasDesktopInstallBridge &&
+      desktopInstallState.phase !== "downloading",
+  );
 
   return (
     <div>
@@ -1434,13 +1472,26 @@ export function AboutSection({ showHeading = true }: SettingsSectionProps) {
               <RefreshCw size={13} />
               {desktopUpdateChecking ? "检查中" : "检查更新"}
             </button>
-            <button className={s.btnPrimary} type="button" onClick={handleOpenDesktopDownload}>
+            <button
+              className={s.btnPrimary}
+              type="button"
+              onClick={() => void handleInstallDesktopUpdate()}
+              disabled={!canInstallDesktopUpdate}
+            >
               <ExternalLinkIcon size={13} />
-              下载新版
+              {desktopInstallState.phase === "downloading" ? "下载中…" : "下载安装"}
             </button>
           </div>
+          {desktopInstallState.phase !== "idle" && (
+            <div
+              className={s.runtimeMessage}
+              data-tone={desktopInstallState.phase === "error" ? "error" : "normal"}
+            >
+              {desktopInstallState.message}
+            </div>
+          )}
           <p className={s.desc}>
-            这里提醒的是桌面壳版本。下载新版安装包后，请按系统提示覆盖安装；应用不会自动下载安装包或替换正在运行的程序。
+            这里提醒的是桌面壳版本。点击“下载安装”会下载当前系统的安装包并自动打开；请按系统提示完成覆盖安装。
           </p>
         </DebugCard>
 
@@ -1503,7 +1554,7 @@ function formatDesktopUpdateMessage(
   if (!result) return "点击“检查更新”可手动读取最新版本。";
   if (!result.ok) return result.error ?? "桌面端更新检查失败。";
   if (result.updateAvailable) {
-    return `发现新版本 ${versionLabel(result.latestVersion)}，可下载新版安装包覆盖安装。`;
+    return `发现新版本 ${versionLabel(result.latestVersion)}，可下载安装包并自动打开安装器。`;
   }
   return `当前已是最新版本 ${versionLabel(result.currentVersion)}。`;
 }
