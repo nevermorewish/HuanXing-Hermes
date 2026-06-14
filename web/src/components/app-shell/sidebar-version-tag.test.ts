@@ -99,6 +99,19 @@ describe("buildSidebarVersionRows", () => {
     expect(rows.kernel).toBe("内核 v0.15.2 · 8820");
   });
 
+  it("falls back to runtime source commit when current record omits sourceCommit", () => {
+    const info = runtimeInfo();
+    delete info.current?.sourceCommit;
+
+    const rows = buildSidebarVersionRows({
+      runtimeInfo: info,
+      buildCommit: "80157e462c630803571eef1ba17c2a01edfe240f",
+      desktopVersion: DESKTOP_VERSION,
+    });
+
+    expect(rows.kernel).toBe("内核 v0.15.2 · 8820");
+  });
+
   it("shows a dash instead of a hard-coded kernel version when status is unavailable", () => {
     const rows = buildSidebarVersionRows({
       buildCommit: "unknown",

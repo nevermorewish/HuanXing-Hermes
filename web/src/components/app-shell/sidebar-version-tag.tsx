@@ -39,7 +39,9 @@ export function buildSidebarVersionRows({
   desktopVersion = DESKTOP_VERSION,
 }: SidebarVersionRowsInput): SidebarVersionRows {
   const kernelVersion = versionLabel(runtimeInfo?.current?.kernelVersion ?? status?.version);
-  const kernelCommit = shortCommit(runtimeInfo?.current?.sourceCommit);
+  const kernelCommit = shortCommit(
+    runtimeInfo?.current?.sourceCommit ?? runtimeInfo?.source?.headCommit
+  );
   const uiVersion = versionLabel(desktopVersion);
   const uiCommit = shortCommit(buildCommit);
 
