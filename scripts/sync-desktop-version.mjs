@@ -84,13 +84,18 @@ updateText("Cargo.toml", (text) => replaceOrThrow(
 
 updateText("Cargo.lock", (text) => replaceOrThrow(
   text,
-  /(\[\[package\]\]\nname = "hermes-agent-cn-desktop"\nversion = )"[^"]+"/,
+  /(\[\[package\]\]\r?\nname = "hermes-agent-cn-desktop"\r?\nversion = )"[^"]+"/,
   `$1"${desktopVersion}"`,
   "Cargo.lock hermes-agent-cn-desktop package version",
 ));
 
 function syncReadme(text, currentVersionLabelPattern) {
-  let next = replaceOrThrow(text, currentVersionLabelPattern, `$1${desktopTag}$2`, "README current desktop version");
+  let next;
+  try {
+    next = replaceOrThrow(text, currentVersionLabelPattern, `$1${desktopTag}$2`, "README current desktop version");
+  } catch (error) {
+    next = replaceOrThrow(text, /(>\s+[^`\n]*`)v[^`]+(`)/, `$1${desktopTag}$2`, "README current desktop version");
+  }
   next = next.replace(
     /(Hermes\.Agent\.CN\.Desktop_)[^_]+(_aarch64\.dmg)/g,
     `$1${desktopVersion}$2`,
