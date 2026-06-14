@@ -524,7 +524,7 @@ const FALLBACK_MANIFEST_BASE_URL: &str =
     "https://ai.fengchiyun.com/downloads/Hermes-CN-Core/runtime/stable";
 const FALLBACK_PUBLIC_KEY_PEM: &str = concat!(
     "-----BEGIN PUBLIC KEY-----\n",
-    "MCowBQYDK2VwAyEASsSMMJ+CB7YGQteH5MJcvcMW4Ib4Pq+n7pHwHm/V8ik=\n",
+    "MCowBQYDK2VwAyEAqPkLQ4o67G2GMTgkQQQZXWwDBZM/4hqq5thSZSNhoC0=\n",
     "-----END PUBLIC KEY-----\n"
 );
 

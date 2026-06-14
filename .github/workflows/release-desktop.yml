@@ -1,5 +1,5 @@
 # Build hermes-agent-cn-desktop installers and attach them to a GitHub
-# Release. Triggers on tags matching `v*` (e.g. `v0.3.13`).
+# Release. Triggers on tags matching `v*` (e.g. `v0.3.14`).
 #
 # Desktop release build runs in parallel for every brand and platform. Each job:
 #   1. Installs Node + pnpm + Rust toolchain
@@ -32,7 +32,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag name to associate the build with (e.g. v0.3.13)"
+        description: "Tag name to associate the build with (e.g. v0.3.14)"
         required: true
       bundled_runtime_tag:
         description: "Hermes-CN-Core runtime release tag to embed in desktop installers, or latest"
@@ -45,6 +45,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-desktop
+  cancel-in-progress: true
 
 env:
   SERVICE_URL: https://ai.fengchiyun.com
@@ -539,6 +543,8 @@ jobs:
           }
 
           $encodedFileName = [Uri]::EscapeDataString($assetFile.Name)
+          $githubAssetFileName = $assetFile.Name -replace ' ', '.'
+          $encodedGithubAssetFileName = [Uri]::EscapeDataString($githubAssetFileName)
           $assetSha256 = (Get-FileHash -Algorithm SHA256 $assetFile.FullName).Hash.ToLowerInvariant()
           $assetPatchPath = "release-upload/$env:BRAND/$platformKey-asset.json"
           $assetPatch = [ordered]@{
@@ -551,7 +557,7 @@ jobs:
               sha256 = $assetSha256
               url = "$env:UPDATE_FEED_BASE_URL/$env:BRAND/$channel/$encodedFileName"
               versionedUrl = "$env:UPDATE_FEED_BASE_URL/$env:BRAND/releases/v$version/$encodedFileName"
-              sourceUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:RELEASE_TAG/$encodedFileName"
+              sourceUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:RELEASE_TAG/$encodedGithubAssetFileName"
             }
           }
           $assetPatch | ConvertTo-Json -Depth 20 | Set-Content -Path $assetPatchPath -Encoding utf8
@@ -747,6 +753,42 @@ jobs:
             Invoke-SshCommand "rmdir $quotedLock 2>/dev/null || true" "Failed to release remote latest.json lock"
           }
 
+          function Get-SemverParts([string]$value) {
+            $normalized = $value.Trim().TrimStart('v')
+            if ($normalized -notmatch '^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$') {
+              return $null
+            }
+
+            return [pscustomobject]@{
+              Major = [int]$Matches[1]
+              Minor = [int]$Matches[2]
+              Patch = [int]$Matches[3]
+              Prerelease = if ($Matches.Count -gt 4) { [string]$Matches[4] } else { '' }
+            }
+          }
+
+          function Compare-Semver([string]$left, [string]$right) {
+            $leftParts = Get-SemverParts $left
+            $rightParts = Get-SemverParts $right
+            if (-not $leftParts -or -not $rightParts) {
+              return [string]::Compare($left, $right, [System.StringComparison]::OrdinalIgnoreCase)
+            }
+
+            foreach ($part in @('Major', 'Minor', 'Patch')) {
+              if ($leftParts.$part -gt $rightParts.$part) { return 1 }
+              if ($leftParts.$part -lt $rightParts.$part) { return -1 }
+            }
+
+            if ([string]::IsNullOrWhiteSpace($leftParts.Prerelease) -and -not [string]::IsNullOrWhiteSpace($rightParts.Prerelease)) {
+              return 1
+            }
+            if (-not [string]::IsNullOrWhiteSpace($leftParts.Prerelease) -and [string]::IsNullOrWhiteSpace($rightParts.Prerelease)) {
+              return -1
+            }
+
+            return [string]::Compare($leftParts.Prerelease, $rightParts.Prerelease, [System.StringComparison]::OrdinalIgnoreCase)
+          }
+
           $remoteRoot = $env:LINUX_DEPLOY_REMOTE_PATH.TrimEnd('/', '\')
           $feedPath = ([Uri]$env:UPDATE_FEED_BASE_URL).AbsolutePath.Trim('/')
           $feedDir = if ($feedPath) { ($feedPath -split '/')[-1] } else { '' }
@@ -792,8 +834,12 @@ jobs:
             if (-not [string]::IsNullOrWhiteSpace($remoteJson)) {
               try {
                 $candidate = $remoteJson | ConvertFrom-Json
-                if ([string]$candidate.semver -eq [string]$env:VERSION) {
+                $candidateSemver = [string]$candidate.semver
+                if ($candidateSemver -eq [string]$env:VERSION) {
                   $manifest = $candidate
+                } elseif ($candidateSemver -and (Compare-Semver $candidateSemver $env:VERSION) -gt 0) {
+                  Write-Warning "Skipping latest.json update for $env:BRAND $env:VERSION because remote latest.json already points at newer version $candidateSemver."
+                  return
                 }
               } catch {
                 Write-Host "Ignoring invalid remote latest.json for ${env:BRAND}: $($_.Exception.Message)"
