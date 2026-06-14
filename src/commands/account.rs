@@ -1037,7 +1037,7 @@ fn build_provider_entry(
     models: &[String],
     primary_model: &str,
     api_key: &str,
-    _token_id: Option<i64>,
+    token_id: Option<i64>,
 ) -> Value {
     let mut entry = existing.as_object().cloned().unwrap_or_default();
     entry.remove("token_id");
@@ -1069,6 +1069,9 @@ fn build_provider_entry(
     );
     if !api_key.is_empty() {
         entry.insert("api_key".into(), json!(api_key));
+    }
+    if let Some(id) = token_id {
+        entry.insert("token_id".into(), json!(id));
     }
     Value::Object(entry)
 }
@@ -1558,7 +1561,7 @@ mod tests {
         assert_eq!(entry["discover_models"], false);
         assert_eq!(entry["model"], "gpt-x");
         assert_eq!(entry["api_key"], "sk-secret");
-        assert!(entry.get("token_id").is_none());
+        assert_eq!(entry["token_id"], 42);
         assert!(entry["models"]["gpt-x"].is_object());
         assert!(entry["models"]["claude-y"].is_object());
         // primary model also written to config.model

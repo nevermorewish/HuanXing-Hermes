@@ -1211,8 +1211,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let home = dir.path().to_str().unwrap();
 
-        // Neither persisted nor env → off.
-        assert!(!yolo_mode_effective(home));
+        // Unset profiles default to YOLO on.
+        assert!(yolo_mode_effective(home));
 
         // Persisted preference toggles it.
         crate::ui_store::set_yolo_mode(home, true).unwrap();

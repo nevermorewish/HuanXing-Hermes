@@ -10,11 +10,7 @@ import {
   ExternalLink as ExternalLinkIcon,
   FolderOpen,
   GitCommit,
-  GitFork,
-  Globe2,
   Heart,
-  Info,
-  MessageCircle,
   RefreshCw,
   Download,
   RotateCcw,
@@ -1398,15 +1394,13 @@ export function AboutSection({ showHeading = true }: SettingsSectionProps) {
         <div className={s.aboutHeroMark}><Heart size={24} /></div>
         <div className={s.aboutHeroBody}>
           <div className={s.aboutEyebrow}>{`${BRAND.appName} ${BRAND.edition}`}</div>
-          <h3>联系与致谢</h3>
-          <p>
-            致谢，联系方式及项目链接。
-          </p>
+          <h3>桌面端信息</h3>
+          <p>查看当前桌面端版本和更新状态。</p>
         </div>
       </div>
 
       <div className={s.aboutDebugGrid}>
-        <DebugCard icon={<Download size={15} />} title="桌面端更新" sub="检查新版本并前往官网下载覆盖安装" wide>
+        <DebugCard icon={<Download size={15} />} title="桌面端更新" sub="检查新版本并下载覆盖安装" wide>
           <div className={s.runtimeGrid}>
             <RuntimeField label="当前版本" value={versionLabel(DESKTOP_VERSION)} />
             <RuntimeField
@@ -1442,7 +1436,7 @@ export function AboutSection({ showHeading = true }: SettingsSectionProps) {
             </button>
             <button className={s.btnPrimary} type="button" onClick={handleOpenDesktopDownload}>
               <ExternalLinkIcon size={13} />
-              去官网下载
+              下载新版
             </button>
           </div>
           <p className={s.desc}>
@@ -1450,73 +1444,6 @@ export function AboutSection({ showHeading = true }: SettingsSectionProps) {
           </p>
         </DebugCard>
 
-        <DebugCard icon={<Info size={15} />} title="致谢" sub="感谢支持和贡献" wide>
-          <div className={s.thanksText}>
-            <p>
-              感谢 Hermes Agent 官方
-              <ExternalTextLink href="https://nousresearch.com/">Nous Research</ExternalTextLink>
-              的支持，以及参与测试、反馈、共建的中文社区朋友。
-            </p>
-            <p>
-              感谢
-              <ExternalTextLink href="https://github.com/MaxwellGengYF">MaxwellGeng</ExternalTextLink>
-              的代码贡献，及
-              <ExternalTextLink href="https://www.compshare.cn/">优云智算</ExternalTextLink>
-              的支持。
-            </p>
-          </div>
-        </DebugCard>
-
-        <DebugCard icon={<MessageCircle size={15} />} title="联系方式" sub="社区入口和反馈渠道" wide>
-          <div className={s.contactLayout}>
-            <div className={s.runtimeGrid}>
-              <ExternalLinkField label="官网" href={BRAND.homepage} text={BRAND.homepage.replace(/^https?:\/\//, "").replace(/\/$/, "")} />
-              <ContactField label="反馈">
-                <ExternalTextLink href="https://github.com/Eynzof/hermes-agent-cn-desktop/issues">
-                  到桌面端仓库 UI 层提交 issue 或建议
-                </ExternalTextLink>
-                <ExternalTextLink href="https://github.com/Eynzof/hermes-agent-cn/issues">
-                  到桌面端内核仓库提交 issue 或建议
-                </ExternalTextLink>
-              </ContactField>
-              <ContactField label="商务合作、企业定制化开发等" className={s.businessContactField}>
-                <div className={s.businessContactLines}>
-                  <ContactCopyLine label="电子邮箱" value="eynzof@gmail.com" />
-                  <ContactCopyLine label="微信号" value="Eynzof" />
-                </div>
-              </ContactField>
-            </div>
-          </div>
-        </DebugCard>
-
-        <DebugCard icon={<GitFork size={15} />} title="项目链接" sub="桌面端与内核项目" wide>
-          <div className={s.runtimeGrid}>
-            <ExternalLinkField
-              label="桌面端"
-              href="https://github.com/Eynzof/hermes-agent-cn-desktop"
-              text="github.com/Eynzof/hermes-agent-cn-desktop"
-              wide
-            />
-            <ExternalLinkField
-              label="内核"
-              href="https://github.com/Eynzof/hermes-agent-cn"
-              text="github.com/Eynzof/hermes-agent-cn"
-              wide
-            />
-          </div>
-          <p className={s.desc}>
-            桌面端会继续围绕中文社区的使用习惯做体验优化，也欢迎通过
-            <ExternalTextLink href="https://github.com/Eynzof/hermes-agent-cn-desktop/issues">仓库反馈问题和建议</ExternalTextLink>。
-          </p>
-        </DebugCard>
-
-        <DebugCard icon={<Globe2 size={15} />} title="官网" sub="本地化体验和使用文档" wide>
-          <p className={s.desc}>
-            {BRAND.edition}会把常用配置、消息平台接入、运行状态和排障入口收进一个桌面工作台，尽量减少命令行门槛。
-            后续入口和使用文档会同步到
-            <ExternalTextLink href={BRAND.homepage}>官网</ExternalTextLink>。
-          </p>
-        </DebugCard>
       </div>
     </div>
   );
@@ -1559,66 +1486,6 @@ function RuntimeField({ label, value, mono, wide, title }: {
   );
 }
 
-function ExternalLinkField({ label, href, text, wide }: {
-  label: string;
-  href: string;
-  text: string;
-  wide?: boolean;
-}) {
-  return (
-    <div className={s.runtimeField} data-wide={wide ? "true" : undefined}>
-      <span>{label}</span>
-      <b data-mono="true">
-        <ExternalTextLink href={href}>{text}</ExternalTextLink>
-      </b>
-    </div>
-  );
-}
-
-function ContactField({ label, children, className }: {
-  label: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <div className={`${s.runtimeField} ${className ?? ""}`} data-wide="true">
-      <span>{label}</span>
-      <div className={s.contactLines}>{children}</div>
-    </div>
-  );
-}
-
-function ContactCopyLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className={s.contactCopyLine}>
-      <span className={s.contactCopyLabel}>{label}：</span>
-      <b className={s.contactCopyValue}>{value}</b>
-      <CopyButton className={s.contactCopyButton} text={value} showStatusIcon={false}>
-        复制
-      </CopyButton>
-    </div>
-  );
-}
-
-function ExternalTextLink({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <a
-      className={`${s.link} ${s.externalLink}`}
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      onClick={(event) => {
-        event.preventDefault();
-        void openExternalUrl(href);
-      }}
-    >
-      {children}
-      <ExternalLinkIcon size={11} aria-hidden="true" />
-    </a>
-  );
-}
-
-
 function formatDesktopUpdateCheckedAt(value: number | undefined): string {
   if (!value) return "—";
   const date = new Date(value);
@@ -1631,12 +1498,12 @@ function formatDesktopUpdateMessage(
   checking: boolean,
   hasBridge: boolean,
 ): string {
-  if (!hasBridge) return "当前环境没有桌面端更新检查能力；请直接前往官网查看最新版本。";
-  if (checking) return "正在从官网读取最新桌面端版本…";
-  if (!result) return "点击“检查更新”可手动读取官网最新版本。";
+  if (!hasBridge) return "当前环境没有桌面端更新检查能力。";
+  if (checking) return "正在读取最新桌面端版本…";
+  if (!result) return "点击“检查更新”可手动读取最新版本。";
   if (!result.ok) return result.error ?? "桌面端更新检查失败。";
   if (result.updateAvailable) {
-    return `发现新版本 ${versionLabel(result.latestVersion)}，可前往官网下载新版安装包覆盖安装。`;
+    return `发现新版本 ${versionLabel(result.latestVersion)}，可下载新版安装包覆盖安装。`;
   }
   return `当前已是最新版本 ${versionLabel(result.currentVersion)}。`;
 }

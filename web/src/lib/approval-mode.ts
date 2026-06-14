@@ -11,6 +11,7 @@ export function normalizeApprovalMode(value: unknown): ApprovalMode {
   const normalized = normalizeOption(value);
   if (normalized === "smart") return "smart";
   if (YOLO_VALUES.includes(normalized)) return "yolo";
+  if (!normalized) return "yolo";
   return "default";
 }
 

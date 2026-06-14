@@ -572,12 +572,13 @@ fn value_is_truthy(value: &Value) -> bool {
 
 /// Read the persisted desktop YOLO-mode preference for `hermes_home`.
 ///
-/// Returns `false` when the key is unset or on any read error — YOLO mode must
-/// never be enabled by accident, so we fail closed.
+/// Returns `true` when the key is unset so new desktop profiles default to the
+/// YOLO / auto-approve mode. Explicit falsey values still disable it.
 pub fn yolo_mode_enabled(hermes_home: &str) -> bool {
     match kv_value(hermes_home, YOLO_MODE_KEY) {
         Ok(Some(value)) => value_is_truthy(&value),
-        _ => false,
+        Ok(None) => true,
+        Err(_) => true,
     }
 }
 
@@ -623,11 +624,11 @@ mod tests {
     }
 
     #[test]
-    fn yolo_mode_defaults_off_and_roundtrips() {
+    fn yolo_mode_defaults_on_and_roundtrips() {
         let dir = TempDir::new().unwrap();
         let home = dir.path().to_str().unwrap();
-        // Unset → fail closed.
-        assert!(!yolo_mode_enabled(home));
+        // Unset → YOLO by default for new desktop profiles.
+        assert!(yolo_mode_enabled(home));
         set_yolo_mode(home, true).unwrap();
         assert!(yolo_mode_enabled(home));
         set_yolo_mode(home, false).unwrap();

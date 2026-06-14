@@ -14,6 +14,8 @@ describe("approval mode helpers", () => {
     ["smart", "smart"],
     ["yolo", "yolo"],
     ["off", "yolo"],
+    [undefined, "yolo"],
+    ["", "yolo"],
     ["deny", "default"],
   ] as const)("normalizes %s to %s", (raw, expected) => {
     expect(normalizeApprovalMode(raw)).toBe(expected);
