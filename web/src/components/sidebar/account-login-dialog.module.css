@@ -130,13 +130,15 @@
 
 .actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
 }
 
 .primary,
-.secondary {
+.secondary,
+.register {
   padding: 8px 16px;
   border-radius: var(--h-r-md, 8px);
   font-family: inherit;
@@ -158,6 +160,20 @@
 }
 
 .secondary {
+  background: var(--h-bg-soft);
+  color: var(--h-text);
+}
+
+.register {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  background: transparent;
+  color: var(--h-text-2);
+}
+
+.register:hover {
   background: var(--h-bg-soft);
   color: var(--h-text);
 }

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X } from "lucide-react";
+import { UserPlus, X } from "lucide-react";
 import { BRAND } from "@/lib/brand.generated";
+import { openExternalUrl } from "@/lib/external-links";
 import {
   useAccountFetchSetup,
   useAccountLogin,
@@ -176,6 +177,10 @@ export function AccountLoginDialog({
     setPassword("");
   };
 
+  const handleRegister = () => {
+    void openExternalUrl(BRAND.registerUrl);
+  };
+
   const toggleModel = (id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -283,6 +288,10 @@ export function AccountLoginDialog({
               </label>
               {error && <p className={s.error}>{error}</p>}
               <div className={s.actions}>
+                <button type="button" className={s.register} onClick={handleRegister}>
+                  <UserPlus size={14} />
+                  注册
+                </button>
                 {savedCredentials.data?.hasSaved && (
                   <button
                     type="button"

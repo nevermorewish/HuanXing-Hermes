@@ -10,6 +10,7 @@ export interface BrandConfig {
   dataDirName: string;
   providerKey: string;
   serviceUrl: string;
+  registerUrl: string;
   rechargeUrl: string;
   copyright: string;
   publisher: string;
@@ -31,6 +32,7 @@ export const BRAND: BrandConfig = {
   "dataDirName": ".huanxinghermes",
   "providerKey": "huanxinghermes",
   "serviceUrl": "https://api.huanxing.ai/",
+  "registerUrl": "https://api.huanxing.ai/sign-up",
   "rechargeUrl": "https://api.huanxing.ai/wallet",
   "copyright": "Copyright © 2026 HuanxingHermes",
   "publisher": "HuanxingHermes",

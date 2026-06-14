@@ -22,6 +22,7 @@ const REQUIRED_FIELDS = [
   "dataDirName",
   "providerKey",
   "serviceUrl",
+  "registerUrl",
   "rechargeUrl",
   "copyright",
   "publisher",
