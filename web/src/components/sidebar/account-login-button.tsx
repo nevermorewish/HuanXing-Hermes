@@ -93,12 +93,16 @@ export function AccountLoginButton() {
   }
 
   const balance = balanceQuery.data;
+  const accountUserLabel = status?.user?.username || status?.user?.displayName || "已登录";
+  const accountUserTitle = [status?.user?.username, status?.user?.displayName]
+    .filter(Boolean)
+    .join(" / ");
   return (
     <>
       <div className={s.panel}>
         <div className={s.row}>
-          <span className={s.user} title={status?.user?.username}>
-            {status?.user?.displayName || status?.user?.username || "已登录"}
+          <span className={s.user} title={accountUserTitle || undefined}>
+            {accountUserLabel}
           </span>
           <button
             type="button"

@@ -15,6 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tauri::{AppHandle, Emitter};
 
 use crate::brand_generated::{
     BRAND_APP_NAME, BRAND_UPDATE_MANIFEST_URL as DESKTOP_UPDATE_MANIFEST_URL,
@@ -22,6 +23,7 @@ use crate::brand_generated::{
 
 const DESKTOP_UPDATE_TIMEOUT: Duration = Duration::from_secs(10);
 const DESKTOP_INSTALL_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+pub const DESKTOP_UPDATE_PROGRESS_EVENT: &str = "desktop-update-progress";
 
 static DESKTOP_UPDATE_HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
@@ -91,6 +93,17 @@ pub struct DesktopInstallUpdateResult {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopInstallUpdateProgress {
+    pub stage: &'static str,
+    pub bytes_downloaded: u64,
+    pub bytes_total: Option<u64>,
+    pub percent: Option<u8>,
+    pub file_name: Option<String>,
+    pub message: Option<String>,
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -98,6 +111,38 @@ fn now_ms() -> u64 {
         .as_millis()
         .try_into()
         .unwrap_or(u64::MAX)
+}
+
+fn download_percent(bytes_downloaded: u64, bytes_total: Option<u64>) -> Option<u8> {
+    let total = bytes_total?;
+    if total == 0 {
+        return None;
+    }
+    Some(((bytes_downloaded.saturating_mul(100) / total).min(100)) as u8)
+}
+
+fn emit_install_progress(
+    app: Option<&AppHandle>,
+    stage: &'static str,
+    bytes_downloaded: u64,
+    bytes_total: Option<u64>,
+    file_name: Option<String>,
+    message: Option<&str>,
+) {
+    let Some(app) = app else {
+        return;
+    };
+    let _ = app.emit(
+        DESKTOP_UPDATE_PROGRESS_EVENT,
+        DesktopInstallUpdateProgress {
+            stage,
+            bytes_downloaded,
+            bytes_total,
+            percent: download_percent(bytes_downloaded, bytes_total),
+            file_name,
+            message: message.map(str::to_string),
+        },
+    );
 }
 
 async fn fetch_desktop_update_manifest_from(
@@ -159,11 +204,12 @@ pub async fn desktop_check_update() -> DesktopUpdateManifestFetchResult {
 }
 
 #[tauri::command]
-pub async fn desktop_install_update() -> DesktopInstallUpdateResult {
+pub async fn desktop_install_update(app: AppHandle) -> DesktopInstallUpdateResult {
     install_desktop_update_from(
         &DESKTOP_UPDATE_HTTP_CLIENT,
         &DESKTOP_INSTALL_HTTP_CLIENT,
         DESKTOP_UPDATE_MANIFEST_URL,
+        Some(&app),
     )
     .await
 }
@@ -172,9 +218,14 @@ async fn install_desktop_update_from(
     manifest_client: &reqwest::Client,
     download_client: &reqwest::Client,
     manifest_url: &str,
+    app: Option<&AppHandle>,
 ) -> DesktopInstallUpdateResult {
+    emit_install_progress(app, "starting", 0, None, None, Some("正在读取更新清单"));
     let fetched = fetch_desktop_update_manifest_from(manifest_client, manifest_url).await;
     if !fetched.ok {
+        if let Some(error) = fetched.error.as_deref() {
+            emit_install_progress(app, "error", 0, None, None, Some(error));
+        }
         return DesktopInstallUpdateResult {
             ok: false,
             manifest_url: fetched.manifest_url,
@@ -188,10 +239,11 @@ async fn install_desktop_update_from(
     }
 
     let Some(manifest) = fetched.manifest else {
-        return install_error(manifest_url, None, 0, None, "桌面端更新清单为空");
+        return install_error(app, manifest_url, None, 0, None, "桌面端更新清单为空");
     };
     let Some(asset) = select_platform_asset(&manifest) else {
         return install_error(
+            app,
             manifest_url,
             None,
             0,
@@ -200,7 +252,14 @@ async fn install_desktop_update_from(
         );
     };
     let Some(download_url) = asset_download_url(&asset) else {
-        return install_error(manifest_url, Some(asset), 0, None, "安装包缺少下载地址");
+        return install_error(
+            app,
+            manifest_url,
+            Some(asset),
+            0,
+            None,
+            "安装包缺少下载地址",
+        );
     };
 
     let raw_file_name = asset
@@ -212,6 +271,7 @@ async fn install_desktop_update_from(
     let dir = desktop_update_download_dir();
     if let Err(err) = fs::create_dir_all(&dir) {
         return install_error(
+            app,
             manifest_url,
             Some(asset),
             0,
@@ -221,10 +281,12 @@ async fn install_desktop_update_from(
     }
     let file_path = dir.join(file_name);
 
-    let downloaded = match download_installer(download_client, &download_url, &file_path).await {
+    let downloaded = match download_installer(download_client, &download_url, &file_path, app).await
+    {
         Ok(downloaded) => downloaded,
         Err(err) => {
             return install_error(
+                app,
                 manifest_url,
                 Some(asset),
                 err.bytes_downloaded,
@@ -233,6 +295,19 @@ async fn install_desktop_update_from(
             )
         }
     };
+
+    let file_name_for_progress = file_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string);
+    emit_install_progress(
+        app,
+        "verifying",
+        downloaded.bytes_downloaded,
+        downloaded.bytes_total,
+        file_name_for_progress.clone(),
+        Some("verifying installer"),
+    );
 
     if let Some(expected) = asset
         .sha256
@@ -245,15 +320,20 @@ async fn install_desktop_update_from(
             Ok(actual) if actual.eq_ignore_ascii_case(&expected) => {}
             Ok(actual) => {
                 return install_error(
+                    app,
                     manifest_url,
                     Some(asset),
                     downloaded.bytes_downloaded,
                     downloaded.bytes_total,
-                    &format!("安装包 SHA-256 校验失败：期望 {}，实际 {}", expected, actual),
+                    &format!(
+                        "安装包 SHA-256 校验失败：期望 {}，实际 {}",
+                        expected, actual
+                    ),
                 )
             }
             Err(err) => {
                 return install_error(
+                    app,
                     manifest_url,
                     Some(asset),
                     downloaded.bytes_downloaded,
@@ -264,8 +344,17 @@ async fn install_desktop_update_from(
         }
     }
 
+    emit_install_progress(
+        app,
+        "launching",
+        downloaded.bytes_downloaded,
+        downloaded.bytes_total,
+        file_name_for_progress.clone(),
+        Some("launching installer"),
+    );
     if let Err(err) = open::that(&file_path) {
         return install_error(
+            app,
             manifest_url,
             Some(asset),
             downloaded.bytes_downloaded,
@@ -273,6 +362,15 @@ async fn install_desktop_update_from(
             &format!("启动安装包失败：{}", err),
         );
     }
+
+    emit_install_progress(
+        app,
+        "complete",
+        downloaded.bytes_downloaded,
+        downloaded.bytes_total,
+        file_name_for_progress,
+        Some("installer launched"),
+    );
 
     DesktopInstallUpdateResult {
         ok: true,
@@ -287,12 +385,22 @@ async fn install_desktop_update_from(
 }
 
 fn install_error(
+    app: Option<&AppHandle>,
     manifest_url: &str,
     asset: Option<DesktopUpdateAsset>,
     bytes_downloaded: u64,
     bytes_total: Option<u64>,
     message: &str,
 ) -> DesktopInstallUpdateResult {
+    let file_name = asset.as_ref().and_then(|asset| asset.file_name.clone());
+    emit_install_progress(
+        app,
+        "error",
+        bytes_downloaded,
+        bytes_total,
+        file_name,
+        Some(message),
+    );
     DesktopInstallUpdateResult {
         ok: false,
         manifest_url: manifest_url.to_string(),
@@ -320,12 +428,17 @@ async fn download_installer(
     client: &reqwest::Client,
     url: &str,
     target: &Path,
+    app: Option<&AppHandle>,
 ) -> Result<DownloadedInstaller, DownloadInstallError> {
-    let response = client.get(url).send().await.map_err(|err| DownloadInstallError {
-        message: format!("安装包下载请求失败：{}", err),
-        bytes_downloaded: 0,
-        bytes_total: None,
-    })?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|err| DownloadInstallError {
+            message: format!("安装包下载请求失败：{}", err),
+            bytes_downloaded: 0,
+            bytes_total: None,
+        })?;
     let status = response.status();
     let bytes_total = response.content_length();
     if !status.is_success() {
@@ -335,6 +448,19 @@ async fn download_installer(
             bytes_total,
         });
     }
+
+    let file_name = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string);
+    emit_install_progress(
+        app,
+        "downloading",
+        0,
+        bytes_total,
+        file_name.clone(),
+        Some("正在下载安装包"),
+    );
 
     let temp_path = target.with_extension(format!(
         "{}download",
@@ -363,6 +489,14 @@ async fn download_installer(
             bytes_total,
         })?;
         bytes_downloaded = bytes_downloaded.saturating_add(chunk.len() as u64);
+        emit_install_progress(
+            app,
+            "downloading",
+            bytes_downloaded,
+            bytes_total,
+            file_name.clone(),
+            Some("正在下载安装包"),
+        );
     }
     file.flush().map_err(|err| DownloadInstallError {
         message: format!("刷新安装包文件失败：{}", err),
@@ -452,8 +586,16 @@ fn select_platform_asset(manifest: &DesktopUpdateManifest) -> Option<DesktopUpda
 fn platform_asset_score(key: &str, asset: &DesktopUpdateAsset) -> i32 {
     let mut haystack = vec![
         key.to_ascii_lowercase(),
-        asset.platform.clone().unwrap_or_default().to_ascii_lowercase(),
-        asset.file_name.clone().unwrap_or_default().to_ascii_lowercase(),
+        asset
+            .platform
+            .clone()
+            .unwrap_or_default()
+            .to_ascii_lowercase(),
+        asset
+            .file_name
+            .clone()
+            .unwrap_or_default()
+            .to_ascii_lowercase(),
         asset.label.clone().unwrap_or_default().to_ascii_lowercase(),
     ]
     .join(" ");
@@ -474,8 +616,7 @@ fn platform_asset_score(key: &str, asset: &DesktopUpdateAsset) -> i32 {
         if (haystack.contains("macos") || haystack.contains("darwin")) && arch_match {
             return 110;
         }
-        if haystack.contains("macos") || haystack.contains("darwin") || haystack.ends_with(".dmg")
-        {
+        if haystack.contains("macos") || haystack.contains("darwin") || haystack.ends_with(".dmg") {
             return 80;
         }
     }
@@ -628,9 +769,13 @@ mod tests {
             ..Default::default()
         };
         if cfg!(target_os = "windows") {
-            assert!(platform_asset_score("windows", &windows) > platform_asset_score("macos", &mac));
+            assert!(
+                platform_asset_score("windows", &windows) > platform_asset_score("macos", &mac)
+            );
         } else if cfg!(target_os = "macos") {
-            assert!(platform_asset_score("macos", &mac) > platform_asset_score("windows", &windows));
+            assert!(
+                platform_asset_score("macos", &mac) > platform_asset_score("windows", &windows)
+            );
         }
     }
 }

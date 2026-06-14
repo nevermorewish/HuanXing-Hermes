@@ -597,6 +597,188 @@ fn restore_session_from_store() -> Result<Option<SessionState>, AppError> {
     Ok(Some(session))
 }
 
+fn data_or_root(value: &Value) -> &Value {
+    value
+        .get("data")
+        .filter(|data| !data.is_null())
+        .unwrap_or(value)
+}
+
+fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        value
+            .get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn i64_field(value: &Value, keys: &[&str]) -> Option<i64> {
+    keys.iter().find_map(|key| {
+        value.get(*key).and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str()?.trim().parse::<i64>().ok())
+        })
+    })
+}
+
+fn f64_field(value: &Value, keys: &[&str]) -> Option<f64> {
+    keys.iter().find_map(|key| {
+        value.get(*key).and_then(|v| {
+            v.as_f64()
+                .or_else(|| v.as_str()?.trim().parse::<f64>().ok())
+        })
+    })
+}
+
+fn bool_field(value: &Value, keys: &[&str]) -> Option<bool> {
+    keys.iter().find_map(|key| {
+        let raw = value.get(*key)?;
+        raw.as_bool().or_else(
+            || match raw.as_str()?.trim().to_ascii_lowercase().as_str() {
+                "true" | "1" | "yes" => Some(true),
+                "false" | "0" | "no" => Some(false),
+                _ => None,
+            },
+        )
+    })
+}
+
+fn generic_display_name(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "" | "rootuser" | "root user"
+    )
+}
+
+fn parse_account_user(
+    value: &Value,
+    fallback_id: Option<i64>,
+    fallback_username: &str,
+) -> Result<AccountUser, AppError> {
+    let data = data_or_root(value);
+    let id = i64_field(data, &["id", "user_id", "userId"])
+        .or(fallback_id)
+        .ok_or_else(|| AppError::ProxyError("登录失败：服务未返回用户信息".to_string()))?;
+    let fallback_username = fallback_username.trim();
+    let username = string_field(
+        data,
+        &[
+            "username",
+            "user_name",
+            "userName",
+            "email",
+            "account",
+            "name",
+        ],
+    )
+    .or_else(|| (!fallback_username.is_empty()).then(|| fallback_username.to_string()))
+    .unwrap_or_else(|| format!("user-{}", id));
+    let display_name = string_field(
+        data,
+        &[
+            "display_name",
+            "displayName",
+            "nickname",
+            "nick_name",
+            "name",
+        ],
+    )
+    .filter(|name| !generic_display_name(name))
+    .unwrap_or_else(|| username.clone());
+    Ok(AccountUser {
+        id,
+        username,
+        display_name,
+        role: i64_field(data, &["role"]).unwrap_or(0),
+        status: i64_field(data, &["status"]).unwrap_or(0),
+        group: string_field(data, &["group", "group_name", "groupName"])
+            .unwrap_or_else(|| "default".to_string()),
+    })
+}
+
+async fn fetch_self_user(session: &SessionState) -> Result<AccountUser, AppError> {
+    let (status, body) = account_json(
+        reqwest::Method::GET,
+        &format!("{}/api/user/self", session.base_url),
+        &session.session_cookie,
+        session.user.id,
+        None,
+    )
+    .await?;
+    if body.get("success").and_then(Value::as_bool) == Some(false) {
+        return Err(envelope_error("获取账户信息", status, &body));
+    }
+    parse_account_user(&body, Some(session.user.id), &session.user.username)
+}
+
+async fn refresh_session_user(session: SessionState) -> Result<SessionState, AppError> {
+    let mut next = session;
+    next.user = fetch_self_user(&next).await?;
+    store_session_state(&next)?;
+    *SESSION.lock()? = Some(next.clone());
+    Ok(next)
+}
+
+fn extract_balance_values(self_body: &Value) -> (f64, f64) {
+    let data = data_or_root(self_body);
+    let quota = f64_field(
+        data,
+        &[
+            "quota",
+            "remain_quota",
+            "remainQuota",
+            "balance",
+            "credit",
+            "available_quota",
+            "availableQuota",
+        ],
+    )
+    .unwrap_or(0.0);
+    let used_quota = f64_field(
+        data,
+        &[
+            "used_quota",
+            "usedQuota",
+            "used",
+            "consumed_quota",
+            "consumedQuota",
+        ],
+    )
+    .unwrap_or(0.0);
+    (quota, used_quota)
+}
+
+fn extract_status_settings(status_body: &Value) -> (f64, bool, String) {
+    let data = data_or_root(status_body);
+    let quota_per_unit = f64_field(data, &["quota_per_unit", "quotaPerUnit"])
+        .filter(|v| *v > 0.0)
+        .unwrap_or(500000.0);
+    let display_in_currency = if string_field(data, &["quota_display_type", "quotaDisplayType"])
+        .map(|v| v.eq_ignore_ascii_case("TOKENS"))
+        == Some(true)
+    {
+        false
+    } else {
+        bool_field(data, &["display_in_currency", "displayInCurrency"]).unwrap_or(true)
+    };
+    let top_up_link = string_field(
+        data,
+        &[
+            "top_up_link",
+            "topUpLink",
+            "top_up_url",
+            "topUpUrl",
+            "recharge_url",
+            "rechargeUrl",
+        ],
+    )
+    .unwrap_or_default();
+    (quota_per_unit, display_in_currency, top_up_link)
+}
+
 // ---- account server calls ----------------------------------------------
 
 /// POST /api/user/login — stores the session cookie + user on success.
@@ -627,7 +809,7 @@ async fn do_login(base_url: &str, username: &str, password: &str) -> Result<Acco
     if body.get("success").and_then(Value::as_bool) != Some(true) {
         return Err(envelope_error("登录", status, &body));
     }
-    let data = body.get("data").cloned().unwrap_or_else(|| json!({}));
+    let data = data_or_root(&body);
     if data.get("require_2fa").and_then(Value::as_bool) == Some(true) {
         return Err(AppError::InvalidRequest(
             "该账号开启了两步验证，暂不支持".to_string(),
@@ -635,41 +817,18 @@ async fn do_login(base_url: &str, username: &str, password: &str) -> Result<Acco
     }
     let cookie = extract_auth_cookie(&set_cookies)
         .ok_or_else(|| AppError::ProxyError("登录失败：服务未返回会话凭证".to_string()))?;
-    let id = data
-        .get("id")
-        .and_then(Value::as_i64)
-        .ok_or_else(|| AppError::ProxyError("登录失败：服务未返回用户信息".to_string()))?;
-    let username_s = data
-        .get("username")
-        .and_then(Value::as_str)
-        .unwrap_or(username)
-        .to_string();
-    let user = AccountUser {
-        id,
-        username: username_s.clone(),
-        display_name: data
-            .get("display_name")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(&username_s)
-            .to_string(),
-        role: data.get("role").and_then(Value::as_i64).unwrap_or(0),
-        status: data.get("status").and_then(Value::as_i64).unwrap_or(0),
-        group: data
-            .get("group")
-            .and_then(Value::as_str)
-            .unwrap_or("default")
-            .to_string(),
-    };
-
-    let session = SessionState {
+    let user = parse_account_user(&body, None, username)?;
+    let mut session = SessionState {
         base_url: normalized,
         session_cookie: cookie,
-        user: user.clone(),
+        user,
     };
+    if let Ok(refreshed_user) = fetch_self_user(&session).await {
+        session.user = refreshed_user;
+    }
     store_session_state(&session)?;
-    *SESSION.lock()? = Some(session);
-    Ok(user)
+    *SESSION.lock()? = Some(session.clone());
+    Ok(session.user)
 }
 
 /// Fetch the model names usable by this account: try GET /api/pricing first
@@ -1135,7 +1294,14 @@ pub async fn account_login(input: LoginInput) -> Result<AccountUser, AppError> {
 
 #[tauri::command]
 pub async fn account_status() -> Result<StatusResult, AppError> {
-    let session = restore_session_from_store()?;
+    let session = match restore_session_from_store()? {
+        Some(session) => Some(
+            refresh_session_user(session.clone())
+                .await
+                .unwrap_or(session),
+        ),
+        None => None,
+    };
     let key = stored_key()?;
     Ok(match session {
         Some(s) => StatusResult {
@@ -1210,12 +1376,7 @@ pub async fn account_balance() -> Result<AccountBalance, AppError> {
         None,
     )
     .await?;
-    let data = self_body.get("data").cloned().unwrap_or_else(|| json!({}));
-    let quota = data.get("quota").and_then(Value::as_f64).unwrap_or(0.0);
-    let used_quota = data
-        .get("used_quota")
-        .and_then(Value::as_f64)
-        .unwrap_or(0.0);
+    let (quota, used_quota) = extract_balance_values(&self_body);
 
     let (_, status_body) = account_json(
         reqwest::Method::GET,
@@ -1225,21 +1386,7 @@ pub async fn account_balance() -> Result<AccountBalance, AppError> {
         None,
     )
     .await?;
-    let sdata = status_body
-        .get("data")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    let quota_per_unit = sdata
-        .get("quota_per_unit")
-        .and_then(Value::as_f64)
-        .filter(|v| *v > 0.0)
-        .unwrap_or(500000.0);
-    let display_in_currency =
-        sdata.get("display_in_currency").and_then(Value::as_bool) != Some(false);
-    let top_up_link = sdata
-        .get("top_up_link")
-        .and_then(Value::as_str)
-        .unwrap_or("");
+    let (quota_per_unit, display_in_currency, top_up_link) = extract_status_settings(&status_body);
 
     let base = session.base_url.trim_end_matches('/');
     let top_up_url = if top_up_link.is_empty() {
@@ -1540,6 +1687,79 @@ mod tests {
             Some("sk-top123".to_string())
         );
         assert_eq!(extract_full_key(&json!({ "data": "sk-abc***xyz" })), None);
+    }
+
+    #[test]
+    fn parse_account_user_ignores_rootuser_display_name() {
+        let user = parse_account_user(
+            &json!({
+                "data": {
+                    "id": 7,
+                    "username": "alice",
+                    "display_name": "RootUser",
+                    "group": "vip"
+                }
+            }),
+            None,
+            "fallback",
+        )
+        .unwrap();
+        assert_eq!(user.username, "alice");
+        assert_eq!(user.display_name, "alice");
+        assert_eq!(user.group, "vip");
+    }
+
+    #[test]
+    fn parse_account_user_supports_top_level_and_camel_case() {
+        let user = parse_account_user(
+            &json!({
+                "id": "8",
+                "userName": "bob",
+                "displayName": "Bob",
+                "groupName": "default"
+            }),
+            None,
+            "",
+        )
+        .unwrap();
+        assert_eq!(user.id, 8);
+        assert_eq!(user.username, "bob");
+        assert_eq!(user.display_name, "Bob");
+        assert_eq!(user.group, "default");
+    }
+
+    #[test]
+    fn extract_balance_values_supports_legacy_and_new_shapes() {
+        assert_eq!(
+            extract_balance_values(&json!({ "data": { "quota": 1200, "used_quota": 300 } })),
+            (1200.0, 300.0)
+        );
+        assert_eq!(
+            extract_balance_values(&json!({ "remainQuota": "900.5", "usedQuota": "10" })),
+            (900.5, 10.0)
+        );
+    }
+
+    #[test]
+    fn extract_status_settings_supports_status_variants() {
+        assert_eq!(
+            extract_status_settings(&json!({
+                "data": {
+                    "quota_per_unit": 1000,
+                    "display_in_currency": false,
+                    "top_up_link": "/recharge"
+                }
+            })),
+            (1000.0, false, "/recharge".to_string())
+        );
+        assert_eq!(
+            extract_status_settings(&json!({
+                "quotaPerUnit": "2000",
+                "quotaDisplayType": "TOKENS",
+                "topUpUrl": "https://example.com/topup"
+            })),
+            (2000.0, false, "https://example.com/topup".to_string())
+        );
     }
 
     #[test]
