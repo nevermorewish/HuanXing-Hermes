@@ -27,6 +27,11 @@ function formatBalance(
   return `$${(quota / quotaPerUnit).toFixed(2)}`;
 }
 
+function errorMessage(error: unknown): string | undefined {
+  if (!error) return undefined;
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function AccountLoginButton() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const available = isAccountLoginAvailable();
@@ -60,7 +65,7 @@ export function AccountLoginButton() {
       : "";
 
   const handleTokenSelect = async (tokenId: number) => {
-    if (!Number.isFinite(tokenId) || tokenId <= 0 || providerModels.length === 0) return;
+    if (!Number.isFinite(tokenId) || tokenId <= 0) return;
     await saveModels.mutateAsync({
       models: providerModels,
       primaryModelId: primaryModel,
@@ -72,6 +77,14 @@ export function AccountLoginButton() {
       });
     }
   };
+  const loadAccountTokens = () => {
+    if (!accountTokens.data && !accountTokens.isFetching) {
+      void accountTokens.refetch();
+    }
+  };
+  const tokenLoadError = accountTokens.isError
+    ? errorMessage(accountTokens.error) ?? "令牌加载失败"
+    : undefined;
 
   const dialog = (
     <AccountLoginDialog
@@ -123,29 +136,20 @@ export function AccountLoginButton() {
           <select
             className={s.tokenSelect}
             value={selectedTokenId}
-            disabled={accountTokens.isFetching || saveModels.isPending || providerModels.length === 0}
-            onFocus={() => {
-              if (!accountTokens.data && !accountTokens.isFetching && !accountTokens.isError) {
-                void accountTokens.refetch();
-              }
-            }}
-            onMouseDown={() => {
-              if (!accountTokens.data && !accountTokens.isFetching && !accountTokens.isError) {
-                void accountTokens.refetch();
-              }
-            }}
+            disabled={accountTokens.isFetching || saveModels.isPending}
+            title={tokenLoadError}
+            onFocus={loadAccountTokens}
+            onMouseDown={loadAccountTokens}
             onChange={(event) => {
               const tokenId = Number(event.target.value);
               void handleTokenSelect(tokenId);
             }}
           >
             <option value="">
-              {providerModels.length === 0
-                ? "先选择模型"
-                : saveModels.isPending
+              {saveModels.isPending
                   ? "保存中..."
                   : accountTokens.isError
-                    ? "令牌限流"
+                    ? "令牌加载失败"
                   : accountTokens.isFetching
                     ? "加载中..."
                     : "选择令牌"}

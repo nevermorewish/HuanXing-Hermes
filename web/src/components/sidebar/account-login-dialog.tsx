@@ -26,6 +26,15 @@ interface AccountLoginDialogProps {
 
 type Step = "credentials" | "models";
 
+const MODEL_NAME_COLLATOR = new Intl.Collator("en", {
+  numeric: true,
+  sensitivity: "base",
+});
+
+function sortModelNames(models: string[]): string[] {
+  return [...models].sort((a, b) => MODEL_NAME_COLLATOR.compare(a, b));
+}
+
 export function AccountLoginDialog({
   open,
   onOpenChange,
@@ -92,12 +101,13 @@ export function AccountLoginDialog({
   const proceedAfterLogin = async () => {
     autoProceedStarted.current = true;
     const result = await fetchSetup.mutateAsync();
-    setSetup(result);
+    const sortedModels = sortModelNames(result.models);
+    setSetup({ ...result, models: sortedModels });
     // Pre-check already-configured models, else default to all.
     const preset = configuredModels.length > 0
-      ? new Set(result.models.filter((m) => configuredModels.includes(m)))
-      : new Set(result.models);
-    setSelected(preset.size > 0 ? preset : new Set(result.models));
+      ? new Set(sortedModels.filter((m) => configuredModels.includes(m)))
+      : new Set(sortedModels);
+    setSelected(preset.size > 0 ? preset : new Set(sortedModels));
     // Lazily load tokens for the selector; failure is non-fatal.
     try {
       const list = await window.hermesDesktop?.accountListTokens?.();
@@ -177,7 +187,7 @@ export function AccountLoginDialog({
 
   const handleSave = async () => {
     setError(null);
-    const models = Array.from(selected);
+    const models = (setup?.models ?? []).filter((model) => selected.has(model));
     if (models.length === 0) {
       setError("请至少选择一个模型");
       return;

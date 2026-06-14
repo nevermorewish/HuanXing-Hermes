@@ -390,6 +390,7 @@ interface ModelPickerViewProps {
   accountTokenOptions?: Array<{ id: number; name: string; group?: string }>;
   accountTokenLoading?: boolean;
   accountTokenSaving?: boolean;
+  accountTokenError?: string;
   onLoadAccountTokens?: () => void;
   onSelectAccountToken?: (tokenId: number, configuredModels: string[]) => void | Promise<void>;
 }
@@ -419,6 +420,7 @@ function ModelPickerBody({
   accountTokenOptions,
   accountTokenLoading,
   accountTokenSaving,
+  accountTokenError,
   onLoadAccountTokens,
   onSelectAccountToken,
   searchInputRef,
@@ -715,6 +717,7 @@ function ModelPickerBody({
                               className={s.mpGroupSelect}
                               value={accountTokenId ?? ""}
                               disabled={accountTokenLoading || accountTokenSaving}
+                              title={accountTokenError}
                               onFocus={onLoadAccountTokens}
                               onMouseDown={onLoadAccountTokens}
                               onChange={(event) => {
@@ -725,7 +728,13 @@ function ModelPickerBody({
                               }}
                             >
                               <option value="">
-                                {accountTokenSaving ? "保存令牌中..." : accountTokenLoading ? "加载令牌中..." : "选择令牌"}
+                                {accountTokenSaving
+                                  ? "保存令牌中..."
+                                  : accountTokenLoading
+                                    ? "加载令牌中..."
+                                    : accountTokenError
+                                      ? "令牌加载失败"
+                                      : "选择令牌"}
                               </option>
                               {(accountTokenOptions ?? []).map((token) => (
                                 <option key={token.id} value={token.id}>

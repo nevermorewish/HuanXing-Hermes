@@ -27,6 +27,11 @@ import type {
   ComposerSubmitPayload,
 } from "@/components/chat/composer-types";
 
+function errorMessage(error: unknown): string | undefined {
+  if (!error) return undefined;
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function PanelComposer() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -67,6 +72,9 @@ export function PanelComposer() {
     : typeof accountProviderEntry?.tokenId === "number"
       ? accountProviderEntry.tokenId
       : null;
+  const accountTokenError = accountTokens.isError
+    ? errorMessage(accountTokens.error) ?? "令牌加载失败"
+    : undefined;
   const configuredAccountModels = useMemo(
     () =>
       modelOptionsCache?.providers
@@ -216,8 +224,9 @@ export function PanelComposer() {
           accountTokenOptions: accountTokens.data ?? [],
           accountTokenLoading: accountTokens.isFetching,
           accountTokenSaving: saveAccountModels.isPending,
+          accountTokenError,
           onLoadAccountTokens: () => {
-            if (!accountTokens.data && !accountTokens.isFetching && !accountTokens.isError) {
+            if (!accountTokens.data && !accountTokens.isFetching) {
               void accountTokens.refetch();
             }
           },

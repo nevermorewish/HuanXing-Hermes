@@ -1216,16 +1216,19 @@ fn build_provider_entry(
     // `models` map when it is a dict {id: {...}} — a list of {id} objects is
     // silently dropped (it only preserves list items that are plain strings),
     // which made the account's models vanish from the picker. Write the dict
-    // shape Core expects.
-    entry.insert(
-        "models".into(),
-        Value::Object(
-            models
-                .iter()
-                .map(|id| (id.clone(), json!({})))
-                .collect::<serde_json::Map<String, Value>>(),
-        ),
-    );
+    // shape Core expects. A token-only update passes no models and should not
+    // clear an existing model selection.
+    if !models.is_empty() {
+        entry.insert(
+            "models".into(),
+            Value::Object(
+                models
+                    .iter()
+                    .map(|id| (id.clone(), json!({})))
+                    .collect::<serde_json::Map<String, Value>>(),
+            ),
+        );
+    }
     if !api_key.is_empty() {
         entry.insert("api_key".into(), json!(api_key));
     }
@@ -1249,6 +1252,14 @@ fn merge_account_provider(
         .filter(|m| !m.is_empty())
         .map(str::to_string)
         .or_else(|| models.first().cloned())
+        .or_else(|| {
+            config
+                .get("providers")
+                .and_then(|v| v.get(&provider_id))
+                .and_then(|v| v.get("model"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .unwrap_or_default();
 
     let root = config.as_object_mut().expect("config is a JSON object");
@@ -1414,8 +1425,8 @@ pub async fn account_save_models(
     input: SaveModelsInput,
     state: State<'_, AppState>,
 ) -> Result<StatusResult, AppError> {
-    if input.models.is_empty() {
-        return Err(AppError::InvalidRequest("未选择任何模型".to_string()));
+    if input.models.is_empty() && input.token_id.is_none() {
+        return Err(AppError::InvalidRequest("未选择任何模型或令牌".to_string()));
     }
     let session = require_session()?;
     let api_base = account_api_base(&session.base_url);
@@ -1804,5 +1815,32 @@ mod tests {
         assert_eq!(merged["providers"][&id]["model"], "a");
         // no primary_model_id → config.model is not overwritten
         assert!(merged.get("model").is_none());
+    }
+
+    #[test]
+    fn merge_account_provider_token_only_preserves_models() {
+        let id = account_provider_id();
+        let merged = merge_account_provider(
+            json!({
+                "providers": {
+                    id.clone(): {
+                        "model": "existing-model",
+                        "models": {
+                            "existing-model": {}
+                        }
+                    }
+                }
+            }),
+            "https://x/v1",
+            &[],
+            None,
+            "sk-new",
+            Some(7),
+        );
+        let entry = &merged["providers"][&id];
+        assert_eq!(entry["model"], "existing-model");
+        assert!(entry["models"]["existing-model"].is_object());
+        assert_eq!(entry["api_key"], "sk-new");
+        assert_eq!(entry["token_id"], 7);
     }
 }

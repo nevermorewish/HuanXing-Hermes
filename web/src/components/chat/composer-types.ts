@@ -69,6 +69,7 @@ export interface ComposerModelPickerProps {
   accountTokenOptions?: Array<{ id: number; name: string; group?: string }>;
   accountTokenLoading?: boolean;
   accountTokenSaving?: boolean;
+  accountTokenError?: string;
   onLoadAccountTokens?: () => void;
   onSelectAccountToken?: (tokenId: number, configuredModels: string[]) => void | Promise<void>;
   disabled?: boolean;

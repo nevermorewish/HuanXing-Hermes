@@ -930,6 +930,7 @@ export function GooseComposer({
           accountTokenOptions={modelPicker?.accountTokenOptions}
           accountTokenLoading={modelPicker?.accountTokenLoading}
           accountTokenSaving={modelPicker?.accountTokenSaving}
+          accountTokenError={modelPicker?.accountTokenError}
           onLoadAccountTokens={modelPicker?.onLoadAccountTokens}
           onSelectAccountToken={modelPicker?.onSelectAccountToken}
         />
