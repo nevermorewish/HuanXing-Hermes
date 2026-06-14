@@ -111,12 +111,57 @@ jobs:
           console.log(`Resolved ${include.length} brand/platform build jobs.`);
           NODE
 
-  build:
+  prepare-release:
     needs: resolve-brands
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create or reuse GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          BUILT_BRANDS: ${{ needs.resolve-brands.outputs.brands }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null
+
+          if gh release view "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists."
+            exit 0
+          fi
+
+          notes_file="$RUNNER_TEMP/release-notes.md"
+          cat > "$notes_file" <<EOF
+          Automated Hermes Agent CN Desktop installers.
+
+          Built brands: $BUILT_BRANDS.
+
+          Windows installer name, install directory, and uninstall registry
+          entries use the English name Hermes Agent CN Desktop to avoid
+          compatibility issues caused by non-ASCII install paths.
+
+          Override HERMES_RUNTIME_UPDATE_* only when using a custom runtime
+          update source.
+          EOF
+
+          prerelease_args=()
+          if [[ "$RELEASE_TAG" == *-alpha* || "$RELEASE_TAG" == *-beta* || "$RELEASE_TAG" == *-rc* ]]; then
+            prerelease_args+=(--prerelease)
+          fi
+
+          gh release create "$RELEASE_TAG" \
+            -R "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "Hermes Agent CN Desktop $RELEASE_TAG" \
+            --notes-file "$notes_file" \
+            "${prerelease_args[@]}"
+
+  build:
+    needs: [resolve-brands, prepare-release]
     name: Build ${{ matrix.brand }} / ${{ matrix.target }}
     strategy:
       fail-fast: false
-      max-parallel: 1
       matrix:
         include: ${{ fromJson(needs.resolve-brands.outputs.matrix) }}
 
@@ -676,6 +721,31 @@ jobs:
             }
           }
 
+          function Enter-RemoteLock([string]$lockDirectory) {
+            $quotedLock = Quote-RemotePath $lockDirectory
+            $attempt = 1
+            $maxAttempts = 120
+            while ($attempt -le $maxAttempts) {
+              Write-Host "Acquiring remote latest.json lock attempt ${attempt}/${maxAttempts}: $lockDirectory"
+              ssh @sshCommonOptions -p $env:LINUX_DEPLOY_PORT $remote "mkdir $quotedLock 2>/dev/null"
+              if ($LASTEXITCODE -eq 0) { return }
+
+              if (($attempt % 12) -eq 0) {
+                ssh @sshCommonOptions -p $env:LINUX_DEPLOY_PORT $remote "find $quotedLock -maxdepth 0 -type d -mmin +30 -exec rm -rf {} + 2>/dev/null || true"
+              }
+
+              Start-Sleep -Seconds 5
+              $attempt += 1
+            }
+
+            throw "Failed to acquire remote latest.json lock after $maxAttempts attempts: $lockDirectory"
+          }
+
+          function Exit-RemoteLock([string]$lockDirectory) {
+            $quotedLock = Quote-RemotePath $lockDirectory
+            Invoke-SshCommand "rmdir $quotedLock 2>/dev/null || true" "Failed to release remote latest.json lock"
+          }
+
           $remoteRoot = $env:LINUX_DEPLOY_REMOTE_PATH.TrimEnd('/', '\')
           $feedPath = ([Uri]$env:UPDATE_FEED_BASE_URL).AbsolutePath.Trim('/')
           $feedDir = if ($feedPath) { ($feedPath -split '/')[-1] } else { '' }
@@ -705,45 +775,51 @@ jobs:
             Invoke-RemoteUpload $file $archiveDestination "archive"
           }
 
-          $assetPatch = Get-Content $env:ASSET_PATCH -Raw | ConvertFrom-Json
-          $latestDir = Join-Path $env:RUNNER_TEMP "$env:BRAND-latest"
-          New-Item -ItemType Directory -Force -Path $latestDir | Out-Null
-          $latestPath = Join-Path $latestDir "latest.json"
-          $remoteLatest = Quote-RemotePath "$destinationRoot/latest.json"
-          $remoteJsonLines = Read-SshCommand "if [ -f $remoteLatest ]; then cat $remoteLatest; fi" "Failed to read remote latest.json for $env:BRAND"
+          $latestLockDirectory = "$destinationRoot/.latest-json.lock"
+          Enter-RemoteLock $latestLockDirectory
+          try {
+            $assetPatch = Get-Content $env:ASSET_PATCH -Raw | ConvertFrom-Json
+            $latestDir = Join-Path $env:RUNNER_TEMP "$env:BRAND-latest"
+            New-Item -ItemType Directory -Force -Path $latestDir | Out-Null
+            $latestPath = Join-Path $latestDir "latest.json"
+            $remoteLatest = Quote-RemotePath "$destinationRoot/latest.json"
+            $remoteJsonLines = Read-SshCommand "if [ -f $remoteLatest ]; then cat $remoteLatest; fi" "Failed to read remote latest.json for $env:BRAND"
 
-          $now = (Get-Date).ToUniversalTime().ToString("o")
-          $remoteJson = ($remoteJsonLines -join "`n").Trim()
-          $manifest = $null
-          if (-not [string]::IsNullOrWhiteSpace($remoteJson)) {
-            try {
-              $candidate = $remoteJson | ConvertFrom-Json
-              if ([string]$candidate.semver -eq [string]$env:VERSION) {
-                $manifest = $candidate
+            $now = (Get-Date).ToUniversalTime().ToString("o")
+            $remoteJson = ($remoteJsonLines -join "`n").Trim()
+            $manifest = $null
+            if (-not [string]::IsNullOrWhiteSpace($remoteJson)) {
+              try {
+                $candidate = $remoteJson | ConvertFrom-Json
+                if ([string]$candidate.semver -eq [string]$env:VERSION) {
+                  $manifest = $candidate
+                }
+              } catch {
+                Write-Host "Ignoring invalid remote latest.json for ${env:BRAND}: $($_.Exception.Message)"
               }
-            } catch {
-              Write-Host "Ignoring invalid remote latest.json for ${env:BRAND}: $($_.Exception.Message)"
             }
-          }
 
-          if (-not $manifest) {
-            $manifest = [pscustomobject]@{
-              repository = $env:GITHUB_REPOSITORY
-              version = "v$env:VERSION"
-              semver = $env:VERSION
-              publishedAt = $now
-              sourceUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/tag/v$env:VERSION"
-              updatedAt = $now
-              assets = [pscustomobject]@{}
+            if (-not $manifest) {
+              $manifest = [pscustomobject]@{
+                repository = $env:GITHUB_REPOSITORY
+                version = "v$env:VERSION"
+                semver = $env:VERSION
+                publishedAt = $now
+                sourceUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/tag/v$env:VERSION"
+                updatedAt = $now
+                assets = [pscustomobject]@{}
+              }
             }
+            if (-not $manifest.PSObject.Properties['assets'] -or -not $manifest.assets) {
+              $manifest | Add-Member -MemberType NoteProperty -Name assets -Value ([pscustomobject]@{}) -Force
+            }
+            $manifest.updatedAt = $now
+            $manifest.assets | Add-Member -MemberType NoteProperty -Name $assetPatch.platformKey -Value $assetPatch.asset -Force
+            $manifest | ConvertTo-Json -Depth 20 | Set-Content -Path $latestPath -Encoding utf8
+            Invoke-RemoteUpload $latestPath $destinationRoot "latest.json"
+          } finally {
+            Exit-RemoteLock $latestLockDirectory
           }
-          if (-not $manifest.PSObject.Properties['assets'] -or -not $manifest.assets) {
-            $manifest | Add-Member -MemberType NoteProperty -Name assets -Value ([pscustomobject]@{}) -Force
-          }
-          $manifest.updatedAt = $now
-          $manifest.assets | Add-Member -MemberType NoteProperty -Name $assetPatch.platformKey -Value $assetPatch.asset -Force
-          $manifest | ConvertTo-Json -Depth 20 | Set-Content -Path $latestPath -Encoding utf8
-          Invoke-RemoteUpload $latestPath $destinationRoot "latest.json"
 
           Write-Host "Uploaded $env:BRAND channel files to $env:UPDATE_FEED_BASE_URL/$env:BRAND/$env:CHANNEL/"
           Write-Host "Uploaded $env:BRAND archive files to $env:UPDATE_FEED_BASE_URL/$env:BRAND/releases/v$env:VERSION/"
