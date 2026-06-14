@@ -1,5 +1,5 @@
 # Build hermes-agent-cn-desktop installers and attach them to a GitHub
-# Release. Triggers on tags matching `v*` (e.g. `v0.3.11`).
+# Release. Triggers on tags matching `v*` (e.g. `v0.3.12`).
 #
 # Desktop release build runs in parallel for every brand and platform. Each job:
 #   1. Installs Node + pnpm + Rust toolchain
@@ -32,7 +32,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag name to associate the build with (e.g. v0.3.11)"
+        description: "Tag name to associate the build with (e.g. v0.3.12)"
         required: true
       bundled_runtime_tag:
         description: "Hermes-CN-Core runtime release tag to embed in desktop installers, or latest"
@@ -157,19 +157,17 @@ jobs:
         env:
           BUNDLED_RUNTIME_REPO: Eynzof/Hermes-CN-Core
           BUNDLED_RUNTIME_TAG: ${{ github.event.inputs.bundled_runtime_tag || 'runtime-v0.16.0-cn.6' }}
-          BUNDLED_RUNTIME_BASE_URL: ${{ env.RUNTIME_UPDATE_FEED_BASE_URL }}/stable
           RUNTIME_PLATFORM: ${{ matrix.runtime_platform }}
           RUNTIME_ARCH: ${{ matrix.runtime_arch }}
         run: |
           node - <<'NODE'
           const fs = require("node:fs");
           (async () => {
-            const feedBase = (process.env.BUNDLED_RUNTIME_BASE_URL || "").replace(/\/+$/, "");
             const repo = process.env.BUNDLED_RUNTIME_REPO || "Eynzof/Hermes-CN-Core";
             const tag = process.env.BUNDLED_RUNTIME_TAG || "latest";
-            const baseUrl = feedBase || (tag === "latest"
+            const baseUrl = tag === "latest"
               ? `https://github.com/${repo}/releases/latest/download`
-              : `https://github.com/${repo}/releases/download/${encodeURIComponent(tag)}`);
+              : `https://github.com/${repo}/releases/download/${encodeURIComponent(tag)}`;
             const platform = process.env.RUNTIME_PLATFORM;
             const arch = process.env.RUNTIME_ARCH;
             const response = await fetch(`${baseUrl}/stable-${platform}-${arch}.json`, {
@@ -215,7 +213,6 @@ jobs:
         run: |
           args=(
             scripts/stage-bundled-runtime.mjs
-            --base-url "${{ env.RUNTIME_UPDATE_FEED_BASE_URL }}/stable"
             --repo "Eynzof/Hermes-CN-Core"
             --tag "${{ github.event.inputs.bundled_runtime_tag || 'runtime-v0.16.0-cn.6' }}"
             --platform "${{ matrix.runtime_platform }}"

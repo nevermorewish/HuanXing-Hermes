@@ -1,8 +1,8 @@
 [package]
 name = "hermes-agent-cn-desktop"
-version = "0.3.11"
+version = "0.3.12"
 edition = "2021"
-description = "FengchiHermes AI Assistant Desktop"
+description = "HuanxingHermes AI Assistant Desktop"
 authors = ["Hermes Agent CN Contributors"]
 homepage = "https://hermesagent.org.cn"
 
