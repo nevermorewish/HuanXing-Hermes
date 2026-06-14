@@ -1,12 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DesktopUpdateManifestFetchResult } from "@hermes/protocol";
 import {
   buildDesktopUpdateCheckResult,
   compareDesktopVersions,
+  DESKTOP_UPDATE_DIALOG_EVENT,
+  dispatchDesktopUpdateDialog,
   latestDesktopVersionFromManifest,
   normalizeDesktopVersion,
   shouldShowDesktopUpdateNotice,
 } from "./desktop-update";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function fetchResult(overrides: Partial<DesktopUpdateManifestFetchResult> = {}): DesktopUpdateManifestFetchResult {
   return {
@@ -72,5 +78,18 @@ describe("desktop update notification policy", () => {
     expect(shouldShowDesktopUpdateNotice(result)).toBe(true);
     expect(shouldShowDesktopUpdateNotice({ ...result, latestVersion: undefined })).toBe(false);
     expect(shouldShowDesktopUpdateNotice({ ...result, updateAvailable: false })).toBe(false);
+  });
+
+  it("dispatches manual update dialog events with the check result", async () => {
+    const result = buildDesktopUpdateCheckResult(fetchResult({ manifest: { semver: "0.3.1" } }), "0.3.0");
+    const target = new EventTarget();
+    vi.stubGlobal("window", target);
+    const received = new Promise((resolve) => {
+      target.addEventListener(DESKTOP_UPDATE_DIALOG_EVENT, (event) => resolve((event as CustomEvent).detail), { once: true });
+    });
+
+    dispatchDesktopUpdateDialog(result);
+
+    await expect(received).resolves.toBe(result);
   });
 });

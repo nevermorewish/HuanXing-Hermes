@@ -104,6 +104,58 @@
   border-color: color-mix(in srgb, var(--rust) 48%, var(--h-line));
 }
 
+.updateButton {
+  appearance: none;
+  border: 1px solid var(--h-line);
+  border-radius: var(--h-r-xs);
+  min-height: 20px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--h-text-2);
+  background: var(--h-bg-soft);
+  font: inherit;
+  font-size: 9.5px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.updateButton:hover:not(:disabled),
+.updateButton:focus-visible {
+  color: var(--h-accent);
+  border-color: var(--h-accent-border);
+  background: var(--h-bg-chip);
+}
+
+.updateButton:focus-visible {
+  outline: 1px solid var(--h-accent-border);
+  outline-offset: 2px;
+}
+
+.updateButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.updateButton[data-state="checking"] svg {
+  animation: gateway-restart-spin 0.9s linear infinite;
+}
+
+.updateButton[data-state="available"] {
+  color: var(--moss);
+  border-color: color-mix(in srgb, var(--moss) 40%, var(--h-line));
+}
+
+.updateButton[data-state="latest"] {
+  color: var(--h-text-2);
+}
+
+.updateButton[data-state="error"] {
+  color: var(--rust);
+  border-color: color-mix(in srgb, var(--rust) 48%, var(--h-line));
+}
+
 @keyframes gateway-restart-spin {
   to {
     transform: rotate(-360deg);

@@ -7,6 +7,7 @@ import { DESKTOP_VERSION } from "./build-info";
 import { BRAND } from "./brand.generated";
 
 export const DESKTOP_UPDATE_DOWNLOAD_URL = BRAND.updateDownloadUrl;
+export const DESKTOP_UPDATE_DIALOG_EVENT = "hermes-cn-desktop.open-update-dialog";
 
 interface ParsedSemver {
   major: number;
@@ -99,6 +100,11 @@ export function shouldShowDesktopUpdateNotice(
   result: Pick<DesktopUpdateCheckResult, "ok" | "updateAvailable" | "latestVersion">,
 ): boolean {
   return Boolean(result.ok && result.updateAvailable && result.latestVersion);
+}
+
+export function dispatchDesktopUpdateDialog(result: DesktopUpdateCheckResult): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent<DesktopUpdateCheckResult>(DESKTOP_UPDATE_DIALOG_EVENT, { detail: result }));
 }
 
 export function buildDesktopUpdateCheckResult(

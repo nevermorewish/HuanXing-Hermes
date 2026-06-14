@@ -1,6 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useAtomValue } from "jotai";
-import { RotateCcw } from "lucide-react";
+import { RefreshCw, RotateCcw } from "lucide-react";
 import { useStatus } from "@/hooks/use-status";
 import { useModelInfo } from "@/hooks/use-config";
 import { useSessions } from "@/hooks/use-sessions";
@@ -9,6 +9,7 @@ import { useGatewayRestartAction } from "@/hooks/use-gateway-restart";
 import { useRuntimeInfo } from "@/hooks/use-runtime-update";
 import { chatRuntimeBySessionAtom } from "@/stores/chat";
 import { dashboardPortFromUrl, dashboardUrlFromInputs } from "@/lib/dashboard-url";
+import { checkDesktopUpdate, dispatchDesktopUpdateDialog, shouldShowDesktopUpdateNotice } from "@/lib/desktop-update";
 import { openExternalUrl } from "@/lib/external-links";
 import { isSessionRunning, mergeLiveRuntimeSessions } from "@/lib/session-activity";
 import { formatTokens } from "@/lib/format";
@@ -36,6 +37,8 @@ export function AppStatusBar() {
   const { data: runtimeInfo } = useRuntimeInfo();
   const runtimeBySession = useAtomValue(chatRuntimeBySessionAtom);
   const gatewayRestart = useGatewayRestartAction();
+  const [desktopUpdatePhase, setDesktopUpdatePhase] = useState<"idle" | "checking" | "latest" | "available" | "error">("idle");
+  const [desktopUpdateMessage, setDesktopUpdateMessage] = useState("检查桌面端更新");
 
   const dashboardUrl = dashboardUrlFromInputs({
     healthUrl: status?.gateway_health_url,
@@ -74,6 +77,26 @@ export function AppStatusBar() {
   const restartTitle = gatewayOnline || gatewayRestart.phase !== "idle"
     ? gatewayRestartTitle(gatewayRestart.phase, gatewayRestart.message)
     : "当前状态接口未确认在线，仍会尝试请求 Dashboard 重启 Gateway";
+
+  const checkForDesktopUpdate = async () => {
+    if (desktopUpdatePhase === "checking") return;
+    setDesktopUpdatePhase("checking");
+    setDesktopUpdateMessage("正在检查桌面端更新");
+    const result = await checkDesktopUpdate();
+    if (shouldShowDesktopUpdateNotice(result)) {
+      setDesktopUpdatePhase("available");
+      setDesktopUpdateMessage(`发现新版本 ${result.latestVersion}`);
+      dispatchDesktopUpdateDialog(result);
+      return;
+    }
+    if (!result.ok) {
+      setDesktopUpdatePhase("error");
+      setDesktopUpdateMessage(result.error ?? "桌面端更新检查失败");
+      return;
+    }
+    setDesktopUpdatePhase("latest");
+    setDesktopUpdateMessage(`当前已是最新版本 ${result.currentVersion}`);
+  };
 
   return (
     <footer className={s.statusbar} role="status" aria-label="运行状态">
@@ -127,6 +150,21 @@ export function AppStatusBar() {
         <span className={s.lbl}>界面</span>
         <span className={s.val}>{versionRows.uiLine.version}</span>
         <span className={s.val}>{versionRows.uiLine.commit}</span>
+      </span>
+      <button
+        type="button"
+        className={s.updateButton}
+        data-state={desktopUpdatePhase}
+        onClick={() => void checkForDesktopUpdate()}
+        disabled={desktopUpdatePhase === "checking"}
+        title={desktopUpdateMessage}
+        aria-label={desktopUpdateMessage}
+      >
+        <RefreshCw size={11} aria-hidden="true" />
+        <span>检查更新</span>
+      </button>
+      <span className={s.srOnly} aria-live="polite">
+        {desktopUpdateMessage}
       </span>
 
       <div className={s.right}>

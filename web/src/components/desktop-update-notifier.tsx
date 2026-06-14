@@ -3,6 +3,7 @@ import { Download, Sparkles } from "lucide-react";
 import { Dialog } from "@hermes/shared-ui";
 import type { DesktopUpdateCheckResult } from "@hermes/protocol";
 import {
+  DESKTOP_UPDATE_DIALOG_EVENT,
   checkDesktopUpdate,
   shouldShowDesktopUpdateNotice,
 } from "@/lib/desktop-update";
@@ -45,6 +46,20 @@ export function DesktopUpdateNotifier() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    const handleManualOpen = (event: Event) => {
+      const detail = (event as CustomEvent<DesktopUpdateCheckResult>).detail;
+      if (!shouldShowDesktopUpdateNotice(detail)) return;
+      setResult(detail);
+      setInstallMessage(null);
+      setInstallError(null);
+      setOpen(true);
+    };
+
+    window.addEventListener(DESKTOP_UPDATE_DIALOG_EVENT, handleManualOpen);
+    return () => window.removeEventListener(DESKTOP_UPDATE_DIALOG_EVENT, handleManualOpen);
   }, []);
 
   const close = () => {
