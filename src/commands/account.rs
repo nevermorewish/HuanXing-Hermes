@@ -20,7 +20,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::LazyLock;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -59,6 +59,27 @@ struct AccountModelCatalog {
     models: Vec<String>,
     endpoint_types: ModelEndpointTypes,
 }
+
+const CLAUDE_CODE_USER_AGENT: &str = "claude-cli/2.1.156 (external, cli)";
+const CLAUDE_CODE_BETA: &str = "claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24";
+
+const CLAUDE_CODE_HEADERS: &[(&str, &str)] = &[
+    ("Accept", "application/json"),
+    ("Content-Type", "application/json"),
+    ("User-Agent", CLAUDE_CODE_USER_AGENT),
+    ("X-Stainless-Arch", "x64"),
+    ("X-Stainless-Lang", "js"),
+    ("X-Stainless-OS", "Windows"),
+    ("X-Stainless-Package-Version", "0.94.0"),
+    ("X-Stainless-Retry-Count", "0"),
+    ("X-Stainless-Runtime", "node"),
+    ("X-Stainless-Runtime-Version", "v24.3.0"),
+    ("X-Stainless-Timeout", "600"),
+    ("anthropic-beta", CLAUDE_CODE_BETA),
+    ("anthropic-dangerous-direct-browser-access", "true"),
+    ("anthropic-version", "2023-06-01"),
+    ("x-app", "cli"),
+];
 
 #[derive(Clone)]
 struct SessionState {
@@ -1274,6 +1295,75 @@ fn pick_token(items: &[Value], token_id: Option<i64>) -> Option<Value> {
     }
 }
 
+fn generate_claude_code_session_id() -> String {
+    let mut bytes = [0_u8; 16];
+    if getrandom::fill(&mut bytes).is_ok() {
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        return format!(
+            "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            bytes[0],
+            bytes[1],
+            bytes[2],
+            bytes[3],
+            bytes[4],
+            bytes[5],
+            bytes[6],
+            bytes[7],
+            bytes[8],
+            bytes[9],
+            bytes[10],
+            bytes[11],
+            bytes[12],
+            bytes[13],
+            bytes[14],
+            bytes[15]
+        );
+    }
+
+    let fallback = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!(
+        "{:08x}-{:04x}-4{:03x}-8{:03x}-{:012x}",
+        (fallback >> 96) as u32,
+        (fallback >> 80) as u16,
+        (fallback >> 68) as u16 & 0x0fff,
+        (fallback >> 56) as u16 & 0x0fff,
+        fallback & 0xffffffffffff
+    )
+}
+
+fn existing_claude_code_session_id(existing: &Value) -> Option<String> {
+    existing
+        .get("headers")
+        .and_then(|headers| headers.get("X-Claude-Code-Session-Id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn claude_code_headers_json(session_id: &str) -> Value {
+    let mut headers = CLAUDE_CODE_HEADERS
+        .iter()
+        .map(|(key, value)| ((*key).to_string(), json!(value)))
+        .collect::<serde_json::Map<String, Value>>();
+    headers.insert("X-Claude-Code-Session-Id".into(), json!(session_id));
+    Value::Object(headers)
+}
+
+fn apply_claude_code_headers(
+    mut req: reqwest::RequestBuilder,
+    session_id: &str,
+) -> reqwest::RequestBuilder {
+    for (key, value) in CLAUDE_CODE_HEADERS {
+        req = req.header(*key, *value);
+    }
+    req.header("X-Claude-Code-Session-Id", session_id)
+}
+
 // ---- dashboard config I/O ------------------------------------------------
 
 fn dashboard_state(state: &State<'_, AppState>) -> Result<(String, Option<String>), AppError> {
@@ -1336,6 +1426,7 @@ fn build_provider_entry(
     name: &str,
     api_mode: &str,
     transport: &str,
+    use_claude_code_headers: bool,
 ) -> Value {
     let mut entry = existing.as_object().cloned().unwrap_or_default();
     entry.remove("token_id");
@@ -1344,6 +1435,13 @@ fn build_provider_entry(
     entry.insert("base_url".into(), json!(api_base));
     entry.insert("api_mode".into(), json!(api_mode));
     entry.insert("transport".into(), json!(transport));
+    if use_claude_code_headers {
+        let session_id = existing_claude_code_session_id(existing)
+            .unwrap_or_else(generate_claude_code_session_id);
+        entry.insert("headers".into(), claude_code_headers_json(&session_id));
+    } else {
+        entry.remove("headers");
+    }
     // Pin the picker to exactly the models the user selected. Without this,
     // Core defaults discover_models=True and probes the relay's /v1/models,
     // which advertises models the user never chose (e.g. claude-*) and
@@ -1474,6 +1572,7 @@ fn merge_account_provider(
             BRAND_APP_NAME,
             "chat_completions",
             "openai_chat",
+            false,
         );
         providers.insert(chat_provider_id.clone(), chat_entry);
     } else {
@@ -1491,6 +1590,7 @@ fn merge_account_provider(
             &format!("{} Messages", BRAND_APP_NAME),
             "anthropic_messages",
             "anthropic_messages",
+            true,
         );
         providers.insert(messages_provider_id.clone(), messages_entry);
     } else {
@@ -1678,13 +1778,18 @@ pub async fn account_save_models(
 }
 
 #[tauri::command]
-pub async fn account_test_model(model_id: String) -> Result<TestModelResult, AppError> {
+pub async fn account_test_model(
+    model_id: String,
+    state: State<'_, AppState>,
+) -> Result<TestModelResult, AppError> {
     let session = require_session()?;
     let api_base = account_api_base(&session.base_url);
     let key = match stored_key()? {
         Some(k) => k,
         None => ensure_api_key(&session, None).await?,
     };
+    let (dash_base, token) = dashboard_state(&state)?;
+    let config = read_config(&dash_base, token.as_deref()).await.ok();
     let endpoint_types = fetch_models(&session)
         .await
         .map(|catalog| catalog.endpoint_types)
@@ -1693,9 +1798,18 @@ pub async fn account_test_model(model_id: String) -> Result<TestModelResult, App
     let use_messages = model_uses_messages(&model_id, &types);
     let started = std::time::Instant::now();
     let mut req = if use_messages {
-        HTTP.post(format!("{}/messages", api_base))
+        let messages_provider_id = account_messages_provider_id();
+        let session_id = config
+            .as_ref()
+            .and_then(|config| {
+                config
+                    .get("providers")
+                    .and_then(|providers| providers.get(&messages_provider_id))
+                    .and_then(existing_claude_code_session_id)
+            })
+            .unwrap_or_else(generate_claude_code_session_id);
+        apply_claude_code_headers(HTTP.post(format!("{}/messages", api_base)), &session_id)
             .header("x-api-key", &key)
-            .header("anthropic-version", "2023-06-01")
             .json(&json!({
                 "model": model_id,
                 "messages": [{ "role": "user", "content": "ping" }],
@@ -2109,10 +2223,18 @@ mod tests {
             config,
             "https://api.huanxing.ai/v1",
             "https://api.huanxing.ai",
-            &["gpt-x".to_string(), "claude-y".to_string()],
+            &[
+                "gpt-x".to_string(),
+                "claude-y".to_string(),
+                "anthropic/minimax-y".to_string(),
+            ],
             &ModelEndpointTypes::from([
                 ("gpt-x".to_string(), vec!["openai".to_string()]),
                 ("claude-y".to_string(), vec!["anthropic".to_string()]),
+                (
+                    "anthropic/minimax-y".to_string(),
+                    vec!["anthropic".to_string()],
+                ),
             ]),
             Some("gpt-x"),
             "sk-secret",
@@ -2129,6 +2251,7 @@ mod tests {
         assert_eq!(entry["token_id"], 42);
         assert!(entry["models"]["gpt-x"].is_object());
         assert!(entry["models"].get("claude-y").is_none());
+        assert!(entry.get("headers").is_none());
         let messages_id = account_messages_provider_id();
         let messages_entry = &merged["providers"][&messages_id];
         assert_eq!(messages_entry["base_url"], "https://api.huanxing.ai");
@@ -2138,6 +2261,36 @@ mod tests {
         assert_eq!(messages_entry["api_key"], "sk-secret");
         assert_eq!(messages_entry["token_id"], 42);
         assert!(messages_entry["models"]["claude-y"].is_object());
+        assert!(messages_entry["models"]["anthropic/minimax-y"].is_object());
+        assert_eq!(
+            messages_entry["headers"]["User-Agent"],
+            "claude-cli/2.1.156 (external, cli)"
+        );
+        assert_eq!(
+            messages_entry["headers"]["anthropic-beta"],
+            "claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24"
+        );
+        assert_eq!(
+            messages_entry["headers"]["Content-Type"],
+            "application/json"
+        );
+        assert_eq!(
+            messages_entry["headers"]["anthropic-dangerous-direct-browser-access"],
+            "true"
+        );
+        let claude_session_id = messages_entry["headers"]["X-Claude-Code-Session-Id"]
+            .as_str()
+            .expect("claude code session id is present");
+        assert_eq!(claude_session_id.len(), 36);
+        assert_eq!(&claude_session_id[14..15], "4");
+        assert!(matches!(&claude_session_id[19..20], "8" | "9" | "a" | "b"));
+        assert_eq!(messages_entry["headers"]["anthropic-version"], "2023-06-01");
+        assert_eq!(messages_entry["headers"]["x-app"], "cli");
+        assert_eq!(messages_entry["headers"]["X-Stainless-Lang"], "js");
+        assert!(messages_entry["headers"].get("Host").is_none());
+        assert!(messages_entry["headers"].get("Content-Length").is_none());
+        assert!(messages_entry["headers"].get("Connection").is_none());
+        assert!(messages_entry["headers"].get("Accept-Encoding").is_none());
         // primary model also written to config.model
         assert_eq!(merged["model"]["provider"], id);
         assert_eq!(merged["model"]["default"], "gpt-x");
@@ -2161,6 +2314,37 @@ mod tests {
         assert!(merged["providers"].get(&chat_id).is_none());
         assert!(merged["providers"][&messages_id]["models"]["claude-y"].is_object());
         assert_eq!(merged["model"]["provider"], messages_id);
+    }
+
+    #[test]
+    fn merge_account_provider_preserves_existing_claude_code_session_id() {
+        let messages_id = account_messages_provider_id();
+        let existing_session_id = "11111111-2222-4333-8444-555555555555";
+        let merged = merge_account_provider(
+            json!({
+                "providers": {
+                    messages_id.clone(): {
+                        "headers": {
+                            "X-Claude-Code-Session-Id": existing_session_id
+                        }
+                    }
+                }
+            }),
+            "https://api.huanxing.ai/v1",
+            "https://api.huanxing.ai",
+            &["anthropic/minimax-y".to_string()],
+            &ModelEndpointTypes::from([(
+                "anthropic/minimax-y".to_string(),
+                vec!["anthropic".to_string()],
+            )]),
+            Some("anthropic/minimax-y"),
+            "sk-secret",
+            None,
+        );
+        assert_eq!(
+            merged["providers"][&messages_id]["headers"]["X-Claude-Code-Session-Id"],
+            existing_session_id
+        );
     }
 
     #[test]
