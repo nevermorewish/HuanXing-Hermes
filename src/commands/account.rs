@@ -3,8 +3,9 @@
 //
 // Logs in to a newapi-style account server (brand `serviceUrl`), fetches the
 // account's usable models and a full `sk-` API key, and registers the selected
-// models as a custom OpenAI-compatible provider in the runtime config so they
-// become usable in chat.
+// models as account-backed custom providers in the runtime config so they
+// become usable in chat. Models advertised as Anthropic/Messages-compatible are
+// split into a separate provider because Core stores api_mode at provider level.
 //
 // Security model:
 //   - The server authenticates with an HttpOnly `session` cookie that a webview
@@ -16,6 +17,7 @@
 //     into the runtime config by `account_save_models` server-side. Commands
 //     only ever return a masked preview + `hasKey`.
 
+use std::collections::{BTreeMap, HashSet};
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -49,6 +51,14 @@ static DASHBOARD_HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
 
 /// In-memory login session. Single user per app lifetime.
 static SESSION: LazyLock<Mutex<Option<SessionState>>> = LazyLock::new(|| Mutex::new(None));
+
+type ModelEndpointTypes = BTreeMap<String, Vec<String>>;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct AccountModelCatalog {
+    models: Vec<String>,
+    endpoint_types: ModelEndpointTypes,
+}
 
 #[derive(Clone)]
 struct SessionState {
@@ -102,6 +112,9 @@ pub struct LoginInput {
 pub struct SaveModelsInput {
     /// Model ids selected in the login dialog.
     pub models: Vec<String>,
+    /// Optional per-model endpoint metadata from /api/pricing.
+    #[serde(default)]
+    pub model_endpoint_types: ModelEndpointTypes,
     /// Optional model id to set as the runtime's current/primary model.
     #[serde(default)]
     pub primary_model_id: Option<String>,
@@ -132,6 +145,7 @@ pub struct SetupResult {
     pub user: AccountUser,
     pub base_url: String,
     pub models: Vec<String>,
+    pub model_endpoint_types: ModelEndpointTypes,
     pub has_key: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub masked_key: Option<String>,
@@ -173,6 +187,10 @@ fn account_provider_id() -> String {
     format!("custom:{}", BRAND_PROVIDER_KEY)
 }
 
+fn account_messages_provider_id() -> String {
+    format!("custom:{}-messages", BRAND_PROVIDER_KEY)
+}
+
 /// keyring account name under which the full sk- key is stored.
 fn secret_account() -> String {
     format!("{}-account-key", BRAND_PROVIDER_KEY)
@@ -196,6 +214,25 @@ fn account_api_base(base_url: &str) -> String {
         raw
     } else {
         format!("{}/v1", raw)
+    }
+}
+
+/// Anthropic's SDK appends `/v1/messages` to `base_url`, so account-backed
+/// Messages providers must use the service root even when the login URL was
+/// entered as an OpenAI-style `/v1` base.
+fn account_messages_base(base_url: &str) -> String {
+    let raw = normalize_base_url(base_url);
+    if raw.is_empty() {
+        return raw;
+    }
+    let Some((prefix, suffix)) = raw.rsplit_once('/') else {
+        return raw;
+    };
+    let lower = suffix.to_ascii_lowercase();
+    if lower.len() > 1 && lower.starts_with('v') && lower[1..].chars().all(|c| c.is_ascii_digit()) {
+        prefix.to_string()
+    } else {
+        raw
     }
 }
 
@@ -223,11 +260,7 @@ fn is_full_key(key: &str) -> bool {
     !key.is_empty() && !key.contains('*') && !key.contains('…') && !key.contains("...")
 }
 
-fn push_unique_model(
-    names: &mut Vec<String>,
-    seen: &mut std::collections::HashSet<String>,
-    name: &str,
-) {
+fn push_unique_model(names: &mut Vec<String>, seen: &mut HashSet<String>, name: &str) {
     let name = name.trim();
     if !name.is_empty() && seen.insert(name.to_string()) {
         names.push(name.to_string());
@@ -235,7 +268,7 @@ fn push_unique_model(
 }
 
 fn collect_model_names(value: &Value) -> Vec<String> {
-    fn walk(value: &Value, names: &mut Vec<String>, seen: &mut std::collections::HashSet<String>) {
+    fn walk(value: &Value, names: &mut Vec<String>, seen: &mut HashSet<String>) {
         match value {
             Value::String(s) => push_unique_model(names, seen, s),
             Value::Array(items) => {
@@ -261,9 +294,96 @@ fn collect_model_names(value: &Value) -> Vec<String> {
     }
 
     let mut names = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     walk(value, &mut names, &mut seen);
     names
+}
+
+fn collect_endpoint_types(entry: &Value) -> Vec<String> {
+    fn push_type(types: &mut Vec<String>, seen: &mut HashSet<String>, raw: &str) {
+        let normalized = raw.trim().to_ascii_lowercase();
+        if !normalized.is_empty() && seen.insert(normalized.clone()) {
+            types.push(normalized);
+        }
+    }
+
+    let mut types = Vec::new();
+    let mut seen = HashSet::new();
+    for key in [
+        "supported_endpoint_types",
+        "supportedEndpointTypes",
+        "endpoint_types",
+        "endpointTypes",
+    ] {
+        let Some(value) = entry.get(key) else {
+            continue;
+        };
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    if let Some(s) = item.as_str() {
+                        push_type(&mut types, &mut seen, s);
+                    }
+                }
+            }
+            Value::String(s) => {
+                for part in s.split(',') {
+                    push_type(&mut types, &mut seen, part);
+                }
+            }
+            _ => {}
+        }
+    }
+    types
+}
+
+fn model_name_prefers_messages(model: &str) -> bool {
+    let normalized = model.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    normalized.contains("claude") || normalized.starts_with("anthropic/")
+}
+
+fn model_uses_messages(model: &str, endpoint_types: &[String]) -> bool {
+    for endpoint_type in endpoint_types {
+        match endpoint_type.as_str() {
+            "anthropic" | "claude" | "messages" => return true,
+            "openai" | "chat_completions" | "chat-completions" | "openai-response" => return false,
+            _ => {}
+        }
+    }
+    model_name_prefers_messages(model)
+}
+
+fn endpoint_types_for_model(endpoint_types: &ModelEndpointTypes, model: &str) -> Vec<String> {
+    if let Some(types) = endpoint_types.get(model) {
+        return types.clone();
+    }
+    let target = model.trim().to_ascii_lowercase();
+    endpoint_types
+        .iter()
+        .find_map(|(name, types)| {
+            (name.trim().to_ascii_lowercase() == target).then(|| types.clone())
+        })
+        .unwrap_or_default()
+}
+
+fn split_models_by_endpoint(
+    models: &[String],
+    endpoint_types: &ModelEndpointTypes,
+) -> (Vec<String>, Vec<String>) {
+    let mut chat_models = Vec::new();
+    let mut messages_models = Vec::new();
+    for model in models {
+        let types = endpoint_types_for_model(endpoint_types, model);
+        if model_uses_messages(model, &types) {
+            messages_models.push(model.clone());
+        } else {
+            chat_models.push(model.clone());
+        }
+    }
+    (chat_models, messages_models)
 }
 
 fn extract_token_items(body: &Value) -> Vec<Value> {
@@ -833,22 +953,31 @@ async fn do_login(base_url: &str, username: &str, password: &str) -> Result<Acco
 
 /// Fetch the model names usable by this account: try GET /api/pricing first
 /// (newer newapi), fall back to the legacy flat list.
-async fn fetch_models(session: &SessionState) -> Result<Vec<String>, AppError> {
+async fn fetch_models(session: &SessionState) -> Result<AccountModelCatalog, AppError> {
     match fetch_models_pricing(session).await {
-        Ok(models) if !models.is_empty() => Ok(models),
+        Ok(catalog) if !catalog.models.is_empty() => Ok(catalog),
         Ok(_) => match fetch_models_legacy(session).await {
-            Ok(models) if !models.is_empty() => Ok(models),
-            Ok(models) => Ok(models),
+            Ok(models) if !models.is_empty() => Ok(AccountModelCatalog {
+                models,
+                endpoint_types: ModelEndpointTypes::new(),
+            }),
+            Ok(models) => Ok(AccountModelCatalog {
+                models,
+                endpoint_types: ModelEndpointTypes::new(),
+            }),
             Err(e) => Err(e),
         },
         Err(pricing_err) => match fetch_models_legacy(session).await {
-            Ok(models) => Ok(models),
+            Ok(models) => Ok(AccountModelCatalog {
+                models,
+                endpoint_types: ModelEndpointTypes::new(),
+            }),
             Err(_) => Err(pricing_err),
         },
     }
 }
 
-async fn fetch_models_pricing(session: &SessionState) -> Result<Vec<String>, AppError> {
+async fn fetch_models_pricing(session: &SessionState) -> Result<AccountModelCatalog, AppError> {
     let (status, body) = account_json(
         reqwest::Method::GET,
         &format!("{}/api/pricing", session.base_url),
@@ -863,7 +992,7 @@ async fn fetch_models_pricing(session: &SessionState) -> Result<Vec<String>, App
         return Err(envelope_error("获取模型列表", status, &body));
     }
 
-    let mut usable_groups: std::collections::HashSet<String> = body
+    let mut usable_groups: HashSet<String> = body
         .get("usable_group")
         .and_then(Value::as_object)
         .map(|m| m.keys().cloned().collect())
@@ -878,7 +1007,8 @@ async fn fetch_models_pricing(session: &SessionState) -> Result<Vec<String>, App
         .cloned()
         .unwrap_or_default();
     let mut names: Vec<String> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    let mut endpoint_types = ModelEndpointTypes::new();
+    let mut seen = HashSet::new();
     for entry in data {
         let name = match entry.get("model_name").and_then(Value::as_str) {
             Some(n) if !n.is_empty() => n.to_string(),
@@ -893,10 +1023,17 @@ async fn fetch_models_pricing(session: &SessionState) -> Result<Vec<String>, App
             _ => true, // no group info → don't over-filter
         };
         if allowed && seen.insert(name.clone()) {
+            let types = collect_endpoint_types(&entry);
+            if !types.is_empty() {
+                endpoint_types.insert(name.clone(), types);
+            }
             names.push(name);
         }
     }
-    Ok(names)
+    Ok(AccountModelCatalog {
+        models: names,
+        endpoint_types,
+    })
 }
 
 async fn fetch_models_legacy(session: &SessionState) -> Result<Vec<String>, AppError> {
@@ -1188,8 +1325,7 @@ async fn write_config(api_base: &str, token: Option<&str>, config: &Value) -> Re
     Ok(())
 }
 
-/// Build the `providers.<id>` entry for the account provider (custom OpenAI
-/// provider with inline api_key, mirroring Hermes's own custom-provider shape).
+/// Build the `providers.<id>` entry for one account-backed provider.
 fn build_provider_entry(
     existing: &Value,
     api_base: &str,
@@ -1197,14 +1333,17 @@ fn build_provider_entry(
     primary_model: &str,
     api_key: &str,
     token_id: Option<i64>,
+    name: &str,
+    api_mode: &str,
+    transport: &str,
 ) -> Value {
     let mut entry = existing.as_object().cloned().unwrap_or_default();
     entry.remove("token_id");
     entry.remove("tokenId");
-    entry.insert("name".into(), json!(BRAND_APP_NAME));
+    entry.insert("name".into(), json!(name));
     entry.insert("base_url".into(), json!(api_base));
-    entry.insert("api_mode".into(), json!("chat_completions"));
-    entry.insert("transport".into(), json!("openai_chat"));
+    entry.insert("api_mode".into(), json!(api_mode));
+    entry.insert("transport".into(), json!(transport));
     // Pin the picker to exactly the models the user selected. Without this,
     // Core defaults discover_models=True and probes the relay's /v1/models,
     // which advertises models the user never chose (e.g. claude-*) and
@@ -1238,29 +1377,72 @@ fn build_provider_entry(
     Value::Object(entry)
 }
 
-/// Merge the account provider (and optional primary model) into a config value.
+fn existing_provider_model(config: &Value, provider_id: &str) -> Option<String> {
+    config
+        .get("providers")
+        .and_then(|v| v.get(provider_id))
+        .and_then(|v| v.get("model"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn choose_primary_model(
+    config: &Value,
+    provider_id: &str,
+    models: &[String],
+    requested_primary: Option<&str>,
+) -> Option<String> {
+    requested_primary
+        .filter(|m| models.iter().any(|candidate| candidate == *m))
+        .map(str::to_string)
+        .or_else(|| models.first().cloned())
+        .or_else(|| existing_provider_model(config, provider_id))
+}
+
+fn account_provider_for_model(model: &str, endpoint_types: &ModelEndpointTypes) -> String {
+    let types = endpoint_types_for_model(endpoint_types, model);
+    if model_uses_messages(model, &types) {
+        account_messages_provider_id()
+    } else {
+        account_provider_id()
+    }
+}
+
+fn has_existing_provider_entry(provider: &Value) -> bool {
+    provider
+        .as_object()
+        .map(|entry| !entry.is_empty())
+        .unwrap_or(false)
+}
+
+/// Merge the account providers (and optional primary model) into a config value.
 fn merge_account_provider(
     mut config: Value,
-    api_base: &str,
+    chat_api_base: &str,
+    messages_api_base: &str,
     models: &[String],
+    model_endpoint_types: &ModelEndpointTypes,
     primary_model_id: Option<&str>,
     api_key: &str,
     token_id: Option<i64>,
 ) -> Value {
-    let provider_id = account_provider_id();
-    let primary_model = primary_model_id
+    let chat_provider_id = account_provider_id();
+    let messages_provider_id = account_messages_provider_id();
+    let (chat_models, messages_models) = split_models_by_endpoint(models, model_endpoint_types);
+    let token_only_update = models.is_empty();
+    let chat_primary =
+        choose_primary_model(&config, &chat_provider_id, &chat_models, primary_model_id)
+            .unwrap_or_default();
+    let messages_primary = choose_primary_model(
+        &config,
+        &messages_provider_id,
+        &messages_models,
+        primary_model_id,
+    )
+    .unwrap_or_default();
+    let requested_primary_provider = primary_model_id
         .filter(|m| !m.is_empty())
-        .map(str::to_string)
-        .or_else(|| models.first().cloned())
-        .or_else(|| {
-            config
-                .get("providers")
-                .and_then(|v| v.get(&provider_id))
-                .and_then(|v| v.get("model"))
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .unwrap_or_default();
+        .map(|m| account_provider_for_model(m, model_endpoint_types));
 
     let root = config.as_object_mut().expect("config is a JSON object");
     let providers = root
@@ -1268,21 +1450,55 @@ fn merge_account_provider(
         .or_insert_with(|| json!({}))
         .as_object_mut()
         .expect("providers is an object");
-    let existing = providers
-        .get(&provider_id)
+    let existing_chat = providers
+        .get(&chat_provider_id)
         .cloned()
         .unwrap_or_else(|| json!({}));
-    let entry = build_provider_entry(
-        &existing,
-        api_base,
-        models,
-        &primary_model,
-        api_key,
-        token_id,
-    );
-    providers.insert(provider_id.clone(), entry);
+    let existing_messages = providers
+        .get(&messages_provider_id)
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let should_write_chat = !chat_models.is_empty()
+        || (token_only_update && has_existing_provider_entry(&existing_chat));
+    let should_write_messages = !messages_models.is_empty()
+        || (token_only_update && has_existing_provider_entry(&existing_messages));
+
+    if should_write_chat {
+        let chat_entry = build_provider_entry(
+            &existing_chat,
+            chat_api_base,
+            &chat_models,
+            &chat_primary,
+            api_key,
+            token_id,
+            BRAND_APP_NAME,
+            "chat_completions",
+            "openai_chat",
+        );
+        providers.insert(chat_provider_id.clone(), chat_entry);
+    } else {
+        providers.remove(&chat_provider_id);
+    }
+
+    if should_write_messages {
+        let messages_entry = build_provider_entry(
+            &existing_messages,
+            messages_api_base,
+            &messages_models,
+            &messages_primary,
+            api_key,
+            token_id,
+            &format!("{} Messages", BRAND_APP_NAME),
+            "anthropic_messages",
+            "anthropic_messages",
+        );
+        providers.insert(messages_provider_id.clone(), messages_entry);
+    } else {
+        providers.remove(&messages_provider_id);
+    }
 
     if let Some(model_id) = primary_model_id.filter(|m| !m.is_empty()) {
+        let provider_id = requested_primary_provider.unwrap_or_else(|| chat_provider_id.clone());
         root.insert(
             "model".into(),
             json!({
@@ -1337,12 +1553,13 @@ pub async fn account_status() -> Result<StatusResult, AppError> {
 #[tauri::command]
 pub async fn account_fetch_setup() -> Result<SetupResult, AppError> {
     let session = require_session()?;
-    let models = fetch_models(&session).await?;
+    let catalog = fetch_models(&session).await?;
     let key = stored_key()?;
     Ok(SetupResult {
         user: session.user.clone(),
         base_url: session.base_url.clone(),
-        models,
+        models: catalog.models,
+        model_endpoint_types: catalog.endpoint_types,
         has_key: key.is_some(),
         masked_key: key.as_deref().map(mask_key),
     })
@@ -1430,6 +1647,7 @@ pub async fn account_save_models(
     }
     let session = require_session()?;
     let api_base = account_api_base(&session.base_url);
+    let messages_base = account_messages_base(&session.base_url);
     if api_base.is_empty() {
         return Err(AppError::InvalidRequest(
             "缺少服务地址，请重新登录账户".to_string(),
@@ -1447,7 +1665,9 @@ pub async fn account_save_models(
     let merged = merge_account_provider(
         config,
         &api_base,
+        &messages_base,
         &input.models,
+        &input.model_endpoint_types,
         input.primary_model_id.as_deref(),
         &key,
         input.token_id,
@@ -1465,18 +1685,35 @@ pub async fn account_test_model(model_id: String) -> Result<TestModelResult, App
         Some(k) => k,
         None => ensure_api_key(&session, None).await?,
     };
+    let endpoint_types = fetch_models(&session)
+        .await
+        .map(|catalog| catalog.endpoint_types)
+        .unwrap_or_default();
+    let types = endpoint_types_for_model(&endpoint_types, &model_id);
+    let use_messages = model_uses_messages(&model_id, &types);
     let started = std::time::Instant::now();
-    let res = HTTP
-        .post(format!("{}/chat/completions", api_base))
-        .bearer_auth(&key)
-        .json(&json!({
-            "model": model_id,
-            "messages": [{ "role": "user", "content": "ping" }],
-            "max_tokens": 1,
-            "stream": false,
-        }))
-        .send()
-        .await?;
+    let mut req = if use_messages {
+        HTTP.post(format!("{}/messages", api_base))
+            .header("x-api-key", &key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&json!({
+                "model": model_id,
+                "messages": [{ "role": "user", "content": "ping" }],
+                "max_tokens": 1,
+                "stream": false,
+            }))
+    } else {
+        HTTP.post(format!("{}/chat/completions", api_base))
+            .bearer_auth(&key)
+            .json(&json!({
+                "model": model_id,
+                "messages": [{ "role": "user", "content": "ping" }],
+                "max_tokens": 1,
+                "stream": false,
+            }))
+    };
+    req = req.header("Accept", "application/json");
+    let res = req.send().await?;
     let status = res.status().as_u16();
     let raw = res.text().await.unwrap_or_default();
     if !(200..300).contains(&status) {
@@ -1489,12 +1726,22 @@ pub async fn account_test_model(model_id: String) -> Result<TestModelResult, App
     }
     let latency = started.elapsed().as_millis() as u64;
     let reply = serde_json::from_str::<Value>(&raw).ok().and_then(|v| {
-        v.get("choices")
-            .and_then(|c| c.get(0))
-            .and_then(|c| c.get("message"))
-            .and_then(|m| m.get("content"))
-            .and_then(Value::as_str)
-            .map(str::to_string)
+        if use_messages {
+            v.get("content")
+                .and_then(Value::as_array)
+                .and_then(|items| {
+                    items.iter().find_map(|item| {
+                        item.get("text").and_then(Value::as_str).map(str::to_string)
+                    })
+                })
+        } else {
+            v.get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|c| c.get("message"))
+                .and_then(|m| m.get("content"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        }
     });
     Ok(TestModelResult {
         ok: true,
@@ -1571,6 +1818,26 @@ mod tests {
         assert_eq!(account_api_base("https://x.ai/v1"), "https://x.ai/v1");
         assert_eq!(account_api_base("https://x.ai/v2/"), "https://x.ai/v2");
         assert_eq!(account_api_base(""), "");
+    }
+
+    #[test]
+    fn account_messages_base_strips_version_suffix() {
+        assert_eq!(
+            account_messages_base("https://api.huanxing.ai/"),
+            "https://api.huanxing.ai"
+        );
+        assert_eq!(
+            account_messages_base("https://api.huanxing.ai/v1"),
+            "https://api.huanxing.ai"
+        );
+        assert_eq!(
+            account_messages_base("https://api.example.com/relay/v2/"),
+            "https://api.example.com/relay"
+        );
+        assert_eq!(
+            account_messages_base("https://api.example.com/anthropic"),
+            "https://api.example.com/anthropic"
+        );
     }
 
     #[test]
@@ -1664,6 +1931,68 @@ mod tests {
                 ]
             })),
             vec!["m1".to_string(), "m2".to_string()]
+        );
+    }
+
+    #[test]
+    fn collect_endpoint_types_supports_newapi_pricing_shapes() {
+        assert_eq!(
+            collect_endpoint_types(&json!({
+                "model_name": "claude-y",
+                "supported_endpoint_types": ["anthropic", "openai"]
+            })),
+            vec!["anthropic".to_string(), "openai".to_string()]
+        );
+        assert_eq!(
+            collect_endpoint_types(&json!({
+                "model_name": "x",
+                "endpointTypes": "openai, anthropic"
+            })),
+            vec!["openai".to_string(), "anthropic".to_string()]
+        );
+    }
+
+    #[test]
+    fn split_models_by_endpoint_uses_metadata_before_name_fallback() {
+        let endpoint_types = ModelEndpointTypes::from([
+            ("gpt-x".to_string(), vec!["openai".to_string()]),
+            ("claude-y".to_string(), vec!["anthropic".to_string()]),
+            (
+                "claude-messages-first".to_string(),
+                vec!["anthropic".to_string(), "openai".to_string()],
+            ),
+            ("claude-openai".to_string(), vec!["openai".to_string()]),
+            (
+                "claude-chat-first".to_string(),
+                vec!["openai".to_string(), "anthropic".to_string()],
+            ),
+        ]);
+        let (chat, messages) = split_models_by_endpoint(
+            &[
+                "gpt-x".to_string(),
+                "claude-y".to_string(),
+                "claude-messages-first".to_string(),
+                "claude-openai".to_string(),
+                "claude-chat-first".to_string(),
+                "claude-legacy".to_string(),
+            ],
+            &endpoint_types,
+        );
+        assert_eq!(
+            chat,
+            vec![
+                "gpt-x".to_string(),
+                "claude-openai".to_string(),
+                "claude-chat-first".to_string()
+            ]
+        );
+        assert_eq!(
+            messages,
+            vec![
+                "claude-y".to_string(),
+                "claude-messages-first".to_string(),
+                "claude-legacy".to_string()
+            ]
         );
     }
 
@@ -1779,7 +2108,12 @@ mod tests {
         let merged = merge_account_provider(
             config,
             "https://api.huanxing.ai/v1",
+            "https://api.huanxing.ai",
             &["gpt-x".to_string(), "claude-y".to_string()],
+            &ModelEndpointTypes::from([
+                ("gpt-x".to_string(), vec!["openai".to_string()]),
+                ("claude-y".to_string(), vec!["anthropic".to_string()]),
+            ]),
             Some("gpt-x"),
             "sk-secret",
             Some(42),
@@ -1794,7 +2128,16 @@ mod tests {
         assert_eq!(entry["api_key"], "sk-secret");
         assert_eq!(entry["token_id"], 42);
         assert!(entry["models"]["gpt-x"].is_object());
-        assert!(entry["models"]["claude-y"].is_object());
+        assert!(entry["models"].get("claude-y").is_none());
+        let messages_id = account_messages_provider_id();
+        let messages_entry = &merged["providers"][&messages_id];
+        assert_eq!(messages_entry["base_url"], "https://api.huanxing.ai");
+        assert_eq!(messages_entry["api_mode"], "anthropic_messages");
+        assert_eq!(messages_entry["transport"], "anthropic_messages");
+        assert_eq!(messages_entry["model"], "claude-y");
+        assert_eq!(messages_entry["api_key"], "sk-secret");
+        assert_eq!(messages_entry["token_id"], 42);
+        assert!(messages_entry["models"]["claude-y"].is_object());
         // primary model also written to config.model
         assert_eq!(merged["model"]["provider"], id);
         assert_eq!(merged["model"]["default"], "gpt-x");
@@ -1802,11 +2145,32 @@ mod tests {
     }
 
     #[test]
+    fn merge_account_provider_sets_messages_primary_provider() {
+        let merged = merge_account_provider(
+            json!({ "providers": {} }),
+            "https://api.huanxing.ai/v1",
+            "https://api.huanxing.ai",
+            &["claude-y".to_string()],
+            &ModelEndpointTypes::from([("claude-y".to_string(), vec!["anthropic".to_string()])]),
+            Some("claude-y"),
+            "sk-secret",
+            None,
+        );
+        let chat_id = account_provider_id();
+        let messages_id = account_messages_provider_id();
+        assert!(merged["providers"].get(&chat_id).is_none());
+        assert!(merged["providers"][&messages_id]["models"]["claude-y"].is_object());
+        assert_eq!(merged["model"]["provider"], messages_id);
+    }
+
+    #[test]
     fn merge_account_provider_defaults_primary_to_first_model() {
         let merged = merge_account_provider(
             json!({}),
             "https://x/v1",
+            "https://x",
             &["a".to_string(), "b".to_string()],
+            &ModelEndpointTypes::new(),
             None,
             "sk-k",
             None,
@@ -1820,6 +2184,48 @@ mod tests {
     #[test]
     fn merge_account_provider_token_only_preserves_models() {
         let id = account_provider_id();
+        let messages_id = account_messages_provider_id();
+        let merged = merge_account_provider(
+            json!({
+                "providers": {
+                    id.clone(): {
+                        "model": "existing-model",
+                        "models": {
+                            "existing-model": {}
+                        }
+                    },
+                    messages_id.clone(): {
+                        "model": "existing-claude",
+                        "models": {
+                            "existing-claude": {}
+                        }
+                    }
+                }
+            }),
+            "https://x/v1",
+            "https://x",
+            &[],
+            &ModelEndpointTypes::new(),
+            None,
+            "sk-new",
+            Some(7),
+        );
+        let entry = &merged["providers"][&id];
+        assert_eq!(entry["model"], "existing-model");
+        assert!(entry["models"]["existing-model"].is_object());
+        assert_eq!(entry["api_key"], "sk-new");
+        assert_eq!(entry["token_id"], 7);
+        let messages_entry = &merged["providers"][&messages_id];
+        assert_eq!(messages_entry["model"], "existing-claude");
+        assert!(messages_entry["models"]["existing-claude"].is_object());
+        assert_eq!(messages_entry["api_key"], "sk-new");
+        assert_eq!(messages_entry["token_id"], 7);
+    }
+
+    #[test]
+    fn merge_account_provider_token_only_does_not_create_missing_messages_provider() {
+        let id = account_provider_id();
+        let messages_id = account_messages_provider_id();
         let merged = merge_account_provider(
             json!({
                 "providers": {
@@ -1832,7 +2238,9 @@ mod tests {
                 }
             }),
             "https://x/v1",
+            "https://x",
             &[],
+            &ModelEndpointTypes::new(),
             None,
             "sk-new",
             Some(7),
@@ -1842,5 +2250,6 @@ mod tests {
         assert!(entry["models"]["existing-model"].is_object());
         assert_eq!(entry["api_key"], "sk-new");
         assert_eq!(entry["token_id"], 7);
+        assert!(merged["providers"].get(&messages_id).is_none());
     }
 }

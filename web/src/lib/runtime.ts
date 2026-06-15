@@ -96,6 +96,7 @@ export interface AccountSetupResult {
   user: AccountUser;
   baseUrl: string;
   models: string[];
+  modelEndpointTypes?: Record<string, string[]>;
   hasKey: boolean;
   maskedKey?: string;
 }
@@ -117,6 +118,7 @@ export interface AccountBalanceInfo {
 
 export interface AccountSaveModelsInput {
   models: string[];
+  modelEndpointTypes?: Record<string, string[]>;
   primaryModelId?: string;
   tokenId?: number;
 }

@@ -122,6 +122,55 @@
   background: var(--h-bg-soft);
 }
 
+.modelGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.modelGroup + .modelGroup {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--h-line-soft, var(--h-line));
+}
+
+.modelGroupHeader {
+  padding: 3px 8px 4px;
+  color: var(--h-text-3);
+  font-family: var(--h-font-mono);
+  font-size: 10px;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.modelName {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+
+.modelProtocol {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border: 1px solid var(--h-line-soft, var(--h-line));
+  border-radius: var(--h-r-sm, 6px);
+  background: var(--h-bg-soft);
+  color: var(--h-text-2);
+  font-family: var(--h-font-mono);
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.modelProtocol[data-protocol="messages"] {
+  border-color: color-mix(in srgb, var(--h-accent) 34%, var(--h-line));
+  background: color-mix(in srgb, var(--h-accent) 9%, var(--h-bg-soft));
+  color: var(--h-accent);
+}
+
 .error {
   margin: 0;
   font-size: 12.5px;

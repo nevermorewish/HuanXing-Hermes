@@ -40,6 +40,7 @@ function defaultSourceRoot() {
 const sourceArg = argValue("--source") ?? process.env.HERMES_AGENT_CN_SOURCE ?? defaultSourceRoot();
 const sourceRoot = resolve(repoRoot, sourceArg);
 const force = hasFlag("--force") || process.env.HERMES_DESKTOP_LOCAL_RUNTIME_FORCE === "1";
+const runtimeInstallProfile = "cn-desktop";
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -175,6 +176,7 @@ const currentRuntimeVersion = current?.runtimeVersion ?? current?.version;
 const currentPreviousRuntimeVersion = current?.previousRuntimeVersion ?? current?.previousVersion ?? null;
 const currentMatchesSource =
   current?.source === "local-source"
+  && current?.runtimeInstallProfile === runtimeInstallProfile
   && currentSourceCommit === commit
   && (current?.localDirtyHash ?? null) === dirtyHash
   && current.executablePath
@@ -185,6 +187,7 @@ function currentRecordIsV2(record) {
     && record?.runtimeVersion === runtimeVersion
     && record?.kernelVersion === kernelVersion
     && record?.runtimeFlavor
+    && record?.runtimeInstallProfile === runtimeInstallProfile
     && record?.executablePath
     && existsSync(record.executablePath);
 }
@@ -195,6 +198,7 @@ function writeCurrentRecord(installedExecutable, installedAt = new Date().toISOS
     runtimeVersion,
     kernelVersion,
     runtimeFlavor: "cn-local",
+    runtimeInstallProfile,
     runtimeRevision: 0,
     platform: platformName(),
     arch: archName(),
@@ -247,7 +251,7 @@ console.log(`python:  ${python}`);
 run(python, ["-m", "venv", venv]);
 const py = venvPython(venv);
 run(py, ["-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"]);
-run(py, ["-m", "pip", "install", `${sourceRoot}[web]`]);
+run(py, ["-m", "pip", "install", `${sourceRoot}[cn-desktop]`]);
 rmSync(join(sourceRoot, "build"), { recursive: true, force: true });
 
 if (!existsSync(hermesExecutable(venv))) {
@@ -273,6 +277,7 @@ writeFileSync(join(target, "manifest.json"), `${JSON.stringify({
   commit,
   dirty,
   dirtyHash,
+  runtimeInstallProfile,
   createdAt: record.installedAt,
 }, null, 2)}\n`);
 

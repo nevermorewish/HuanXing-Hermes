@@ -66,21 +66,51 @@ export function PanelComposer() {
     [skillsQuery.data],
   );
   const accountProviderId = `custom:${BRAND.providerKey}`;
+  const accountMessagesProviderId = `custom:${BRAND.providerKey}-messages`;
   const accountProviderEntry = config?.providers?.[accountProviderId];
+  const accountMessagesProviderEntry = config?.providers?.[accountMessagesProviderId];
   const accountTokenId = typeof accountProviderEntry?.token_id === "number"
     ? accountProviderEntry.token_id
     : typeof accountProviderEntry?.tokenId === "number"
       ? accountProviderEntry.tokenId
-      : null;
+      : typeof accountMessagesProviderEntry?.token_id === "number"
+        ? accountMessagesProviderEntry.token_id
+        : typeof accountMessagesProviderEntry?.tokenId === "number"
+          ? accountMessagesProviderEntry.tokenId
+          : null;
   const accountTokenError = accountTokens.isError
     ? errorMessage(accountTokens.error) ?? "令牌加载失败"
     : undefined;
   const configuredAccountModels = useMemo(
-    () =>
-      modelOptionsCache?.providers
-        ?.find((provider) => provider.slug === accountProviderId)
-        ?.models ?? [],
-    [accountProviderId, modelOptionsCache?.providers],
+    () => {
+      const seen = new Set<string>();
+      const models: string[] = [];
+      for (const provider of modelOptionsCache?.providers ?? []) {
+        if (provider.slug !== accountProviderId && provider.slug !== accountMessagesProviderId) continue;
+        for (const model of provider.models ?? []) {
+          if (seen.has(model)) continue;
+          seen.add(model);
+          models.push(model);
+        }
+      }
+      return models;
+    },
+    [accountMessagesProviderId, accountProviderId, modelOptionsCache?.providers],
+  );
+  const accountModelProviderById = useMemo(
+    () => {
+      const providerByModel = new Map<string, string>();
+      for (const provider of modelOptionsCache?.providers ?? []) {
+        if (provider.slug !== accountProviderId && provider.slug !== accountMessagesProviderId) continue;
+        for (const model of provider.models ?? []) {
+          if (!providerByModel.has(model)) {
+            providerByModel.set(model, provider.slug);
+          }
+        }
+      }
+      return providerByModel;
+    },
+    [accountMessagesProviderId, accountProviderId, modelOptionsCache?.providers],
   );
 
   useEffect(() => {
@@ -150,15 +180,17 @@ export function PanelComposer() {
       setAccountDialogOpen(true);
       return;
     }
+    const primaryModel = models[0];
+    if (!primaryModel) return;
     await saveAccountModels.mutateAsync({
-      models,
-      primaryModelId: models[0],
+      models: [],
       tokenId,
     });
-    void setRuntimeModel(models[0], accountProviderId).catch(() => {
+    const primaryProvider = accountModelProviderById.get(primaryModel) ?? accountProviderId;
+    void setRuntimeModel(primaryModel, primaryProvider).catch(() => {
       /* gateway refresh is best-effort; config is already persisted */
     });
-  }, [accountProviderId, configuredAccountModels, saveAccountModels, setRuntimeModel]);
+  }, [accountModelProviderById, accountProviderId, configuredAccountModels, saveAccountModels, setRuntimeModel]);
 
   const onSelectAndSetDefault = useCallback((selection: ComposerModelSelection) => {
     onModelSelect(selection);

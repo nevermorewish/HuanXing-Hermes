@@ -21,6 +21,7 @@ export interface BrandConfig {
   edition: string;
   updateManifestUrl: string;
   updateDownloadUrl: string;
+  accountDefaultModels: readonly string[];
 }
 
 export const BRAND: BrandConfig = {
@@ -42,7 +43,17 @@ export const BRAND: BrandConfig = {
   "tagline": "AI Assistant",
   "edition": "桌面版",
   "updateManifestUrl": "https://ai.fengchiyun.com/downloads/huanxinghermes/latest.json",
-  "updateDownloadUrl": "https://api.huanxing.ai/hermes-client"
+  "updateDownloadUrl": "https://api.huanxing.ai/hermes-client",
+  "accountDefaultModels": [
+    "claude-opus-4-8",
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+    "gpt-5.5",
+    "kimi-k2.6",
+    "minimax-m3",
+    "mimo-v2.5-pro",
+    "glm-5.1"
+  ]
 } as const;
 
 export default BRAND;

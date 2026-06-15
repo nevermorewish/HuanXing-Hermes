@@ -32,6 +32,16 @@ function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : String(error);
 }
 
+function providerModels(entry: any): string[] {
+  if (entry?.models && typeof entry.models === "object" && !Array.isArray(entry.models)) {
+    return Object.keys(entry.models);
+  }
+  if (Array.isArray(entry?.models)) {
+    return entry.models.filter((model: unknown): model is string => typeof model === "string");
+  }
+  return [];
+}
+
 export function AccountLoginButton() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const available = isAccountLoginAvailable();
@@ -48,31 +58,58 @@ export function AccountLoginButton() {
 
   const status = statusQuery.data;
   const loggedIn = Boolean(status?.loggedIn);
-  const providerEntry = config?.providers?.[`custom:${BRAND.providerKey}`];
-  const providerModels =
-    providerEntry?.models && typeof providerEntry.models === "object" && !Array.isArray(providerEntry.models)
-      ? Object.keys(providerEntry.models)
-      : Array.isArray(providerEntry?.models)
-        ? providerEntry.models.filter((model: unknown): model is string => typeof model === "string")
-        : [];
-  const primaryModel = typeof providerEntry?.model === "string"
-    ? providerEntry.model
-    : providerModels[0];
+  const accountProviderId = `custom:${BRAND.providerKey}`;
+  const accountMessagesProviderId = `custom:${BRAND.providerKey}-messages`;
+  const providerEntry = config?.providers?.[accountProviderId];
+  const messagesProviderEntry = config?.providers?.[accountMessagesProviderId];
+  const chatModels = providerModels(providerEntry);
+  const messagesModels = providerModels(messagesProviderEntry);
+  const accountModels = Array.from(new Set([...chatModels, ...messagesModels]));
+  const configuredModel = config?.model && typeof config.model === "object" && !Array.isArray(config.model)
+    ? config.model
+    : {};
+  const currentProvider = typeof configuredModel.provider === "string"
+    ? configuredModel.provider
+    : "";
+  const currentModel = typeof configuredModel.model === "string"
+    ? configuredModel.model
+    : typeof configuredModel.default === "string"
+      ? configuredModel.default
+      : "";
+  const primaryModel = accountModels.includes(currentModel)
+    ? currentModel
+    : typeof providerEntry?.model === "string"
+      ? providerEntry.model
+      : typeof messagesProviderEntry?.model === "string"
+        ? messagesProviderEntry.model
+        : accountModels[0];
+  const currentAccountProvider = accountModels.includes(currentModel)
+    && (currentProvider === accountProviderId || currentProvider === accountMessagesProviderId)
+    ? currentProvider
+    : "";
+  const primaryProvider = currentAccountProvider
+    ? currentProvider
+    : messagesModels.includes(primaryModel)
+      ? accountMessagesProviderId
+      : accountProviderId;
   const selectedTokenId = typeof providerEntry?.token_id === "number"
     ? providerEntry.token_id
     : typeof providerEntry?.tokenId === "number"
       ? providerEntry.tokenId
-      : "";
+      : typeof messagesProviderEntry?.token_id === "number"
+        ? messagesProviderEntry.token_id
+        : typeof messagesProviderEntry?.tokenId === "number"
+          ? messagesProviderEntry.tokenId
+          : "";
 
   const handleTokenSelect = async (tokenId: number) => {
     if (!Number.isFinite(tokenId) || tokenId <= 0) return;
     await saveModels.mutateAsync({
-      models: providerModels,
-      primaryModelId: primaryModel,
+      models: [],
       tokenId,
     });
     if (primaryModel) {
-      void setRuntimeModel(primaryModel, `custom:${BRAND.providerKey}`).catch(() => {
+      void setRuntimeModel(primaryModel, primaryProvider).catch(() => {
         /* gateway refresh is best-effort; config is already persisted */
       });
     }

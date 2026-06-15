@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ModelOptionsResult } from "@hermes/protocol";
+import { BRAND } from "@/lib/brand.generated";
 import { buildCandidates } from "./goose-composer-model-picker";
 
 describe("buildCandidates", () => {
@@ -47,5 +48,33 @@ describe("buildCandidates", () => {
 
     expect(buckets.recommended.map((candidate) => candidate.key)).toContain("minimax-cn:MiniMax-M3");
     expect(buckets.all.map((candidate) => candidate.key)).toContain("minimax-cn:MiniMax-M2.7");
+  });
+
+  it("groups both account chat and messages providers under the brand bucket", () => {
+    const accountProvider = `custom:${BRAND.providerKey}`;
+    const accountMessagesProvider = `custom:${BRAND.providerKey}-messages`;
+    const options = {
+      providers: [
+        {
+          slug: accountProvider,
+          name: "HuanXing",
+          models: ["openai/gpt-x"],
+          authenticated: true,
+        },
+        {
+          slug: accountMessagesProvider,
+          name: "HuanXing Messages",
+          models: ["anthropic/claude-y"],
+          authenticated: true,
+        },
+      ],
+    } as ModelOptionsResult;
+
+    const buckets = buildCandidates(options, []);
+
+    expect(buckets.brand.map((candidate) => candidate.key)).toEqual([
+      `${accountProvider}:openai/gpt-x`,
+      `${accountMessagesProvider}:anthropic/claude-y`,
+    ]);
   });
 });

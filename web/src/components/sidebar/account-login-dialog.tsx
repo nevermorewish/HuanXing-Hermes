@@ -26,6 +26,13 @@ interface AccountLoginDialogProps {
 }
 
 type Step = "credentials" | "models";
+type ModelProtocolKind = "messages" | "chat";
+
+interface ModelProtocolMeta {
+  kind: ModelProtocolKind;
+  label: "anthropic" | "openai";
+  endpoint: string;
+}
 
 const MODEL_NAME_COLLATOR = new Intl.Collator("en", {
   numeric: true,
@@ -34,6 +41,77 @@ const MODEL_NAME_COLLATOR = new Intl.Collator("en", {
 
 function sortModelNames(models: string[]): string[] {
   return [...models].sort((a, b) => MODEL_NAME_COLLATOR.compare(a, b));
+}
+
+function modelMatchKeys(model: string): string[] {
+  const normalized = model.trim().toLowerCase();
+  const slash = normalized.lastIndexOf("/");
+  return slash >= 0 ? [normalized, normalized.slice(slash + 1)] : [normalized];
+}
+
+function partitionDefaultModels(models: string[], defaults: readonly string[] | undefined): {
+  defaultModels: string[];
+  otherModels: string[];
+} {
+  const defaultKeys = (defaults ?? [])
+    .map((model) => model.trim().toLowerCase())
+    .filter(Boolean);
+  if (defaultKeys.length === 0) {
+    return { defaultModels: [], otherModels: models };
+  }
+
+  const byKey = new Map<string, string[]>();
+  for (const model of models) {
+    for (const key of modelMatchKeys(model)) {
+      const bucket = byKey.get(key) ?? [];
+      bucket.push(model);
+      byKey.set(key, bucket);
+    }
+  }
+
+  const selectedDefaults = new Set<string>();
+  const defaultModels: string[] = [];
+  for (const key of defaultKeys) {
+    for (const model of byKey.get(key) ?? []) {
+      if (selectedDefaults.has(model)) continue;
+      selectedDefaults.add(model);
+      defaultModels.push(model);
+    }
+  }
+
+  return {
+    defaultModels,
+    otherModels: models.filter((model) => !selectedDefaults.has(model)),
+  };
+}
+
+function modelUsesMessages(model: string, endpointTypes?: Record<string, string[]>): boolean {
+  const types = endpointTypes?.[model] ?? [];
+  for (const type of types) {
+    const normalized = type.trim().toLowerCase();
+    if (["anthropic", "claude", "messages"].includes(normalized)) {
+      return true;
+    }
+    if (["openai", "chat_completions", "chat-completions", "openai-response"].includes(normalized)) {
+      return false;
+    }
+  }
+  const lower = model.toLowerCase();
+  return lower.includes("claude") || lower.startsWith("anthropic/");
+}
+
+function modelProtocolMeta(model: string, endpointTypes?: Record<string, string[]>): ModelProtocolMeta {
+  return modelUsesMessages(model, endpointTypes)
+    ? {
+      kind: "messages",
+      label: "anthropic",
+      endpoint: "/v1/messages",
+    }
+    : {
+      kind: "chat",
+      label: "openai",
+      endpoint: "/v1/chat/completions",
+    };
 }
 
 export function AccountLoginDialog({
@@ -50,6 +128,8 @@ export function AccountLoginDialog({
   const [error, setError] = useState<string | null>(null);
 
   const [setup, setSetup] = useState<AccountSetupResult | null>(null);
+  const [defaultModels, setDefaultModels] = useState<string[]>([]);
+  const [otherModels, setOtherModels] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [tokens, setTokens] = useState<AccountTokenInfo[]>([]);
   const [tokenId, setTokenId] = useState<number | null>(null);
@@ -80,6 +160,8 @@ export function AccountLoginDialog({
     setStep("credentials");
     setError(null);
     setSetup(null);
+    setDefaultModels([]);
+    setOtherModels([]);
     setSelected(new Set());
     setTokens([]);
     setTokenId(null);
@@ -103,11 +185,14 @@ export function AccountLoginDialog({
     autoProceedStarted.current = true;
     const result = await fetchSetup.mutateAsync();
     const sortedModels = sortModelNames(result.models);
+    const modelGroups = partitionDefaultModels(sortedModels, BRAND.accountDefaultModels);
     setSetup({ ...result, models: sortedModels });
-    // Pre-check already-configured models, else default to all.
+    setDefaultModels(modelGroups.defaultModels);
+    setOtherModels(modelGroups.otherModels);
+    // Pre-check already-configured models, else use the brand defaults when available.
     const preset = configuredModels.length > 0
       ? new Set(sortedModels.filter((m) => configuredModels.includes(m)))
-      : new Set(sortedModels);
+      : new Set(modelGroups.defaultModels);
     setSelected(preset.size > 0 ? preset : new Set(sortedModels));
     // Lazily load tokens for the selector; failure is non-fatal.
     try {
@@ -192,7 +277,8 @@ export function AccountLoginDialog({
 
   const handleSave = async () => {
     setError(null);
-    const models = (setup?.models ?? []).filter((model) => selected.has(model));
+    const orderedModels = [...defaultModels, ...otherModels];
+    const models = orderedModels.filter((model) => selected.has(model));
     if (models.length === 0) {
       setError("请至少选择一个模型");
       return;
@@ -200,6 +286,7 @@ export function AccountLoginDialog({
     try {
       await saveModels.mutateAsync({
         models,
+        modelEndpointTypes: setup?.modelEndpointTypes,
         primaryModelId: models[0],
         tokenId: tokenId ?? undefined,
       });
@@ -209,7 +296,10 @@ export function AccountLoginDialog({
       // its live state and the new models show in the picker without a
       // restart. Best-effort: a gateway hiccup must not fail the save.
       onOpenChange(false);
-      void setRuntimeModel(models[0], `custom:${BRAND.providerKey}`).catch(() => {
+      const provider = modelUsesMessages(models[0], setup?.modelEndpointTypes)
+        ? `custom:${BRAND.providerKey}-messages`
+        : `custom:${BRAND.providerKey}`;
+      void setRuntimeModel(models[0], provider).catch(() => {
         /* gateway refresh is best-effort; config is already persisted */
       });
     } catch (e) {
@@ -355,16 +445,56 @@ export function AccountLoginDialog({
                 </span>
               </div>
               <div className={s.modelList}>
-                {setup?.models.map((m) => (
-                  <label key={m} className={s.modelRow}>
-                    <input
-                      type="checkbox"
-                      checked={selected.has(m)}
-                      onChange={() => toggleModel(m)}
-                    />
-                    <span>{m}</span>
-                  </label>
-                ))}
+                {defaultModels.length > 0 && (
+                  <div className={s.modelGroup}>
+                    <div className={s.modelGroupHeader}>默认模型</div>
+                    {defaultModels.map((m) => {
+                      const protocol = modelProtocolMeta(m, setup?.modelEndpointTypes);
+                      return (
+                        <label key={m} className={s.modelRow}>
+                          <input
+                            type="checkbox"
+                            checked={selected.has(m)}
+                            onChange={() => toggleModel(m)}
+                          />
+                          <span className={s.modelName}>{m}</span>
+                          <span
+                            className={s.modelProtocol}
+                            data-protocol={protocol.kind}
+                            title={`${protocol.label} ${protocol.endpoint}`}
+                          >
+                            {protocol.label}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+                {otherModels.length > 0 && (
+                  <div className={s.modelGroup}>
+                    {defaultModels.length > 0 && <div className={s.modelGroupHeader}>其他模型</div>}
+                    {otherModels.map((m) => {
+                      const protocol = modelProtocolMeta(m, setup?.modelEndpointTypes);
+                      return (
+                        <label key={m} className={s.modelRow}>
+                          <input
+                            type="checkbox"
+                            checked={selected.has(m)}
+                            onChange={() => toggleModel(m)}
+                          />
+                          <span className={s.modelName}>{m}</span>
+                          <span
+                            className={s.modelProtocol}
+                            data-protocol={protocol.kind}
+                            title={`${protocol.label} ${protocol.endpoint}`}
+                          >
+                            {protocol.label}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
               {error && <p className={s.error}>{error}</p>}
               <div className={s.actions}>

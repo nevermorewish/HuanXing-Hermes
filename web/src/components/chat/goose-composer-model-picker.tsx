@@ -33,6 +33,37 @@ import s from "./goose-composer.module.css";
 // under this provider come straight from the relay, so their ids carry a vendor
 // namespace prefix (e.g. "anthropic/claude-sonnet-4") that we strip for display.
 const ACCOUNT_PROVIDER_SLUG = `custom:${BRAND.providerKey}`;
+const ACCOUNT_MESSAGES_PROVIDER_SLUG = `custom:${BRAND.providerKey}-messages`;
+
+function isAccountProviderSlug(slug: string): boolean {
+  return slug === ACCOUNT_PROVIDER_SLUG || slug === ACCOUNT_MESSAGES_PROVIDER_SLUG;
+}
+
+type AccountProtocolKind = "messages" | "chat";
+
+interface AccountProtocolMeta {
+  kind: AccountProtocolKind;
+  label: "anthropic" | "openai";
+  endpoint: string;
+}
+
+function accountProtocolMeta(slug: string): AccountProtocolMeta | null {
+  if (slug === ACCOUNT_MESSAGES_PROVIDER_SLUG) {
+    return {
+      kind: "messages",
+      label: "anthropic",
+      endpoint: "/v1/messages",
+    };
+  }
+  if (slug === ACCOUNT_PROVIDER_SLUG) {
+    return {
+      kind: "chat",
+      label: "openai",
+      endpoint: "/v1/chat/completions",
+    };
+  }
+  return null;
+}
 
 /** Strip the leading "vendor/" namespace from a relay model id for display.
  * The full id (with prefix) must still be used for selection + API routing. */
@@ -261,7 +292,7 @@ export function buildCandidates(
   // 品牌账户分组: the brand's own account provider models, shown first and
   // excluded from every other bucket so they don't appear twice.
   const brand: Candidate[] = all.filter(
-    (c) => c.providerSlug === ACCOUNT_PROVIDER_SLUG && c.configured,
+    (c) => isAccountProviderSlug(c.providerSlug) && c.configured,
   );
   const brandKeySet = new Set(brand.map((c) => c.key));
 
@@ -486,6 +517,10 @@ function ModelPickerBody({
   }, [buckets, filterGroup]);
 
   const totalVisible = visible.brand.length + visible.recent.length + visible.configured.length + visible.recommended.length + visible.more.length;
+  const configuredAccountModelIds = useMemo(
+    () => Array.from(new Set(buckets.brand.map((c) => c.model))),
+    [buckets.brand],
+  );
 
   function toggleCap(cap: CapabilityKey) {
     setActiveCaps((prev) => {
@@ -510,11 +545,12 @@ function ModelPickerBody({
     // namespace prefix in their id (e.g. "anthropic/claude-sonnet-4"). Show the
     // brand name as the vendor and strip the prefix from the displayed name —
     // candidate.model (the real id) is still used for selection + API routing.
-    const isAccountModel = candidate.providerSlug === ACCOUNT_PROVIDER_SLUG;
+    const isAccountModel = isAccountProviderSlug(candidate.providerSlug);
     const vendorLabel = isAccountModel
       ? BRAND.appName
       : candidate.vendor || candidate.providerName;
     const modelName = isAccountModel ? modelDisplayName(candidate.model) : candidate.model;
+    const accountProtocol = accountProtocolMeta(candidate.providerSlug);
 
     if (!candidate.configured) {
       return (
@@ -529,6 +565,15 @@ function ModelPickerBody({
           <div className={s.mpCardHead}>
             <span className={s.mpCardVendor}>{vendorLabel}</span>
             <span className={s.mpCardName}>{modelName}</span>
+            {accountProtocol && (
+              <span
+                className={s.mpProtocolBadge}
+                data-protocol={accountProtocol.kind}
+                title={`${accountProtocol.label} ${accountProtocol.endpoint}`}
+              >
+                {accountProtocol.label}
+              </span>
+            )}
             <span className={s.mpCardPillWarn}>未配置</span>
           </div>
           <div className={s.mpCardMeta}>
@@ -586,6 +631,15 @@ function ModelPickerBody({
         <div className={s.mpCardHead}>
           <span className={s.mpCardVendor}>{vendorLabel}</span>
           <span className={s.mpCardName}>{modelName}</span>
+          {accountProtocol && (
+            <span
+              className={s.mpProtocolBadge}
+              data-protocol={accountProtocol.kind}
+              title={`${accountProtocol.label} ${accountProtocol.endpoint}`}
+            >
+              {accountProtocol.label}
+            </span>
+          )}
           {isCurrent && (
             <span className={s.mpCardPillOk}>
               <Check aria-hidden="true" /> 当前
@@ -707,7 +761,7 @@ function ModelPickerBody({
                               type="button"
                               className={s.mpGroupAction}
                               data-primary="true"
-                              onClick={() => onReconfigureAccountModels(buckets.brand.map((c) => c.model))}
+                              onClick={() => onReconfigureAccountModels(configuredAccountModelIds)}
                             >
                               重新选择模型
                             </button>
@@ -723,7 +777,7 @@ function ModelPickerBody({
                               onChange={(event) => {
                                 const tokenId = Number(event.target.value);
                                 if (Number.isFinite(tokenId) && tokenId > 0) {
-                                  void onSelectAccountToken(tokenId, buckets.brand.map((c) => c.model));
+                                  void onSelectAccountToken(tokenId, configuredAccountModelIds);
                                 }
                               }}
                             >

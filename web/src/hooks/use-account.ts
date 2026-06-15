@@ -29,6 +29,21 @@ function bridge() {
   return b;
 }
 
+function modelUsesMessages(model: string, endpointTypes?: Record<string, string[]>): boolean {
+  const types = endpointTypes?.[model] ?? [];
+  for (const type of types) {
+    const normalized = type.trim().toLowerCase();
+    if (["anthropic", "claude", "messages"].includes(normalized)) {
+      return true;
+    }
+    if (["openai", "chat_completions", "chat-completions", "openai-response"].includes(normalized)) {
+      return false;
+    }
+  }
+  const lower = model.toLowerCase();
+  return lower.includes("claude") || lower.startsWith("anthropic/");
+}
+
 export function isAccountLoginAvailable(): boolean {
   return Boolean(window.hermesDesktop?.accountStatus);
 }
@@ -85,7 +100,9 @@ export function useAccountSaveModels() {
       // config-derived caches so the new models show up in the chat switcher.
       const primaryModel = input.primaryModelId || input.models[0];
       if (primaryModel) {
-        const provider = `custom:${BRAND.providerKey}`;
+        const provider = modelUsesMessages(primaryModel, input.modelEndpointTypes)
+          ? `custom:${BRAND.providerKey}-messages`
+          : `custom:${BRAND.providerKey}`;
         rememberLastUsedModel({
           model: primaryModel,
           provider,

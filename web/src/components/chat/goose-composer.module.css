@@ -1142,6 +1142,27 @@
   margin-left: auto;
 }
 
+.mpProtocolBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border: 1px solid var(--h-line-soft);
+  border-radius: 999px;
+  background: var(--h-bg-soft);
+  color: var(--h-text-2);
+  font-family: var(--h-font-mono);
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.mpProtocolBadge[data-protocol="messages"] {
+  border-color: color-mix(in srgb, var(--h-accent) 34%, var(--h-line));
+  background: color-mix(in srgb, var(--h-accent) 10%, var(--h-bg-soft));
+  color: var(--h-accent);
+}
+
 .mpCardMeta {
   display: flex;
   gap: 6px;
