@@ -8,6 +8,7 @@ import { useModelOptions } from "@/hooks/use-model-options";
 import { useSkills } from "@/hooks/use-skills";
 import { useAccountSaveModels, useAccountTokens } from "@/hooks/use-account";
 import { BRAND } from "@/lib/brand.generated";
+import { preferredAccountTokenId } from "@/lib/account-tokens";
 import { resolveModelContextWindow } from "@/lib/model-context";
 import { readLastUsedModel, rememberLastUsedModel, useLastUsedModel } from "@/lib/last-used-model";
 import { recordModelUsage } from "@/lib/model-usage-log";
@@ -69,7 +70,7 @@ export function PanelComposer() {
   const accountMessagesProviderId = `custom:${BRAND.providerKey}-messages`;
   const accountProviderEntry = config?.providers?.[accountProviderId];
   const accountMessagesProviderEntry = config?.providers?.[accountMessagesProviderId];
-  const accountTokenId = typeof accountProviderEntry?.token_id === "number"
+  const configuredAccountTokenId = typeof accountProviderEntry?.token_id === "number"
     ? accountProviderEntry.token_id
     : typeof accountProviderEntry?.tokenId === "number"
       ? accountProviderEntry.tokenId
@@ -78,6 +79,7 @@ export function PanelComposer() {
         : typeof accountMessagesProviderEntry?.tokenId === "number"
           ? accountMessagesProviderEntry.tokenId
           : null;
+  const accountTokenId = configuredAccountTokenId ?? preferredAccountTokenId(accountTokens.data ?? []);
   const accountTokenError = accountTokens.isError
     ? errorMessage(accountTokens.error) ?? "令牌加载失败"
     : undefined;
@@ -183,7 +185,8 @@ export function PanelComposer() {
     const primaryModel = models[0];
     if (!primaryModel) return;
     await saveAccountModels.mutateAsync({
-      models: [],
+      models,
+      primaryModelId: primaryModel,
       tokenId,
     });
     const primaryProvider = accountModelProviderById.get(primaryModel) ?? accountProviderId;

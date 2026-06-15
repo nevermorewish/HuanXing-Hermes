@@ -39,7 +39,9 @@
 }
 
 .option {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   width: 100%;
   padding: 8px 12px;
   border: none;
@@ -52,6 +54,19 @@
   border-bottom: 1px solid var(--h-line-soft);
   user-select: none;
 }
+
+.optionName {
+  overflow-wrap: anywhere;
+}
+
+.optionDescription {
+  color: var(--h-text-2);
+  font-family: var(--h-font-cn);
+  font-size: 11.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .option:last-child {
   border-bottom: none;
 }

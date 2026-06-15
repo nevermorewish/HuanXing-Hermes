@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { UserPlus, X } from "lucide-react";
 import { BRAND } from "@/lib/brand.generated";
+import { accountModelDescription } from "@/lib/account-model-descriptions";
+import { preferredAccountTokenId } from "@/lib/account-tokens";
 import { openExternalUrl } from "@/lib/external-links";
 import {
   useAccountFetchSetup,
@@ -114,6 +116,41 @@ function modelProtocolMeta(model: string, endpointTypes?: Record<string, string[
     };
 }
 
+function ModelOptionRow({
+  model,
+  checked,
+  endpointTypes,
+  onToggle,
+}: {
+  model: string;
+  checked: boolean;
+  endpointTypes?: Record<string, string[]>;
+  onToggle: () => void;
+}) {
+  const protocol = modelProtocolMeta(model, endpointTypes);
+  const description = accountModelDescription(model);
+  return (
+    <label className={s.modelRow}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onToggle}
+      />
+      <span className={s.modelText}>
+        <span className={s.modelName}>{model}</span>
+        {description && <span className={s.modelDescription}>{description}</span>}
+      </span>
+      <span
+        className={s.modelProtocol}
+        data-protocol={protocol.kind}
+        title={`${protocol.label} ${protocol.endpoint}`}
+      >
+        {protocol.label}
+      </span>
+    </label>
+  );
+}
+
 export function AccountLoginDialog({
   open,
   onOpenChange,
@@ -199,8 +236,7 @@ export function AccountLoginDialog({
       const list = await window.hermesDesktop?.accountListTokens?.();
       if (list) {
         setTokens(list);
-        const def = list.find((t) => !t.group) ?? list.find((t) => t.status === 1) ?? list[0];
-        setTokenId(def ? def.id : null);
+        setTokenId(preferredAccountTokenId(list));
       }
     } catch {
       /* token selector is optional */
@@ -448,51 +484,29 @@ export function AccountLoginDialog({
                 {defaultModels.length > 0 && (
                   <div className={s.modelGroup}>
                     <div className={s.modelGroupHeader}>默认模型</div>
-                    {defaultModels.map((m) => {
-                      const protocol = modelProtocolMeta(m, setup?.modelEndpointTypes);
-                      return (
-                        <label key={m} className={s.modelRow}>
-                          <input
-                            type="checkbox"
-                            checked={selected.has(m)}
-                            onChange={() => toggleModel(m)}
-                          />
-                          <span className={s.modelName}>{m}</span>
-                          <span
-                            className={s.modelProtocol}
-                            data-protocol={protocol.kind}
-                            title={`${protocol.label} ${protocol.endpoint}`}
-                          >
-                            {protocol.label}
-                          </span>
-                        </label>
-                      );
-                    })}
+                    {defaultModels.map((m) => (
+                      <ModelOptionRow
+                        key={m}
+                        model={m}
+                        checked={selected.has(m)}
+                        endpointTypes={setup?.modelEndpointTypes}
+                        onToggle={() => toggleModel(m)}
+                      />
+                    ))}
                   </div>
                 )}
                 {otherModels.length > 0 && (
                   <div className={s.modelGroup}>
                     {defaultModels.length > 0 && <div className={s.modelGroupHeader}>其他模型</div>}
-                    {otherModels.map((m) => {
-                      const protocol = modelProtocolMeta(m, setup?.modelEndpointTypes);
-                      return (
-                        <label key={m} className={s.modelRow}>
-                          <input
-                            type="checkbox"
-                            checked={selected.has(m)}
-                            onChange={() => toggleModel(m)}
-                          />
-                          <span className={s.modelName}>{m}</span>
-                          <span
-                            className={s.modelProtocol}
-                            data-protocol={protocol.kind}
-                            title={`${protocol.label} ${protocol.endpoint}`}
-                          >
-                            {protocol.label}
-                          </span>
-                        </label>
-                      );
-                    })}
+                    {otherModels.map((m) => (
+                      <ModelOptionRow
+                        key={m}
+                        model={m}
+                        checked={selected.has(m)}
+                        endpointTypes={setup?.modelEndpointTypes}
+                        onToggle={() => toggleModel(m)}
+                      />
+                    ))}
                   </div>
                 )}
               </div>

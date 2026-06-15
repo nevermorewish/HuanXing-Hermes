@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Command } from "cmdk";
 import { Popover } from "@hermes/shared-ui";
+import { accountModelDescription } from "@/lib/account-model-descriptions";
 import s from "./model-combobox.module.css";
 
 const MAX_VISIBLE = 200;
@@ -124,16 +125,20 @@ export function ModelCombobox({
               {visible.length === 0 && !isFreeForm && (
                 <Command.Empty className={s.empty}>没有匹配的模型</Command.Empty>
               )}
-              {visible.map((id) => (
-                <Command.Item
-                  key={id}
-                  value={id}
-                  className={s.option}
-                  onSelect={() => commit(id)}
-                >
-                  {id}
-                </Command.Item>
-              ))}
+              {visible.map((id) => {
+                const description = accountModelDescription(id);
+                return (
+                  <Command.Item
+                    key={id}
+                    value={id}
+                    className={s.option}
+                    onSelect={() => commit(id)}
+                  >
+                    <span className={s.optionName}>{id}</span>
+                    {description && <span className={s.optionDescription}>{description}</span>}
+                  </Command.Item>
+                );
+              })}
             </Command.List>
             {overflowCount > 0 && (
               <div className={s.footer}>还有 {overflowCount} 条，请继续输入过滤</div>

@@ -1268,7 +1268,18 @@ fn pick_token(items: &[Value], token_id: Option<i64>) -> Option<Value> {
             .cloned(),
         None => items
             .iter()
-            .find(|t| t.get("status").and_then(Value::as_i64) == Some(1))
+            .filter(|t| t.get("status").and_then(Value::as_i64).unwrap_or(1) == 1)
+            .find(|t| {
+                t.get("group")
+                    .and_then(Value::as_str)
+                    .map(|group| group.trim().eq_ignore_ascii_case("default"))
+                    .unwrap_or(false)
+            })
+            .or_else(|| {
+                items
+                    .iter()
+                    .find(|t| t.get("status").and_then(Value::as_i64) == Some(1))
+            })
             .or_else(|| items.first())
             .cloned(),
     }
@@ -2027,6 +2038,24 @@ mod tests {
             Some("sk-top123".to_string())
         );
         assert_eq!(extract_full_key(&json!({ "data": "sk-abc***xyz" })), None);
+    }
+
+    #[test]
+    fn pick_token_prefers_active_default_group() {
+        let items = vec![
+            json!({ "id": 1, "name": "first", "group": "", "status": 1 }),
+            json!({ "id": 2, "name": "disabled default", "group": "default", "status": 2 }),
+            json!({ "id": 3, "name": "default", "group": "default", "status": 1 }),
+        ];
+
+        assert_eq!(
+            pick_token(&items, None).and_then(|token| token.get("id").and_then(Value::as_i64)),
+            Some(3)
+        );
+        assert_eq!(
+            pick_token(&items, Some(1)).and_then(|token| token.get("id").and_then(Value::as_i64)),
+            Some(1)
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
-import { ArrowRight, Brain, Check, ChevronRight, Image as ImageIcon, RotateCcw, Sparkles, Wrench, X, Zap } from "lucide-react";
+import { ArrowRight, Brain, Check, Image as ImageIcon, RotateCcw, Wrench, X, Zap } from "lucide-react";
 import type { GatewayModelProvider, ModelOptionsResult } from "@hermes/protocol";
 import {
   BUILTIN_PROVIDER_CATALOG,
@@ -25,6 +25,7 @@ import {
 } from "@/lib/model-usage-log";
 import { expandSearchQuery } from "@/lib/model-search-aliases";
 import { BRAND } from "@/lib/brand.generated";
+import { accountModelDescription } from "@/lib/account-model-descriptions";
 import type { ComposerModelPickerProps, ComposerModelSelection } from "./composer-types";
 import s from "./goose-composer.module.css";
 
@@ -461,9 +462,7 @@ function ModelPickerBody({
     if (typeof window === "undefined") return [];
     return readModelUsageLog();
   });
-  const [activeGroup, setActiveGroup] = useState<"all" | GroupKey>("all");
   const [activeCaps, setActiveCaps] = useState<Set<CapabilityKey>>(new Set());
-  const [moreExpanded, setMoreExpanded] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -474,18 +473,6 @@ function ModelPickerBody({
     () => buildCandidates(modelOptions, usageEntries),
     [modelOptions, usageEntries],
   );
-
-  // Default to the brand account group when it has models, so a freshly
-  // logged-in user lands on their account models. Runs once per brand-bucket
-  // transition into non-empty; user clicks afterward are respected.
-  const brandDefaulted = useRef(false);
-  useEffect(() => {
-    if (brandDefaulted.current) return;
-    if (buckets.brand.length > 0) {
-      brandDefaulted.current = true;
-      setActiveGroup("brand");
-    }
-  }, [buckets.brand.length]);
 
   const query = expandSearchQuery(modelSearch);
   const usageByKey = useMemo(() => {
@@ -516,7 +503,7 @@ function ModelPickerBody({
     return { brand, recent, configured, recommended, more };
   }, [buckets, filterGroup]);
 
-  const totalVisible = visible.brand.length + visible.recent.length + visible.configured.length + visible.recommended.length + visible.more.length;
+  const totalVisible = visible.brand.length + visible.recent.length + visible.configured.length;
   const configuredAccountModelIds = useMemo(
     () => Array.from(new Set(buckets.brand.map((c) => c.model))),
     [buckets.brand],
@@ -530,11 +517,6 @@ function ModelPickerBody({
       return next;
     });
   }
-
-  const showGroup = useCallback(
-    (group: GroupKey): boolean => activeGroup === "all" || activeGroup === group,
-    [activeGroup],
-  );
 
   function renderCard(candidate: Candidate) {
     const isCurrent = candidate.key === currentSelectionKey;
@@ -551,6 +533,7 @@ function ModelPickerBody({
       : candidate.vendor || candidate.providerName;
     const modelName = isAccountModel ? modelDisplayName(candidate.model) : candidate.model;
     const accountProtocol = accountProtocolMeta(candidate.providerSlug);
+    const modelDescription = isAccountModel ? accountModelDescription(candidate.model) : undefined;
 
     if (!candidate.configured) {
       return (
@@ -576,15 +559,16 @@ function ModelPickerBody({
             )}
             <span className={s.mpCardPillWarn}>未配置</span>
           </div>
-          <div className={s.mpCardMeta}>
-            <span>{candidate.providerName}</span>
-            {candidate.apiKeyLabel && (
+        <div className={s.mpCardMeta}>
+          <span>{candidate.providerName}</span>
+          {candidate.apiKeyLabel && (
               <>
                 <span className={s.mpCardSep}>·</span>
                 <span>需要 <code className={s.mpCardMono}>{candidate.apiKeyLabel}</code></span>
               </>
             )}
-          </div>
+        </div>
+          {modelDescription && <div className={s.mpCardDescription}>{modelDescription}</div>}
           {caps.length > 0 && (
             <div className={s.mpCardCaps}>
               {caps.map(({ key, label, Icon }) => (
@@ -655,6 +639,7 @@ function ModelPickerBody({
             </>
           )}
         </div>
+        {modelDescription && <div className={s.mpCardDescription}>{modelDescription}</div>}
         {caps.length > 0 && (
           <div className={s.mpCardCaps}>
             {caps.map(({ key, label, Icon }) => (
@@ -696,36 +681,6 @@ function ModelPickerBody({
         <div className={s.mpGrid}>
           <aside className={s.mpFilters}>
             <div className={s.mpFilterSection}>
-              <div className={s.mpFilterTitle}>分组</div>
-              <button
-                type="button"
-                className={s.mpFilterChip}
-                data-active={activeGroup === "all"}
-                onClick={() => setActiveGroup("all")}
-              >
-                <Sparkles aria-hidden="true" />
-                全部
-                <span className={s.mpFilterCount}>{totalVisible}</span>
-              </button>
-              {(["brand", "recent", "configured", "recommended", "more"] as const).map((group) => {
-                const count = visible[group].length;
-                if (count === 0 && group === "brand") return null;
-                return (
-                  <button
-                    key={group}
-                    type="button"
-                    className={s.mpFilterChip}
-                    data-active={activeGroup === group}
-                    onClick={() => setActiveGroup(group)}
-                  >
-                    {GROUP_LABELS[group].name}
-                    <span className={s.mpFilterCount}>{count}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className={s.mpFilterSection}>
               <div className={s.mpFilterTitle}>能力</div>
               {CAPABILITIES.map((cap) => (
                 <button
@@ -747,7 +702,7 @@ function ModelPickerBody({
               <div className={s.modelEmpty}>没有匹配的模型</div>
             ) : (
               <>
-                {showGroup("brand") && visible.brand.length > 0 && (
+                {visible.brand.length > 0 && (
                   <section className={s.mpGroup} data-brand="true">
                     <header className={s.mpGroupHeader}>
                       <div className={s.mpGroupTitle}>
@@ -804,7 +759,7 @@ function ModelPickerBody({
                   </section>
                 )}
 
-                {showGroup("recent") && visible.recent.length > 0 && (
+                {visible.recent.length > 0 && (
                   <section className={s.mpGroup}>
                     <header className={s.mpGroupHeader}>
                       <span>{GROUP_LABELS.recent.name}</span>
@@ -814,7 +769,7 @@ function ModelPickerBody({
                   </section>
                 )}
 
-                {showGroup("configured") && visible.configured.length > 0 && (
+                {visible.configured.length > 0 && (
                   <section className={s.mpGroup}>
                     <header className={s.mpGroupHeader}>
                       <span>{GROUP_LABELS.configured.name}</span>
@@ -824,34 +779,6 @@ function ModelPickerBody({
                   </section>
                 )}
 
-                {showGroup("recommended") && visible.recommended.length > 0 && (
-                  <section className={s.mpGroup}>
-                    <header className={s.mpGroupHeader}>
-                      <span>{GROUP_LABELS.recommended.name}</span>
-                      <span className={s.mpGroupSub}>{GROUP_LABELS.recommended.subtitle}</span>
-                    </header>
-                    {visible.recommended.map(renderCard)}
-                  </section>
-                )}
-
-                {showGroup("more") && visible.more.length > 0 && (
-                  <section className={s.mpGroup}>
-                    <button
-                      type="button"
-                      className={s.mpGroupCollapsible}
-                      onClick={() => setMoreExpanded((x) => !x)}
-                    >
-                      <ChevronRight
-                        aria-hidden="true"
-                        className={s.mpGroupChevron}
-                        data-expanded={moreExpanded ? "true" : undefined}
-                      />
-                      <span>{GROUP_LABELS.more.name} · {visible.more.length} 项</span>
-                      <span className={s.mpGroupSub}>{GROUP_LABELS.more.subtitle}</span>
-                    </button>
-                    {moreExpanded && visible.more.map(renderCard)}
-                  </section>
-                )}
               </>
             )}
           </div>

@@ -1173,6 +1173,15 @@
   color: var(--h-text-3);
 }
 
+.mpCardDescription {
+  margin-top: 6px;
+  color: var(--h-text-2);
+  font-family: var(--h-font-cn);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .mpCardSep {
   color: var(--h-text-3);
   opacity: 0.5;

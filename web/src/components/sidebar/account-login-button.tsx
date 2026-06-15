@@ -3,6 +3,7 @@ import { LogIn, RefreshCw } from "lucide-react";
 import { useConfig } from "@/hooks/use-config";
 import { useGateway } from "@/hooks/use-gateway";
 import { BRAND } from "@/lib/brand.generated";
+import { preferredAccountTokenId } from "@/lib/account-tokens";
 import { openExternalUrl } from "@/lib/external-links";
 import {
   isAccountLoginAvailable,
@@ -92,7 +93,7 @@ export function AccountLoginButton() {
     : messagesModels.includes(primaryModel)
       ? accountMessagesProviderId
       : accountProviderId;
-  const selectedTokenId = typeof providerEntry?.token_id === "number"
+  const configuredTokenId = typeof providerEntry?.token_id === "number"
     ? providerEntry.token_id
     : typeof providerEntry?.tokenId === "number"
       ? providerEntry.tokenId
@@ -100,12 +101,15 @@ export function AccountLoginButton() {
         ? messagesProviderEntry.token_id
         : typeof messagesProviderEntry?.tokenId === "number"
           ? messagesProviderEntry.tokenId
-          : "";
+          : null;
+  const selectedTokenId = configuredTokenId ?? preferredAccountTokenId(accountTokens.data ?? []) ?? "";
 
   const handleTokenSelect = async (tokenId: number) => {
     if (!Number.isFinite(tokenId) || tokenId <= 0) return;
+    const models = accountModels.length > 0 ? accountModels : [];
     await saveModels.mutateAsync({
-      models: [],
+      models,
+      primaryModelId: primaryModel || undefined,
       tokenId,
     });
     if (primaryModel) {

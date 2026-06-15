@@ -39,6 +39,10 @@ const REQUIRED_ARRAY_FIELDS = [
   "accountDefaultModels",
 ];
 
+const OPTIONAL_RECORD_FIELDS = [
+  "accountModelDescriptions",
+];
+
 function pathOf(relativePath) {
   return resolve(repoRoot, relativePath);
 }
@@ -84,6 +88,18 @@ function requireBrand() {
   }
   if (brand.id !== brandId) {
     throw new Error(`brands/${brandId}.json has id="${brand.id}" but filename implies "${brandId}"`);
+  }
+  for (const field of OPTIONAL_RECORD_FIELDS) {
+    if (brand[field] === undefined) continue;
+    const value = brand[field];
+    if (
+      !value
+      || typeof value !== "object"
+      || Array.isArray(value)
+      || Object.entries(value).some(([key, item]) => key.trim().length === 0 || typeof item !== "string")
+    ) {
+      throw new Error(`brands/${brandId}.json has invalid ${field}: expected object of string descriptions`);
+    }
   }
   return brand;
 }
@@ -162,6 +178,8 @@ const tsModule = `${tsBanner}\nexport interface BrandConfig {\n`
   + REQUIRED_STRING_FIELDS.map((f) => `  ${f}: string;`).join("\n")
   + "\n"
   + REQUIRED_ARRAY_FIELDS.map((f) => `  ${f}: readonly string[];`).join("\n")
+  + "\n"
+  + OPTIONAL_RECORD_FIELDS.map((f) => `  ${f}?: Readonly<Record<string, string>>;`).join("\n")
   + `\n}\n\nexport const BRAND: BrandConfig = ${JSON.stringify(brand, null, 2)} as const;\n\nexport default BRAND;\n`;
 writeGenerated("web/src/lib/brand.generated.ts", tsModule);
 

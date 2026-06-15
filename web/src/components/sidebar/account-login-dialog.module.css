@@ -110,12 +110,16 @@
 
 .modelRow {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 6px 8px;
   border-radius: var(--h-r-sm, 6px);
   font-size: 13px;
   cursor: pointer;
+}
+
+.modelRow input {
+  margin-top: 3px;
 }
 
 .modelRow:hover {
@@ -143,9 +147,23 @@
   text-transform: uppercase;
 }
 
-.modelName {
+.modelText {
   min-width: 0;
   flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.modelName {
+  overflow-wrap: anywhere;
+  color: var(--h-text);
+}
+
+.modelDescription {
+  color: var(--h-text-2);
+  font-size: 12px;
+  line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
