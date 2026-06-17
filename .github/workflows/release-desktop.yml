@@ -278,9 +278,9 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE || secrets.MAC_CSC_LINK || secrets.CSC_LINK }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD || secrets.MAC_CSC_KEY_PASSWORD || secrets.CSC_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || secrets.MAC_CSC_NAME || secrets.CSC_NAME }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID || secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY || secrets.APPLE_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -289,7 +289,7 @@ jobs:
             APPLE_CERTIFICATE \
             APPLE_CERTIFICATE_PASSWORD \
             APPLE_SIGNING_IDENTITY \
-            APPLE_API_KEY \
+            APPLE_API_KEY_ID \
             APPLE_API_ISSUER \
             APPLE_API_PRIVATE_KEY
           do
@@ -306,11 +306,11 @@ jobs:
 
           mkdir -p "$RUNNER_TEMP/appstoreconnect/private_keys"
           if [[ "$APPLE_API_PRIVATE_KEY" == *"\\n"* ]]; then
-            printf '%b\n' "$APPLE_API_PRIVATE_KEY" > "$RUNNER_TEMP/appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY}.p8"
+            printf '%b\n' "$APPLE_API_PRIVATE_KEY" > "$RUNNER_TEMP/appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
           else
-            printf '%s\n' "$APPLE_API_PRIVATE_KEY" > "$RUNNER_TEMP/appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY}.p8"
+            printf '%s\n' "$APPLE_API_PRIVATE_KEY" > "$RUNNER_TEMP/appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
           fi
-          chmod 600 "$RUNNER_TEMP/appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY}.p8"
+          chmod 600 "$RUNNER_TEMP/appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
 
           signing_keychain_password="$(uuidgen)"
           signing_keychain="$RUNNER_TEMP/hermes-signing.keychain-db"
@@ -381,13 +381,26 @@ jobs:
           identities="$(security find-identity -v -p codesigning "$signing_keychain")"
           printf '%s\n' "$identities"
 
-          if ! grep -Fq "$APPLE_SIGNING_IDENTITY" <<< "$identities"; then
+          signing_identity_match="$(printf '%s' "$APPLE_SIGNING_IDENTITY" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
+          if [[ "$signing_identity_match" == Developer\ ID\ Application:* ]]; then
+            signing_identity_match="${signing_identity_match#Developer ID Application:}"
+            signing_identity_match="$(printf '%s' "$signing_identity_match" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
+            echo "Using macOS signing identity name without Developer ID Application prefix for lookup."
+          fi
+
+          identity_line="$(grep -F "$signing_identity_match" <<< "$identities" | head -n 1 || true)"
+          if [[ -z "$identity_line" ]]; then
             echo "::error::APPLE_SIGNING_IDENTITY/CSC_NAME was not found in the imported certificate identities."
             exit 1
           fi
 
+          selected_identity="$(sed -E 's/^[^"]*"([^"]+)".*$/\1/' <<< "$identity_line")"
+          if [[ -z "$selected_identity" || "$selected_identity" == "$identity_line" ]]; then
+            selected_identity="$signing_identity_match"
+          fi
+
           echo "enabled=true" >> "$GITHUB_OUTPUT"
-          echo "identity=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_OUTPUT"
+          echo "identity=$selected_identity" >> "$GITHUB_OUTPUT"
 
       - name: Verify bundled macOS runtime payload signatures
         if: matrix.runtime_platform == 'darwin'
@@ -471,9 +484,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID || secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY_PATH: ${{ runner.temp }}/appstoreconnect/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/appstoreconnect/private_keys/AuthKey_${{ secrets.APPLE_API_KEY_ID || secrets.APPLE_API_KEY }}.p8
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -489,7 +502,7 @@ jobs:
             submit_json="$RUNNER_TEMP/notary-submit-$(basename "$dmg").json"
             xcrun notarytool submit "$dmg" \
               --key "$APPLE_API_KEY_PATH" \
-              --key-id "$APPLE_API_KEY" \
+              --key-id "$APPLE_API_KEY_ID" \
               --issuer "$APPLE_API_ISSUER" \
               --wait \
               --output-format json | tee "$submit_json"
@@ -512,7 +525,7 @@ jobs:
               if [ -n "$submission_id" ]; then
                 xcrun notarytool log "$submission_id" \
                   --key "$APPLE_API_KEY_PATH" \
-                  --key-id "$APPLE_API_KEY" \
+                  --key-id "$APPLE_API_KEY_ID" \
                   --issuer "$APPLE_API_ISSUER" \
                   --output-format json | tee "$RUNNER_TEMP/notary-log-$submission_id.json" || true
               fi
