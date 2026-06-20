@@ -1,5 +1,5 @@
 # Build hermes-agent-cn-desktop installers and attach them to a GitHub
-# Release. Triggers on tags matching `v*` (e.g. `v0.3.19`).
+# Release. Triggers on tags matching `v*` (e.g. `v0.3.20`).
 #
 # Desktop release build runs in parallel for every brand and platform. Each job:
 #   1. Installs Node + pnpm + Rust toolchain
@@ -32,7 +32,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag name to associate the build with (e.g. v0.3.19)"
+        description: "Tag name to associate the build with (e.g. v0.3.20)"
         required: true
       bundled_runtime_tag:
         description: "Hermes-CN-Core runtime release tag to embed in desktop installers, or latest"
@@ -278,39 +278,89 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE || secrets.MAC_CSC_LINK || secrets.CSC_LINK }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD || secrets.MAC_CSC_KEY_PASSWORD || secrets.CSC_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || secrets.MAC_CSC_NAME || secrets.CSC_NAME }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID || secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY || secrets.APPLE_API_KEY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD || secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
 
-          missing=()
+          normalize_secret_line() {
+            printf '%s' "${1:-}" | tr -d '\r\n' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g'
+          }
+
+          APPLE_CERTIFICATE="$(printf '%s' "$APPLE_CERTIFICATE" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
+          APPLE_CERTIFICATE_PASSWORD="$(normalize_secret_line "$APPLE_CERTIFICATE_PASSWORD")"
+          APPLE_SIGNING_IDENTITY="$(normalize_secret_line "$APPLE_SIGNING_IDENTITY")"
+          APPLE_API_KEY_ID="$(normalize_secret_line "$APPLE_API_KEY_ID")"
+          APPLE_API_ISSUER="$(normalize_secret_line "$APPLE_API_ISSUER")"
+          APPLE_ID="$(normalize_secret_line "$APPLE_ID")"
+          APPLE_APP_SPECIFIC_PASSWORD="$(normalize_secret_line "$APPLE_APP_SPECIFIC_PASSWORD")"
+          APPLE_TEAM_ID="$(normalize_secret_line "$APPLE_TEAM_ID")"
+
+          signing_missing=()
           for name in \
             APPLE_CERTIFICATE \
             APPLE_CERTIFICATE_PASSWORD \
-            APPLE_SIGNING_IDENTITY \
+            APPLE_SIGNING_IDENTITY
+          do
+            if [ -z "${!name}" ]; then
+              signing_missing+=("$name")
+            fi
+          done
+
+          if [ ${#signing_missing[@]} -gt 0 ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Skipping macOS signing/notarization because Apple signing secrets are missing: ${signing_missing[*]}"
+            exit 0
+          fi
+
+          notarization_method=""
+          api_missing=()
+          for name in \
             APPLE_API_KEY_ID \
             APPLE_API_ISSUER \
             APPLE_API_PRIVATE_KEY
           do
             if [ -z "${!name}" ]; then
-              missing+=("$name")
+              api_missing+=("$name")
             fi
           done
 
-          if [ ${#missing[@]} -gt 0 ]; then
+          password_missing=()
+          for name in \
+            APPLE_ID \
+            APPLE_APP_SPECIFIC_PASSWORD \
+            APPLE_TEAM_ID
+          do
+            if [ -z "${!name}" ]; then
+              password_missing+=("$name")
+            fi
+          done
+
+          if [ ${#api_missing[@]} -eq 0 ]; then
+            notarization_method="api-key"
+          elif [ ${#password_missing[@]} -eq 0 ]; then
+            notarization_method="apple-id"
+          else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Skipping macOS signing/notarization because Apple signing or notarization secrets are missing: ${missing[*]}"
+            echo "::warning::Skipping macOS signing/notarization because notarization secrets are missing. Configure either APPLE_API_KEY_ID/APPLE_API_ISSUER/APPLE_API_PRIVATE_KEY or APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID."
             exit 0
           fi
 
-          mkdir -p "$RUNNER_TEMP/appstoreconnect/private_keys"
-          if [[ "$APPLE_API_PRIVATE_KEY" == *"\\n"* ]]; then
-            printf '%b\n' "$APPLE_API_PRIVATE_KEY" > "$RUNNER_TEMP/appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
-          else
-            printf '%s\n' "$APPLE_API_PRIVATE_KEY" > "$RUNNER_TEMP/appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
+          if [[ "$notarization_method" == "api-key" ]]; then
+            mkdir -p "$RUNNER_TEMP/appstoreconnect/private_keys"
+            api_key_path="$RUNNER_TEMP/appstoreconnect/private_keys/AuthKey.p8"
+            if [[ "$APPLE_API_PRIVATE_KEY" == *"\\n"* ]]; then
+              printf '%b\n' "$APPLE_API_PRIVATE_KEY" > "$api_key_path"
+            else
+              printf '%s\n' "$APPLE_API_PRIVATE_KEY" > "$api_key_path"
+            fi
+            chmod 600 "$api_key_path"
+            echo "api_key_path=$api_key_path" >> "$GITHUB_OUTPUT"
           fi
-          chmod 600 "$RUNNER_TEMP/appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
 
           signing_keychain_password="$(uuidgen)"
           signing_keychain="$RUNNER_TEMP/hermes-signing.keychain-db"
@@ -401,6 +451,7 @@ jobs:
 
           echo "enabled=true" >> "$GITHUB_OUTPUT"
           echo "identity=$selected_identity" >> "$GITHUB_OUTPUT"
+          echo "notarization=$notarization_method" >> "$GITHUB_OUTPUT"
 
       - name: Verify bundled macOS runtime payload signatures
         if: matrix.runtime_platform == 'darwin'
@@ -484,12 +535,33 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID || secrets.APPLE_API_KEY }}
+          NOTARIZATION_METHOD: ${{ steps.macos_signing.outputs.notarization }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY_PATH: ${{ runner.temp }}/appstoreconnect/private_keys/AuthKey_${{ secrets.APPLE_API_KEY_ID || secrets.APPLE_API_KEY }}.p8
+          APPLE_API_KEY_PATH: ${{ steps.macos_signing.outputs.api_key_path }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD || secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           shopt -s nullglob
+
+          if [[ "$NOTARIZATION_METHOD" == "api-key" ]]; then
+            notary_args=(
+              --key "$APPLE_API_KEY_PATH"
+              --key-id "$APPLE_API_KEY_ID"
+              --issuer "$APPLE_API_ISSUER"
+            )
+          elif [[ "$NOTARIZATION_METHOD" == "apple-id" ]]; then
+            notary_args=(
+              --apple-id "$APPLE_ID"
+              --password "$APPLE_APP_SPECIFIC_PASSWORD"
+              --team-id "$APPLE_TEAM_ID"
+            )
+          else
+            echo "Unsupported notarization method: $NOTARIZATION_METHOD" >&2
+            exit 1
+          fi
 
           dmgs=(target/${{ matrix.target }}/release/bundle/dmg/*.dmg)
           if [ ${#dmgs[@]} -eq 0 ]; then
@@ -501,9 +573,7 @@ jobs:
             echo "Notarizing final DMG: $dmg"
             submit_json="$RUNNER_TEMP/notary-submit-$(basename "$dmg").json"
             xcrun notarytool submit "$dmg" \
-              --key "$APPLE_API_KEY_PATH" \
-              --key-id "$APPLE_API_KEY_ID" \
-              --issuer "$APPLE_API_ISSUER" \
+              "${notary_args[@]}" \
               --wait \
               --output-format json | tee "$submit_json"
 
@@ -524,9 +594,7 @@ jobs:
               echo "Notarization failed with status: $submission_status" >&2
               if [ -n "$submission_id" ]; then
                 xcrun notarytool log "$submission_id" \
-                  --key "$APPLE_API_KEY_PATH" \
-                  --key-id "$APPLE_API_KEY_ID" \
-                  --issuer "$APPLE_API_ISSUER" \
+                  "${notary_args[@]}" \
                   --output-format json | tee "$RUNNER_TEMP/notary-log-$submission_id.json" || true
               fi
               exit 1
