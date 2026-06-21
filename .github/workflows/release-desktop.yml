@@ -1,5 +1,5 @@
 # Build hermes-agent-cn-desktop installers and attach them to a GitHub
-# Release. Triggers on tags matching `v*` (e.g. `v0.3.22`).
+# Release. Triggers on tags matching `v*` (e.g. `v0.3.23`).
 #
 # Desktop release build runs in parallel for every brand and platform. Each job:
 #   1. Installs Node + pnpm + Rust toolchain
@@ -32,7 +32,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag name to associate the build with (e.g. v0.3.22)"
+        description: "Tag name to associate the build with (e.g. v0.3.23)"
         required: true
       bundled_runtime_tag:
         description: "Hermes-CN-Core runtime release tag to embed in desktop installers, or latest"
@@ -751,14 +751,27 @@ jobs:
           $sshDir = Join-Path $HOME '.ssh'
           New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
 
+          $keyMaterial = $env:LINUX_DEPLOY_KEY
+          if ($keyMaterial.Contains('\n')) {
+            $keyMaterial = $keyMaterial -replace '\\n', "`n"
+          }
+          $keyMaterial = $keyMaterial -replace "`r`n", "`n" -replace "`r", "`n"
+          if (-not $keyMaterial.EndsWith("`n")) {
+            $keyMaterial = "$keyMaterial`n"
+          }
+          $keyHeader = ($keyMaterial -split "`n" | Select-Object -First 1).Trim()
+          if ($keyHeader -notmatch '^-----BEGIN .*PRIVATE KEY-----$') {
+            throw "LINUX_DEPLOY_KEY is not an OpenSSH/PEM private key. Store the full private key content, not a path or public key."
+          }
+
           if ($IsWindows) {
             $keyPath = Join-Path $sshDir 'linux_deploy_key'
-            ($env:LINUX_DEPLOY_KEY -replace "`r`n", "`n") | Set-Content -Path $keyPath -NoNewline -Encoding ascii
+            $keyMaterial | Set-Content -Path $keyPath -NoNewline -Encoding ascii
             icacls $keyPath /inheritance:r | Out-Null
             icacls $keyPath /grant:r "$($env:USERNAME):R" | Out-Null
           } else {
             $keyPath = (& mktemp "$sshDir/linux_deploy_key.XXXXXX").Trim()
-            ($env:LINUX_DEPLOY_KEY -replace "`r`n", "`n") | Set-Content -Path $keyPath -NoNewline -Encoding ascii
+            $keyMaterial | Set-Content -Path $keyPath -NoNewline -Encoding ascii
           }
 
           $knownHostsPath = Join-Path $sshDir 'known_hosts'
