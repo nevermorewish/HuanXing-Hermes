@@ -274,6 +274,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          umask 077
 
           deploy_host="${SECRET_LINUX_DEPLOY_HOST:-${VAR_LINUX_DEPLOY_HOST:-}}"
           deploy_port="${SECRET_LINUX_DEPLOY_PORT:-${VAR_LINUX_DEPLOY_PORT:-}}"
@@ -300,7 +301,6 @@ jobs:
           mkdir -p "$HOME/.ssh"
           key_path="$HOME/.ssh/linux_deploy_key"
           printf '%s' "$LINUX_DEPLOY_KEY" | tr -d '\r' > "$key_path"
-          chmod 600 "$key_path"
 
           known_hosts_path="$HOME/.ssh/known_hosts"
           if [[ -z "${LINUX_DEPLOY_KNOWN_HOSTS:-}" ]]; then
