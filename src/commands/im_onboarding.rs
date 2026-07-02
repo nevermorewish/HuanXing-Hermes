@@ -700,11 +700,20 @@ async fn begin_feishu(input: &ImOnboardingBeginInput) -> Result<ImOnboardingBegi
         .and_then(Value::as_u64)
         .unwrap_or(5)
         .max(1);
+    // Respect the device-code lifetime Feishu grants. Creating a Personal
+    // Agent (naming it, choosing scopes, publishing a version) routinely takes
+    // well over 10 minutes, so we must NOT cap this at 600s the way we used to:
+    // that made the desktop stop polling while the device code was still alive
+    // on Feishu's side, so a user who finished creating their 智能体 after the
+    // 10-minute mark was left stuck on "等待" even though the agent existed.
+    // Core's `_begin_registration` uses the returned value verbatim (default
+    // 600, no cap); we mirror that intent with a generous upper bound as a
+    // safety valve so an unexpected server value can't grow the flow unbounded.
     let expire_in = begin
         .get("expire_in")
         .and_then(Value::as_u64)
         .unwrap_or(600)
-        .min(600);
+        .clamp(60, 1800);
     let timeout = Duration::from_secs(expire_in);
     let expires_at_ms = expires_at_ms_from(timeout);
     let flow_id = new_flow_id(ImPlatform::Feishu);
@@ -810,7 +819,10 @@ async fn poll_feishu(flow_id: &str) -> Result<ImOnboardingPollResult, AppError> 
             interval_seconds: flow.interval_seconds,
             expires_at_ms: flow.expires_at_ms,
             credential_summary: flow.credential.as_ref().map(credential_from_feishu),
-            message: Some("飞书扫码授权已过期，请重新生成二维码。".to_string()),
+            message: Some(
+                "飞书扫码授权已过期。如果智能体已经创建好，可在飞书开放平台复制 App ID / App Secret 到高级设置手动填写；否则请重新生成二维码。"
+                    .to_string(),
+            ),
         });
     }
     if let Some(credential) = &flow.credential {
@@ -883,7 +895,10 @@ async fn poll_feishu(flow_id: &str) -> Result<ImOnboardingPollResult, AppError> 
     let error = res.get("error").and_then(Value::as_str).unwrap_or("");
     let (status, message) = match error {
         "access_denied" => ("denied", "用户取消或拒绝了飞书授权。"),
-        "expired_token" => ("expired", "飞书扫码授权已过期，请重新生成二维码。"),
+        "expired_token" => (
+            "expired",
+            "飞书扫码授权已过期。如果智能体已经创建好，可在飞书开放平台复制 App ID / App Secret 到高级设置手动填写；否则请重新生成二维码。",
+        ),
         _ => ("pending", "等待飞书扫码确认。"),
     };
     FLOWS
