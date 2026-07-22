@@ -42,8 +42,16 @@ if (!skipInstall) {
   runNodeScript(resolve(repoRoot, "scripts", "install-local-runtime.mjs"), process.argv.slice(2));
 }
 
-const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-const child = spawn(pnpm, ["exec", "tauri", "dev"], {
+// Node 24 rejects direct .cmd spawning on Windows with EINVAL. Invoke the
+// fixed pnpm command through cmd.exe there; no user-controlled values are
+// interpolated into the command string.
+const childCommand = process.platform === "win32"
+  ? process.env.ComSpec ?? "cmd.exe"
+  : "pnpm";
+const childArgs = process.platform === "win32"
+  ? ["/d", "/s", "/c", "pnpm.cmd exec tauri dev"]
+  : ["exec", "tauri", "dev"];
+const child = spawn(childCommand, childArgs, {
   cwd: repoRoot,
   stdio: "inherit",
   env: {

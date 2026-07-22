@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ModelOptionsResult } from "@hermes/protocol";
-import { buildCandidates } from "./goose-composer-model-picker";
+import { buildCandidates, groupCandidates } from "./goose-composer-model-picker";
 
 describe("buildCandidates", () => {
   it("augments a stale MiniMax gateway model list with MiniMax-M3 from the desktop catalog", () => {
@@ -107,5 +107,24 @@ describe("buildCandidates", () => {
 
     expect(buckets.recent).toHaveLength(0);
     expect(buckets.moa.map((candidate) => candidate.key)).toEqual(["moa:default"]);
+  });
+
+  it("keeps MoA presets in the compact picker groups", () => {
+    const options = {
+      providers: [
+        {
+          slug: "moa",
+          name: "Mixture of Agents",
+          models: ["review", "default"],
+          authenticated: true,
+          source: "virtual",
+        },
+      ],
+    } as ModelOptionsResult;
+
+    const groups = groupCandidates(options);
+
+    expect(groups.moa.map((candidate) => candidate.key)).toEqual(["moa:default", "moa:review"]);
+    expect(groups.builtin).toHaveLength(0);
   });
 });

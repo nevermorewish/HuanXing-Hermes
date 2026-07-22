@@ -1347,6 +1347,16 @@ export function getProviderEntry(config: Record<string, any> | undefined, provid
   return legacyIndex >= 0 ? asRecord(config?.custom_providers[legacyIndex]) : {};
 }
 
+function currentModelUsesProvider(
+  config: Record<string, any>,
+  providerId: string,
+): boolean {
+  const currentProvider = String(asRecord(config.model).provider || "").trim();
+  if (currentProvider === providerId) return true;
+  return providerId.startsWith("custom:")
+    && normalizeCustomProviderId(currentProvider) === providerId;
+}
+
 export function maskSecretPreview(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -1439,7 +1449,11 @@ export function buildProviderSettingsUpdate(
   const existingModel = asRecord(config.model);
   const nextApiKey =
     input.apiKey.trim() ||
-    String(existingProvider.api_key || existingModel.api_key || "");
+    String(
+      existingProvider.api_key
+      || (currentModelUsesProvider(config, preset.id) ? existingModel.api_key : "")
+      || "",
+    );
   const baseUrl = input.baseUrl.trim() || preset.baseUrl;
   const model = input.model.trim() || preset.defaultModel;
   const providerEntry: Record<string, any> = {
@@ -1480,16 +1494,22 @@ export function buildCurrentModelConfigUpdate(
 ): Record<string, any> {
   const existingProvider = getProviderEntry(config, preset.id);
   const existingModel = asRecord(config.model);
+  const existingModelWithoutApiKey = { ...existingModel };
+  delete existingModelWithoutApiKey.api_key;
   const nextApiKey =
     input.apiKey.trim() ||
-    String(existingProvider.api_key || existingModel.api_key || "");
+    String(
+      existingProvider.api_key
+      || (currentModelUsesProvider(config, preset.id) ? existingModel.api_key : "")
+      || "",
+    );
   const baseUrl = input.baseUrl.trim() || String(existingProvider.base_url || preset.baseUrl);
   const model = input.model.trim() || String(existingProvider.model || preset.defaultModel);
 
   return {
     ...config,
     model: {
-      ...existingModel,
+      ...existingModelWithoutApiKey,
       provider: preset.id,
       default: model,
       base_url: baseUrl,

@@ -139,7 +139,7 @@ export function AccountPopup() {
             >
               <LogIn size={14} className={s.itemIcon} />
               <span className={s.grow}>登录 / 注册企业账号</span>
-              <span className={s.tail}>接收模型下发</span>
+              <span className={s.tail}>企业账号</span>
             </button>
           )}
 

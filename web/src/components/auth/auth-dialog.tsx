@@ -102,7 +102,7 @@ export function AuthDialog() {
           </button>
 
           <h3 className={s.title}>企业账号</h3>
-          <div className={s.sub}>登录后接收企业下发的模型与能力</div>
+          <div className={s.sub}>登录 Huanxing 企业账号并查看企业信息</div>
 
           <div className={s.tabs} role="tablist">
             <button

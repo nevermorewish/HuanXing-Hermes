@@ -13,8 +13,10 @@ import { useConfig, useSaveConfig } from "@/hooks/use-config";
 import { useGateway } from "@/hooks/use-gateway";
 import {
   buildCustomProviderDeleteUpdate,
+  buildCurrentModelConfigUpdate,
   buildProviderSettingsUpdate,
   customProviderPresetsFromConfig,
+  getProviderEntry,
   type ProviderPreset,
 } from "@/lib/provider-catalog";
 import {
@@ -87,8 +89,8 @@ const EMPTY_DRAFT: ModelDraft = {
   outputWindow: 0,
 };
 
-function draftFromConfig(config: Record<string, any> | undefined, providerId: string): ModelDraft {
-  const entry = asRecord(asRecord(config?.providers)[providerId]);
+export function draftFromConfig(config: Record<string, any> | undefined, providerId: string): ModelDraft {
+  const entry = getProviderEntry(config, providerId);
   const modelName = String(entry.model || providerId.replace(/^custom:/, ""));
   const modelEntry = asRecord(asRecord(entry.models)[modelName]);
   return {
@@ -274,7 +276,8 @@ function EnterpriseSection() {
   const [binding, setBinding] = useState<EnterpriseBinding | null>(readEnterpriseBinding);
   const [meta, setMeta] = useState<EnterpriseSyncMeta | null>(readEnterpriseSyncMeta);
   const [serverUrl, setServerUrl] = useState(binding?.serverUrl ?? DEFAULT_TEAM_SERVER_URL);
-  const [deviceToken, setDeviceToken] = useState(binding?.deviceToken ?? "");
+  const [apiToken, setApiToken] = useState(binding?.apiToken ?? "");
+  const [userId, setUserId] = useState(binding?.userId ?? "");
   const [showToken, setShowToken] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -294,10 +297,11 @@ function EnterpriseSection() {
     }
     const nextBinding: EnterpriseBinding = {
       serverUrl: serverUrl.trim().replace(/\/+$/, ""),
-      deviceToken: deviceToken.trim(),
+      apiToken: apiToken.trim(),
+      userId: userId.trim(),
     };
-    if (!nextBinding.serverUrl || !nextBinding.deviceToken) {
-      setError("请输入服务器地址与设备令牌。");
+    if (!nextBinding.serverUrl || !nextBinding.apiToken || !nextBinding.userId) {
+      setError("请输入服务器地址、Huanxing API Token 与 WorkBuddy 用户 ID。");
       return;
     }
     setBusy(true);
@@ -352,7 +356,7 @@ function EnterpriseSection() {
     <section className={s.section}>
       <h4 className={s.sectionTitle}>企业模型下发</h4>
       <div className={s.desc}>
-        由企业管理员（HuanXing-Team）为子账号下发模型；输入团队服务器地址与设备令牌后同步，
+        由企业管理员（HuanXing-Team）为子账号下发模型；输入团队服务器地址、API Token 与 WorkBuddy 用户 ID 后同步，
         模型会出现在对话的模型选择器中。
       </div>
       <div className={s.card}>
@@ -368,20 +372,27 @@ function EnterpriseSection() {
             <input
               className={s.input}
               type={showToken ? "text" : "password"}
-              value={deviceToken}
-              onChange={(event) => setDeviceToken(event.target.value)}
-              placeholder="设备令牌（wbd_...）"
+              value={apiToken}
+              onChange={(event) => setApiToken(event.target.value)}
+              placeholder="Huanxing API Token（sk-...）"
               spellCheck={false}
             />
             <button
               type="button"
               className={s.eye}
-              aria-label={showToken ? "隐藏令牌" : "显示令牌"}
+              aria-label={showToken ? "隐藏 API Token" : "显示 API Token"}
               onClick={() => setShowToken((v) => !v)}
             >
               {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
             </button>
           </span>
+          <input
+            className={s.input}
+            value={userId}
+            onChange={(event) => setUserId(event.target.value)}
+            placeholder="WorkBuddy 用户 ID"
+            spellCheck={false}
+          />
           <button
             type="button"
             className={s.btn}
@@ -405,7 +416,7 @@ function EnterpriseSection() {
               : `上次同步 ${new Date(meta.lastSyncAt).toLocaleString()} · ${meta.modelCount} 个模型${meta.defaultModel ? ` · 默认 ${meta.defaultModel}` : ""}`
             : binding
               ? "已绑定，尚未同步。"
-              : "未绑定设备。设备令牌由企业管理员在后台注册设备时发放。"}
+              : "未绑定设备。API Token 与 WorkBuddy 用户 ID 由企业管理员注册设备时提供。"}
         </div>
         {error ? <div className={s.error}>{error}</div> : null}
       </div>
@@ -457,6 +468,16 @@ export function CustomModelsPane() {
     }
     const modelName = draft.modelName.trim();
     const providerId = editor?.mode === "edit" ? editor.providerId : slugifyProviderId(modelName);
+    if (editor?.mode === "add") {
+      if (providerId.startsWith(ENTERPRISE_PROVIDER_PREFIX)) {
+        setError("custom:team-* 是企业下发模型的保留标识，请更换模型名称。");
+        return;
+      }
+      if (Object.keys(getProviderEntry(config, providerId)).length > 0) {
+        setError("同名自定义模型已经存在，请直接编辑已有模型。");
+        return;
+      }
+    }
     const preset: ProviderPreset = {
       id: providerId,
       name: modelName,
@@ -487,17 +508,28 @@ export function CustomModelsPane() {
         model: modelName,
         contextWindow: "",
       });
+      const currentProvider = String(asRecord(config.model).provider || "");
+      const normalizedCurrentProvider = currentProvider.startsWith("custom:")
+        ? currentProvider
+        : `custom:${currentProvider}`;
+      if (
+        editor?.mode === "edit"
+        && (currentProvider === providerId || normalizedCurrentProvider === providerId)
+      ) {
+        next = buildCurrentModelConfigUpdate(next, preset, {
+          apiKey: draft.apiKey,
+          baseUrl: draft.baseUrl,
+          model: modelName,
+          contextWindow: "",
+        });
+      }
       // 输出窗口不是 Core 的标准字段：存在 models map 条目里（Core 不识则忽略）。
       if (draft.outputWindow) {
-        const providers = asRecord(next.providers);
-        const key = Object.hasOwn(providers, providerId) ? providerId : providerId.replace(/^custom:/i, "");
-        const entry = asRecord(providers[key]);
+        const entry = getProviderEntry(next, providerId);
         const modelsMap = asRecord(entry.models);
         const modelEntry = asRecord(modelsMap[modelName]);
         modelsMap[modelName] = { ...modelEntry, max_output_tokens: draft.outputWindow };
         entry.models = modelsMap;
-        providers[key] = entry;
-        next = { ...next, providers };
       }
       await saveConfig.mutateAsync(next);
       setEditor(null);

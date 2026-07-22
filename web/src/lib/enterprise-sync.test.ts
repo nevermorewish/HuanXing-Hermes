@@ -1,11 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   applyEnterpriseSync,
   ENTERPRISE_PROVIDER_PREFIX,
   enterpriseProviderId,
+  syncEnterpriseModels,
 } from "./enterprise-sync";
 
-const BINDING = { serverUrl: "http://localhost:3100", deviceToken: "wbd_test_token" };
+const BINDING = {
+  serverUrl: "http://localhost:3100",
+  apiToken: "sk_test_token",
+  userId: "wb-user-1",
+};
 
 function baseConfig(): Record<string, any> {
   return {
@@ -20,7 +25,7 @@ function baseConfig(): Record<string, any> {
       [enterpriseProviderId("old-model")]: {
         name: "old-model",
         base_url: "http://localhost:3100/api/workbuddy/proxy/v1",
-        api_key: "wbd_test_token",
+        api_key: "sk_test_token",
         model: "old-model",
         models: { "old-model": {} },
       },
@@ -47,7 +52,8 @@ describe("applyEnterpriseSync", () => {
     expect(providers[enterpriseProviderId("old-model")]).toBeUndefined();
     const written = providers[enterpriseProviderId("gpt-5.6-sol")];
     expect(written.base_url).toBe("http://localhost:3100/api/workbuddy/proxy/v1");
-    expect(written.api_key).toBe("wbd_test_token");
+    expect(written.api_key).toBe("sk_test_token");
+    expect(written.extra_headers).toEqual({ "X-User-Id": "wb-user-1" });
     expect(written.api_mode).toBe("chat_completions");
     expect(written.models["gpt-5.6-sol"]).toMatchObject({
       context_length: 131072,
@@ -67,7 +73,7 @@ describe("applyEnterpriseSync", () => {
     const model = next.model as Record<string, any>;
     expect(model.provider).toBe(enterpriseProviderId("kimi-k3"));
     expect(model.default).toBe("kimi-k3");
-    expect(model.api_key).toBe("wbd_test_token");
+    expect(model.api_key).toBe("sk_test_token");
   });
 
   it("ignores defaultModel that is not in the manifest", () => {
@@ -85,6 +91,48 @@ describe("applyEnterpriseSync", () => {
     const providers = next.providers as Record<string, any>;
     expect(Object.keys(providers).some((key) => key.startsWith(ENTERPRISE_PROVIDER_PREFIX))).toBe(false);
     expect(providers["custom:my-own"]).toBeDefined();
+  });
+
+  it("resets the current model when cleanup removes its enterprise provider", () => {
+    const config = baseConfig();
+    config.model = {
+      provider: enterpriseProviderId("old-model"),
+      default: "old-model",
+      base_url: "http://localhost:3100/api/workbuddy/proxy/v1",
+      api_mode: "chat_completions",
+      api_key: "sk_test_token",
+    };
+
+    const next = applyEnterpriseSync(config, BINDING, { cleanupOnly: true });
+
+    expect(next.model).toMatchObject({ provider: "auto", default: "" });
+    expect(next.model).not.toHaveProperty("base_url");
+    expect(next.model).not.toHaveProperty("api_mode");
+    expect(next.model).not.toHaveProperty("api_key");
+  });
+
+  it("sends both the bearer token and WorkBuddy user id", async () => {
+    const externalRequest = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: JSON.stringify({ success: true, data: { models: [] } }),
+      headers: {},
+    });
+    const previousWindow = (globalThis as any).window;
+    (globalThis as any).window = { hermesDesktop: { externalRequest } };
+    try {
+      await syncEnterpriseModels(BINDING);
+    } finally {
+      if (previousWindow === undefined) delete (globalThis as any).window;
+      else (globalThis as any).window = previousWindow;
+    }
+
+    expect(externalRequest).toHaveBeenCalledWith(expect.objectContaining({
+      headers: {
+        Authorization: "Bearer sk_test_token",
+        "X-User-Id": "wb-user-1",
+      },
+    }));
   });
 
   it("skips manifest entries without an id", () => {

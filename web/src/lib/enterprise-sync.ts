@@ -2,10 +2,11 @@
 //
 // 协议（来自 Team 后端调研）：设备端拉取
 //   GET {serverUrl}/api/workbuddy/sync
-//   Authorization: Bearer <deviceToken>
+//   Authorization: Bearer <apiToken>
+//   X-User-Id: <workbuddyUserId>
 // 响应 data：{ cleanupOnly?, models: [...], defaultModel?, skills? }。
 // 每个模型是 OpenAI 兼容配置：url 指向 Team proxy（{serverUrl}/api/workbuddy/proxy/v1），
-// apiKey 即 deviceToken 本身，真实上游 key 永不下发。
+// apiKey 即 apiToken 本身，真实上游 key 永不下发。
 // 设备被停用时返回 cleanupOnly:true + 空清单，客户端据此清理本地托管模型。
 //
 // 应用策略：下发的模型写成 Core config.yaml 里的自定义 provider
@@ -19,7 +20,8 @@ export const ENTERPRISE_PROVIDER_PREFIX = "custom:team-";
 
 export interface EnterpriseBinding {
   serverUrl: string;
-  deviceToken: string;
+  apiToken: string;
+  userId: string;
 }
 
 export interface EnterpriseModel {
@@ -54,11 +56,18 @@ const BINDING_KEY = "hermes.enterprise-binding";
 const SYNC_META_KEY = "hermes.enterprise-sync-meta";
 
 export function readEnterpriseBinding(): EnterpriseBinding | null {
-  const value = readUiValue<EnterpriseBinding | null>(BINDING_KEY, null);
+  const value = readUiValue<unknown>(BINDING_KEY, null);
   if (!value || typeof value !== "object") return null;
-  if (typeof value.serverUrl !== "string" || !value.serverUrl.trim()) return null;
-  if (typeof value.deviceToken !== "string" || !value.deviceToken.trim()) return null;
-  return value;
+  const record = value as Record<string, unknown>;
+  const serverUrl = typeof record.serverUrl === "string" ? record.serverUrl.trim() : "";
+  const apiToken = typeof record.apiToken === "string"
+    ? record.apiToken.trim()
+    : typeof record.deviceToken === "string"
+      ? record.deviceToken.trim()
+      : "";
+  const userId = typeof record.userId === "string" ? record.userId.trim() : "";
+  if (!serverUrl || !apiToken || !userId) return null;
+  return { serverUrl, apiToken, userId };
 }
 
 export function writeEnterpriseBinding(binding: EnterpriseBinding | null): void {
@@ -97,7 +106,10 @@ export async function syncEnterpriseModels(binding: EnterpriseBinding): Promise<
   const result = await bridge.externalRequest({
     path: `${base}/api/workbuddy/sync`,
     method: "GET",
-    headers: { Authorization: `Bearer ${binding.deviceToken.trim()}` },
+    headers: {
+      Authorization: `Bearer ${binding.apiToken.trim()}`,
+      "X-User-Id": binding.userId.trim(),
+    },
     body: null,
   });
   let envelope: SyncEnvelope | null = null;
@@ -110,7 +122,7 @@ export async function syncEnterpriseModels(binding: EnterpriseBinding): Promise<
     throw new Error(envelope?.message || `同步失败（HTTP ${result.status}）`);
   }
   if (!envelope || envelope.success !== true) {
-    throw new Error(envelope?.message || "同步失败：设备令牌无效或已被停用");
+    throw new Error(envelope?.message || "同步失败：API Token、WorkBuddy 用户 ID 无效或设备已被停用");
   }
   return envelope.data ?? {};
 }
@@ -148,7 +160,10 @@ export function applyEnterpriseSync(
       base_url: model.url || `${base}/api/workbuddy/proxy/v1`,
       api_mode: "chat_completions",
       transport: "openai_chat",
-      api_key: binding.deviceToken.trim(),
+      api_key: binding.apiToken.trim(),
+      extra_headers: {
+        "X-User-Id": binding.userId.trim(),
+      },
       model: model.id,
       models: {
         [model.id]: {
@@ -172,8 +187,26 @@ export function applyEnterpriseSync(
       default: defaultModel,
       base_url: provider.base_url,
       api_mode: "chat_completions",
-      api_key: binding.deviceToken.trim(),
+      api_key: binding.apiToken.trim(),
     };
+  } else {
+    const currentModel = asRecord(config.model);
+    const currentProvider = String(currentModel.provider || "");
+    if (
+      currentProvider.startsWith(ENTERPRISE_PROVIDER_PREFIX)
+      && !Object.hasOwn(providers, currentProvider)
+    ) {
+      const fallbackModel: Record<string, any> = {
+        ...currentModel,
+        provider: "auto",
+        default: "",
+      };
+      delete fallbackModel.name;
+      delete fallbackModel.base_url;
+      delete fallbackModel.api_mode;
+      delete fallbackModel.api_key;
+      next.model = fallbackModel;
+    }
   }
   return next;
 }

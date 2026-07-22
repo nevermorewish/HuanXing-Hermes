@@ -293,14 +293,16 @@ interface ModelMenuProps {
 const ENTERPRISE_PREFIX = "custom:team-";
 
 interface ModelGroups {
+  moa: Candidate[];
   enterprise: Candidate[];
   custom: Candidate[];
   builtin: Candidate[];
 }
 
-function groupCandidates(modelOptions: ModelOptionsResult | null): ModelGroups {
-  const groups: ModelGroups = { enterprise: [], custom: [], builtin: [] };
-  const { all } = buildCandidates(modelOptions, []);
+export function groupCandidates(modelOptions: ModelOptionsResult | null): ModelGroups {
+  const groups: ModelGroups = { moa: [], enterprise: [], custom: [], builtin: [] };
+  const { all, moa } = buildCandidates(modelOptions, []);
+  groups.moa.push(...moa.filter((candidate) => candidate.configured));
   for (const candidate of all) {
     if (!candidate.configured) continue;
     if (candidate.providerSlug.startsWith(ENTERPRISE_PREFIX)) groups.enterprise.push(candidate);
@@ -311,6 +313,7 @@ function groupCandidates(modelOptions: ModelOptionsResult | null): ModelGroups {
   groups.enterprise.sort(byName);
   groups.custom.sort(byName);
   groups.builtin.sort(byName);
+  groups.moa.sort(byName);
   return groups;
 }
 
@@ -343,7 +346,7 @@ export function ModelPickerModal({
   const [position, setPosition] = useState<{ bottom: number; left: number } | null>(null);
 
   const groups = useMemo(() => groupCandidates(modelOptions), [modelOptions]);
-  const isEmpty = groups.enterprise.length + groups.custom.length + groups.builtin.length === 0;
+  const isEmpty = groups.moa.length + groups.enterprise.length + groups.custom.length + groups.builtin.length === 0;
 
   const currentSelectionKey = useMemo(() => {
     const model = selected?.model ?? modelOptions?.model;
@@ -454,6 +457,7 @@ export function ModelPickerModal({
             <div className={s.modelMenuEmpty}>暂无可用模型，请先在下方配置</div>
           ) : (
             <>
+              {renderGroup("MoA 预设", groups.moa)}
               {renderGroup("企业模型", groups.enterprise)}
               {renderGroup("自定义模型", groups.custom)}
               {renderGroup("内置模型", groups.builtin)}

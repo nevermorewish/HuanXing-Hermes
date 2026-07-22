@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { runtime } from "@/lib/runtime";
 import type {
   ManagedRuntimeDesiredState,
@@ -34,25 +34,57 @@ function gateFromControl(
   return "offline";
 }
 
-function initialGate(): BackendGate {
-  return gateFromControl(
+export interface BackendGateTracker {
+  gate: BackendGate;
+  staleStartedAt: number | null;
+}
+
+export function advanceBackendGate(
+  previous: BackendGateTracker,
+  now: number,
+  backendReady: boolean,
+  desiredState: ManagedRuntimeDesiredState | undefined,
+  lifecycleState: ManagedRuntimeLifecycleState | undefined,
+): BackendGateTracker {
+  if (backendReady) return { gate: "ready", staleStartedAt: null };
+  if (lifecycleState && BOOTING_LIFECYCLES.has(lifecycleState)) {
+    return { gate: "booting", staleStartedAt: null };
+  }
+  if (lifecycleState === "error" || desiredState !== "running") {
+    return { gate: "offline", staleStartedAt: null };
+  }
+
+  const staleStartedAt = previous.staleStartedAt ?? now;
+  return {
+    gate: gateFromControl(
+      false,
+      desiredState,
+      lifecycleState,
+      now - staleStartedAt >= STALE_BOOT_TIMEOUT_MS,
+    ),
+    staleStartedAt,
+  };
+}
+
+function initialTracker(): BackendGateTracker {
+  return advanceBackendGate(
+    { gate: "offline", staleStartedAt: null },
+    Date.now(),
     runtime.isBackendReady(),
     runtime.getManagedRuntimeDesiredState(),
     runtime.getManagedRuntimeLifecycleState(),
-    false,
   );
 }
 
 export function useBackendGate(): BackendGate {
-  const [gate, setGate] = useState<BackendGate>(initialGate);
+  const trackerRef = useRef<BackendGateTracker | null>(null);
+  if (trackerRef.current === null) trackerRef.current = initialTracker();
+  const [gate, setGate] = useState<BackendGate>(trackerRef.current.gate);
 
   useEffect(() => {
-    if (gate === "ready") return;
     let stopped = false;
-    let elapsed = 0;
     const timer = window.setInterval(() => {
       if (stopped) return;
-      elapsed += POLL_INTERVAL_MS;
       void (async () => {
         try {
           const bridge = window.hermesDesktop;
@@ -60,13 +92,15 @@ export function useBackendGate(): BackendGate {
           const result = await bridge.getDesktopControlState();
           runtime.applyRuntimeControlResult(result);
           if (stopped) return;
-          const next = gateFromControl(
+          const next = advanceBackendGate(
+            trackerRef.current ?? { gate: "offline", staleStartedAt: null },
+            Date.now(),
             result.backendReady,
             result.desiredState,
             result.lifecycleState,
-            elapsed >= STALE_BOOT_TIMEOUT_MS,
           );
-          setGate(next);
+          trackerRef.current = next;
+          setGate(next.gate);
         } catch {
           // 控制状态暂不可读：维持当前门禁，下个周期再试
         }
@@ -76,7 +110,7 @@ export function useBackendGate(): BackendGate {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [gate]);
+  }, []);
 
   return gate;
 }

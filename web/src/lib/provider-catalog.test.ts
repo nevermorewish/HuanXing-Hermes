@@ -215,6 +215,63 @@ describe("provider catalog config updates", () => {
     });
   });
 
+  it("does not copy the current provider API key into a different provider", () => {
+    const preset: ProviderPreset = {
+      id: "custom:local",
+      name: "Local",
+      vendor: "自定义",
+      region: "cn",
+      baseUrl: "http://192.168.1.10:8000/v1",
+      apiMode: "chat_completions",
+      transport: "openai_chat",
+      apiKeyLabel: "API Key",
+      defaultModel: "local-model",
+      models: [{ id: "local-model" }],
+      isCustom: true,
+    };
+    const original = {
+      model: {
+        provider: "deepseek",
+        default: "deepseek-chat",
+        api_key: "sk-must-not-leak",
+      },
+    };
+    const input = {
+      apiKey: "",
+      baseUrl: preset.baseUrl,
+      model: "local-model",
+    };
+
+    const providerConfig = buildProviderSettingsUpdate(original, preset, input);
+    expect(providerConfig.providers["custom:local"]).not.toHaveProperty("api_key");
+
+    const currentConfig = buildCurrentModelConfigUpdate(original, preset, input);
+    expect(currentConfig.model).not.toHaveProperty("api_key");
+    expect(currentConfig.model).toMatchObject({
+      provider: "custom:local",
+      default: "local-model",
+    });
+  });
+
+  it("keeps the API key when editing the current provider", () => {
+    const preset = BUILTIN_PROVIDER_CATALOG.providers.find((provider) => provider.id === "deepseek");
+    expect(preset).toBeTruthy();
+
+    const config = buildCurrentModelConfigUpdate(
+      {
+        model: {
+          provider: "deepseek",
+          default: "deepseek-chat",
+          api_key: "sk-existing",
+        },
+      },
+      preset!,
+      { apiKey: "", baseUrl: preset!.baseUrl, model: "deepseek-chat" },
+    );
+
+    expect(config.model.api_key).toBe("sk-existing");
+  });
+
 
   it("writes Volcengine Coding Plan as a resolvable provider and current model", () => {
     const preset = BUILTIN_PROVIDER_CATALOG.providers.find((provider) => provider.id === "volcengine-ark-coding");
