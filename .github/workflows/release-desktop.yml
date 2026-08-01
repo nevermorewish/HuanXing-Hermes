@@ -225,16 +225,30 @@ jobs:
             const tag = process.env.BUNDLED_RUNTIME_TAG || "latest";
             const feedBaseUrl = "https://huanxing.tos-cn-beijing.volces.com/package/Hermes-CN-Core/runtime";
             const runtimeVersion = tag === "latest" ? null : tag.replace(/^runtime-v/u, "");
-            const baseUrl = runtimeVersion
+            const mirrorBaseUrl = runtimeVersion
               ? `${feedBaseUrl}/releases/${encodeURIComponent(runtimeVersion)}`
               : `${feedBaseUrl}/stable`;
             const platform = process.env.RUNTIME_PLATFORM;
             const arch = process.env.RUNTIME_ARCH;
-            const response = await fetch(`${baseUrl}/stable-${platform}-${arch}.json`, {
-              headers: { "User-Agent": "hermes-agent-cn-desktop-release-workflow" },
-            });
-            if (!response.ok) {
-              throw new Error(`manifest download failed: HTTP ${response.status}`);
+            const manifestName = `stable-${platform}-${arch}.json`;
+            const githubReleaseBaseUrl = tag === "latest"
+              ? `https://github.com/${repo}/releases/latest/download`
+              : `https://github.com/${repo}/releases/download/${encodeURIComponent(tag)}`;
+            const failures = [];
+            let response;
+            for (const baseUrl of [mirrorBaseUrl, githubReleaseBaseUrl]) {
+              const candidate = `${baseUrl}/${manifestName}`;
+              const attempt = await fetch(candidate, {
+                headers: { "User-Agent": "hermes-agent-cn-desktop-release-workflow" },
+              });
+              if (attempt.ok) {
+                response = attempt;
+                break;
+              }
+              failures.push(`${candidate} -> HTTP ${attempt.status}`);
+            }
+            if (!response) {
+              throw new Error(`manifest download failed:\n${failures.join("\n")}`);
             }
             const manifest = await response.json();
             if (!manifest.sourceCommit) {

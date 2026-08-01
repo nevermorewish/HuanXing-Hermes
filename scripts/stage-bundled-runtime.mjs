@@ -74,6 +74,9 @@ const runtimeVersion = tag === "latest" ? null : tag.replace(/^runtime-v/u, "");
 const baseUrl = runtimeVersion
   ? `${feedBaseUrl}/releases/${encodeURIComponent(runtimeVersion)}`
   : `${feedBaseUrl}/${encodeURIComponent(channel)}`;
+const githubReleaseBaseUrl = tag === "latest"
+  ? `https://github.com/${repo}/releases/latest/download`
+  : `https://github.com/${repo}/releases/download/${encodeURIComponent(tag)}`;
 
 async function sleep(ms) {
   await new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
@@ -142,6 +145,20 @@ async function download(url, timeoutMs, attempts = 3) {
   return downloadWithCurl(url, timeoutMs);
 }
 
+async function downloadRuntimeArtifact(name, timeoutMs) {
+  const sources = [baseUrl, githubReleaseBaseUrl];
+  const failures = [];
+  for (const source of sources) {
+    const url = `${source}/${name}`;
+    try {
+      return { bytes: await download(url, timeoutMs), source };
+    } catch (error) {
+      failures.push(`${url}: ${error?.message ?? error}`);
+    }
+  }
+  throw new Error(`could not download ${name} from runtime mirror or GitHub release:\n${failures.join("\n")}`);
+}
+
 function sha256(data) {
   return createHash("sha256").update(data).digest("hex");
 }
@@ -180,7 +197,8 @@ function expandRuntimeZip(zipBytes) {
 }
 
 cleanOutputDir();
-const manifestBytes = await download(`${baseUrl}/${manifestName}`, 120_000);
+const manifestDownload = await downloadRuntimeArtifact(manifestName, 120_000);
+const manifestBytes = manifestDownload.bytes;
 const manifest = JSON.parse(manifestBytes.toString("utf8"));
 
 if (manifest.schemaVersion !== 2) {
@@ -196,7 +214,8 @@ if (runtimeVersion && manifest.runtimeVersion !== runtimeVersion) {
   throw new Error(`manifest runtimeVersion is ${manifest.runtimeVersion}, expected ${runtimeVersion}`);
 }
 
-const zipBytes = await download(`${baseUrl}/${zipName}`, 15 * 60_000);
+const zipDownload = await downloadRuntimeArtifact(zipName, 15 * 60_000);
+const zipBytes = zipDownload.bytes;
 const actualSha = sha256(zipBytes);
 if (actualSha !== String(manifest.sha256).toLowerCase()) {
   throw new Error(`sha256 mismatch for ${zipName}: expected ${manifest.sha256}, got ${actualSha}`);
@@ -214,6 +233,8 @@ writeFileSync(join(outDir, "README.generated.txt"), [
   `repo=${repo}`,
   `tag=${tag}`,
   `feedBaseUrl=${feedBaseUrl}`,
+  `manifestSource=${manifestDownload.source}`,
+  `artifactSource=${zipDownload.source}`,
   `stagingMode=${expandArtifact ? "expanded" : "zip"}`,
   `macosFrameworkLayout=${expandArtifact && platform === "darwin" ? "signed-native" : "native"}`,
   `runtimeVersion=${manifest.runtimeVersion}`,
