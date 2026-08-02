@@ -4,17 +4,19 @@ import { GATEWAY_SECTIONS } from "./gateway-sidebar";
 import { TOP_TABS } from "./use-active-top-tab";
 
 describe("configuration navigation", () => {
-  it("moves IM onboarding under §031 in the 03 message gateway sidebar", () => {
-    const im = GATEWAY_SECTIONS.find((section) => section.label === "§031 · 消息平台接入");
+  it("keeps the assistant hub and both supported platforms under §031", () => {
+    const im = GATEWAY_SECTIONS.find((section) => section.label === "§031 · 助理接入");
     expect(im?.items.map((item) => [item.label, item.path])).toEqual([
-      ["飞书接入", "/im/feishu"],
-      ["微信接入", "/im/weixin"],
+      ["接入中心", "/im"],
+      ["飞书", "/im/feishu"],
+      ["微信", "/im/weixin"],
     ]);
   });
 
-  it("keeps IM routes inside the 03 message gateway top tab", () => {
+  it("uses the assistant hub as the 03 top tab entry", () => {
     const gatewayTab = TOP_TABS.find((tab) => tab.num === "03");
-    expect(gatewayTab?.label).toBe("消息接入");
+    expect(gatewayTab?.label).toBe("助理");
+    expect(gatewayTab?.href).toBe("/im");
     expect(gatewayTab?.matches("/im/feishu")).toBe(true);
     expect(gatewayTab?.matches("/im/weixin")).toBe(true);
   });

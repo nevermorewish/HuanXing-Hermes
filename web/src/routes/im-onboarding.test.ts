@@ -5,18 +5,17 @@ import {
   explainMessagingFailure,
 } from "@/lib/im-onboarding-diagnostics";
 import {
-  FEISHU_GROUP_SCOPE,
-  FEISHU_RECOMMENDED_SCOPES,
+  FEISHU_RECEIVE_EVENT,
   FEISHU_REQUIRED_SCOPES,
-  railPanels,
+  defaultSettings,
   sectionFromPath,
   statusText,
 } from "./im-onboarding";
 
 describe("im onboarding routing helpers", () => {
-  it("maps /im to the Feishu page by default", () => {
-    expect(sectionFromPath("/im")).toBe("feishu");
-    expect(sectionFromPath("/im/")).toBe("feishu");
+  it("maps /im to the two-platform assistant hub", () => {
+    expect(sectionFromPath("/im")).toBe("overview");
+    expect(sectionFromPath("/im/")).toBe("overview");
   });
 
   it("maps platform subroutes and rejects unrelated paths", () => {
@@ -27,33 +26,33 @@ describe("im onboarding routing helpers", () => {
 
   it("renders stable Chinese labels for QR states", () => {
     expect(statusText("confirmed")).toBe("已确认");
-    expect(statusText("scanned")).toBe("已扫码");
-    expect(statusText("expired")).toBe("已过期");
+    expect(statusText("scanned")).toBe("已扫码，请在手机上确认");
+    expect(statusText("expired")).toBe("二维码已过期");
     expect(statusText(undefined)).toBe("待开始");
   });
 
-  it("keeps context rail entries compact and secret-safe", () => {
-    expect(railPanels("feishu").map((panel) => panel.label)).toEqual(["检查", "推荐", "诊断"]);
-    expect(railPanels("weixin").map((panel) => panel.label)).toEqual(["接入", "诊断"]);
-
-    const visibleCopy = JSON.stringify([railPanels("feishu"), railPanels("weixin")]).toLowerCase();
-    expect(visibleCopy).not.toContain("app_secret=");
-    expect(visibleCopy).not.toContain("weixin_token=");
-  });
-
-  it("documents Feishu chat readiness scopes in the onboarding flow", () => {
+  it("keeps the compact Feishu recovery requirements stable", () => {
     expect(FEISHU_REQUIRED_SCOPES).toEqual([
       "im:message.p2p_msg:readonly",
       "im:message:send_as_bot",
     ]);
-    expect(FEISHU_REQUIRED_SCOPES).not.toContain(FEISHU_GROUP_SCOPE);
-    expect(FEISHU_GROUP_SCOPE).toBe("im:message.group_at_msg:readonly");
-    expect(FEISHU_RECOMMENDED_SCOPES).toContain("im:resource");
+    expect(FEISHU_RECEIVE_EVENT).toBe("im.message.receive_v1");
+  });
 
-    const feishuRailCopy = JSON.stringify(railPanels("feishu"));
-    expect(feishuRailCopy).toContain("im.message.receive_v1");
-    expect(feishuRailCopy).toContain(FEISHU_GROUP_SCOPE);
-    expect(feishuRailCopy).toContain("创建版本并发布");
+  it("opens all Feishu DMs without exposing access settings", () => {
+    expect(defaultSettings("feishu", false)).toMatchObject({
+      FEISHU_CONNECTION_MODE: "websocket",
+      FEISHU_ALLOW_ALL_USERS: "true",
+      FEISHU_GROUP_POLICY: "disabled",
+    });
+  });
+
+  it("limits Weixin to the scanned account by default", () => {
+    expect(defaultSettings("weixin", true)).toMatchObject({
+      WEIXIN_DM_POLICY: "allowlist",
+      WEIXIN_ALLOW_ALL_USERS: "false",
+      WEIXIN_ALLOWED_USERS: "__HERMES_SCANNED_WEIXIN_USER_ID__",
+    });
   });
 
   it("maps platform failures to beginner-friendly next steps", () => {

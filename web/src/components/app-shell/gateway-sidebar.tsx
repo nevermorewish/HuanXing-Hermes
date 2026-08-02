@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { MessageCircle, MessageSquareText, type LucideIcon } from "lucide-react";
+import { Bot, MessageCircle, MessageSquareText, type LucideIcon } from "lucide-react";
 import s from "./debug-sidebar.module.css";
 
 interface GatewayItem {
@@ -10,24 +10,27 @@ interface GatewayItem {
 }
 
 export const IM_ITEMS: readonly GatewayItem[] = [
-  { label: "飞书接入", path: "/im/feishu", icon: MessageCircle, title: "将飞书消息平台接入中文社区桌面版" },
-  { label: "微信接入", path: "/im/weixin", icon: MessageSquareText, title: "将微信消息平台接入中文社区桌面版" },
+  { label: "接入中心", path: "/im", icon: Bot, title: "选择 Hermes 助理的聊天平台" },
+  { label: "飞书", path: "/im/feishu", icon: MessageCircle, title: "将 Hermes 接入飞书" },
+  { label: "微信", path: "/im/weixin", icon: MessageSquareText, title: "将 Hermes 接入微信" },
 ];
 
 export const GATEWAY_SECTIONS: readonly {
   label: string;
   items: readonly GatewayItem[];
 }[] = [
-  { label: "§031 · 消息平台接入", items: IM_ITEMS },
+  { label: "§031 · 助理接入", items: IM_ITEMS },
 ];
 
 export function GatewaySidebar() {
   const location = useLocation();
   const isActive = (path: string) =>
-    location.pathname === path || location.pathname.startsWith(`${path}/`);
+    path === "/im"
+      ? location.pathname === path || location.pathname === "/im/"
+      : location.pathname === path || location.pathname.startsWith(`${path}/`);
 
   return (
-    <aside className={s.sidebar} aria-label="消息接入侧栏">
+    <aside className={s.sidebar} aria-label="助理接入侧栏">
       <div className={s.scrollY}>
         {GATEWAY_SECTIONS.map((section) => (
           <section key={section.label} className={s.section}>

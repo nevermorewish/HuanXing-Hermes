@@ -64,8 +64,8 @@ export const TOP_TABS: readonly TopTabDef[] = [
   {
     id: "gateway",
     num: "03",
-    label: "消息接入",
-    href: "/im/feishu",
+    label: "助理",
+    href: "/im",
     matches: (path) => path.startsWith("/im"),
   },
   {
