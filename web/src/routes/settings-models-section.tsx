@@ -20,6 +20,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useConfig, useModelInfo, useSaveConfig } from "@/hooks/use-config";
+import { useAccountSaveModels, useAccountStatus, useAccountTokens } from "@/hooks/use-account";
 import { useDeleteEnv, useEnvVars, useRevealEnv, useSetEnv } from "@/hooks/use-env";
 import { useGateway } from "@/hooks/use-gateway";
 import { useProviderModels } from "@/hooks/use-provider-models";
@@ -43,6 +44,7 @@ import { useProviderCatalog } from "@/hooks/use-provider-catalog";
 import { ModelCombobox } from "@/components/settings/model-combobox";
 import { translateEnvCategory, translateEnvVar } from "@/lib/env-translations";
 import { rememberLastUsedModel } from "@/lib/last-used-model";
+import { resolvedAccountTokenId } from "@/lib/account-tokens";
 import { fetchExternalJSON } from "@/lib/transport";
 import type { EnvVarInfo } from "@hermes/protocol";
 import { OAuthProvidersSection } from "./settings-oauth-section";
@@ -600,6 +602,17 @@ function getStoredProviderApiKey(config: Record<string, any>, providerId: string
   return typeof modelKey === "string" ? modelKey.trim() : "";
 }
 
+function getConfiguredAccountTokenId(...entries: unknown[]): number | null {
+  for (const rawEntry of entries) {
+    const entry = asRecord(rawEntry);
+    const tokenId = typeof entry.token_id === "number" ? entry.token_id : entry.tokenId;
+    if (typeof tokenId === "number" && Number.isFinite(tokenId) && tokenId > 0) {
+      return tokenId;
+    }
+  }
+  return null;
+}
+
 export function ModelsSection() {
   const {
     data: envVars,
@@ -621,6 +634,9 @@ export function ModelsSection() {
   const deleteEnv = useDeleteEnv();
   const revealEnv = useRevealEnv();
   const { probeProvider, setRuntimeModel } = useGateway();
+  const accountStatus = useAccountStatus();
+  const accountTokens = useAccountTokens();
+  const saveAccountModels = useAccountSaveModels();
   const navigate = useNavigate();
   const { catalog, message: catalogMessage, refresh: refreshCatalog } = useProviderCatalog();
   const resolvedEnvVars = envVars ?? EMPTY_ENV_VARS;
@@ -655,6 +671,9 @@ export function ModelsSection() {
   const [providerSetCurrentPending, setProviderSetCurrentPending] = useState(false);
   const [providerDeletePending, setProviderDeletePending] = useState(false);
   const [providerSaveError, setProviderSaveError] = useState("");
+  const [accountTokenSaveError, setAccountTokenSaveError] = useState("");
+  const [accountTokenSelectionOverride, setAccountTokenSelectionOverride] = useState<number | null>(null);
+  const accountTokenAutoSyncRef = useRef<string | null>(null);
   const [providerOrderOverride, setProviderOrderOverride] = useState<string[] | null>(null);
   const providerOrderSaveTimerRef = useRef<number | null>(null);
   const providerOrderSaveSeqRef = useRef(0);
@@ -788,6 +807,26 @@ export function ModelsSection() {
     () => allProviders.find((provider) => provider.id === selectedProviderId) ?? allProviders[0],
     [allProviders, selectedProviderId],
   );
+  const accountProviderId = `custom:${BRAND.providerKey}`;
+  const accountMessagesProviderId = `custom:${BRAND.providerKey}-messages`;
+  const selectedProviderIsAccount = selectedProvider?.id === accountProviderId ||
+    selectedProvider?.id === accountMessagesProviderId;
+  const accountProviderEntry = getProviderEntry(config, accountProviderId);
+  const accountMessagesProviderEntry = getProviderEntry(config, accountMessagesProviderId);
+  const configuredAccountTokenId = getConfiguredAccountTokenId(
+    accountProviderEntry,
+    accountMessagesProviderEntry,
+  );
+  const accountTokenOptions = accountTokens.data ?? [];
+  const resolvedAccountToken = resolvedAccountTokenId(
+    accountTokenOptions,
+    configuredAccountTokenId,
+  );
+  const selectedAccountTokenId = accountTokenSelectionOverride ?? resolvedAccountToken;
+  const configuredAccountTokenIsCurrent = configuredAccountTokenId != null &&
+    accountTokenOptions.some(
+      (token) => token.id === configuredAccountTokenId && token.status === 1,
+    );
   const providerOrderConfig = useMemo(
     () => providerOrderOverride && config
       ? buildProviderOrderUpdate(config, providerOrderOverride)
@@ -993,6 +1032,79 @@ export function ModelsSection() {
     currentProviderId === selectedProvider.id &&
     modelInfo?.model === selectedProviderModel,
   );
+
+  const syncAccountToken = useCallback(async (tokenId: number) => {
+    if (!Number.isFinite(tokenId) || tokenId <= 0) return;
+    setAccountTokenSaveError("");
+    setAccountTokenSelectionOverride(tokenId);
+    try {
+      await saveAccountModels.mutateAsync({ models: [], tokenId });
+      if (
+        modelInfo?.model &&
+        (modelInfo.provider === accountProviderId || modelInfo.provider === accountMessagesProviderId)
+      ) {
+        void setRuntimeModel(modelInfo.model, modelInfo.provider).catch(() => {
+          /* Config is persisted even if the live gateway refresh fails. */
+        });
+      }
+    } catch (error) {
+      setAccountTokenSelectionOverride(null);
+      setAccountTokenSaveError(error instanceof Error ? error.message : String(error));
+    }
+  }, [
+    accountMessagesProviderId,
+    accountProviderId,
+    modelInfo?.model,
+    modelInfo?.provider,
+    saveAccountModels,
+    setRuntimeModel,
+  ]);
+
+  useEffect(() => {
+    if (!selectedProviderIsAccount || !accountStatus.data?.loggedIn) return;
+    void accountTokens.refetch();
+  }, [selectedProviderIsAccount, accountStatus.data?.loggedIn, accountTokens.refetch]);
+
+  useEffect(() => {
+    if (
+      accountTokenSelectionOverride != null &&
+      configuredAccountTokenId === accountTokenSelectionOverride
+    ) {
+      setAccountTokenSelectionOverride(null);
+    }
+  }, [accountTokenSelectionOverride, configuredAccountTokenId]);
+
+  useEffect(() => {
+    setAccountTokenSelectionOverride(null);
+    setAccountTokenSaveError("");
+    accountTokenAutoSyncRef.current = null;
+  }, [accountStatus.data?.serverUrl, accountStatus.data?.user?.id]);
+
+  useEffect(() => {
+    if (!selectedProviderIsAccount || !accountStatus.data?.loggedIn || accountTokenOptions.length === 0) {
+      return;
+    }
+    if (configuredAccountTokenIsCurrent || resolvedAccountToken == null) return;
+
+    const syncKey = [
+      accountStatus.data.serverUrl ?? "",
+      accountStatus.data.user?.id ?? "",
+      resolvedAccountToken,
+    ].join(":");
+    if (accountTokenAutoSyncRef.current === syncKey) return;
+    accountTokenAutoSyncRef.current = syncKey;
+    void syncAccountToken(resolvedAccountToken);
+  }, [
+    accountStatus.data?.loggedIn,
+    accountStatus.data?.serverUrl,
+    accountStatus.data?.user?.id,
+    accountTokenOptions,
+    configuredAccountTokenId,
+    configuredAccountTokenIsCurrent,
+    resolvedAccountToken,
+    selectedProviderIsAccount,
+    syncAccountToken,
+  ]);
 
   // Deep-link from the picker's "去设置" CTA: /models#provider-<slug> selects
   // and scrolls to that provider so the user lands on the right key field.
@@ -1592,6 +1704,50 @@ export function ModelsSection() {
                     </div>
 
                     <div className={s.providerFormGrid}>
+                      {selectedProviderIsAccount && (
+                        <label className={s.fieldRow}>
+                          <div className={s.fieldLabel}>用户令牌</div>
+                          <select
+                            className={s.select}
+                            value={selectedAccountTokenId ?? ""}
+                            disabled={
+                              !accountStatus.data?.loggedIn ||
+                              accountTokens.isFetching ||
+                              saveAccountModels.isPending
+                            }
+                            onChange={(event) => {
+                              const tokenId = Number(event.target.value);
+                              void syncAccountToken(tokenId);
+                            }}
+                          >
+                            <option value="">
+                              {!accountStatus.data?.loggedIn
+                                ? "请先登录账户"
+                                : accountTokens.isFetching
+                                  ? "正在加载令牌..."
+                                  : accountTokens.isError
+                                    ? "令牌加载失败"
+                                    : "暂无可用令牌"}
+                            </option>
+                            {accountTokenOptions.map((token) => (
+                              <option key={token.id} value={token.id} disabled={token.status !== 1}>
+                                {token.name}
+                                {token.group ? ` (${token.group})` : ""}
+                                {token.status !== 1 ? " · 已禁用" : ""}
+                              </option>
+                            ))}
+                          </select>
+                          <div className={accountTokenSaveError ? s.modelPickerError : s.modelPickerHint}>
+                            {accountTokenSaveError
+                              ? `令牌同步失败：${accountTokenSaveError}`
+                              : saveAccountModels.isPending
+                                ? "正在同步用户令牌..."
+                                : selectedAccountTokenId != null
+                                  ? "已同步；未指定时优先使用 default 分组令牌"
+                                  : "未找到当前用户的令牌"}
+                          </div>
+                        </label>
+                      )}
                       <label className={s.fieldRow}>
                         <div className={s.fieldLabel}>{selectedProvider.apiKeyLabel}</div>
                         <input

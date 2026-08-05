@@ -29,6 +29,11 @@ function bridge() {
   return b;
 }
 
+function resetAccountScopedQueries(qc: ReturnType<typeof useQueryClient>) {
+  qc.removeQueries({ queryKey: ["account-tokens"] });
+  qc.removeQueries({ queryKey: ["account-balance"] });
+}
+
 function modelUsesMessages(model: string, endpointTypes?: Record<string, string[]>): boolean {
   const types = endpointTypes?.[model] ?? [];
   for (const type of types) {
@@ -62,6 +67,7 @@ export function useAccountLogin() {
   return useMutation<AccountUser, Error, AccountLoginInput>({
     mutationFn: (input) => bridge().accountLogin!(input),
     onSuccess: () => {
+      resetAccountScopedQueries(qc);
       qc.invalidateQueries({ queryKey: ["account-status"] });
     },
   });
@@ -139,6 +145,7 @@ export function useAccountLogout() {
   return useMutation<AccountStatusResult, Error, void>({
     mutationFn: () => bridge().accountLogout!(),
     onSuccess: () => {
+      resetAccountScopedQueries(qc);
       qc.invalidateQueries({ queryKey: ["account-status"] });
     },
   });
@@ -168,6 +175,7 @@ export function useLoginSaved() {
   return useMutation<AccountUser, Error, void>({
     mutationFn: () => bridge().accountLoginSaved!(),
     onSuccess: () => {
+      resetAccountScopedQueries(qc);
       qc.invalidateQueries({ queryKey: ["account-status"] });
     },
   });
