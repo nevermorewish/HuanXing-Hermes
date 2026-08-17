@@ -37,6 +37,9 @@ function requireDesktopVersion() {
 
 const desktopVersion = requireDesktopVersion();
 const desktopTag = `v${desktopVersion}`;
+const defaultBrand = readJson("brands/huanxingcomhermes.json");
+const windowsInstallerPrefix = `Hermes-${defaultBrand.artifactBrandName}-`;
+const escapedWindowsInstallerPrefix = windowsInstallerPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const changed = [];
 
 function updateText(relativePath, updater) {
@@ -93,21 +96,32 @@ function syncReadme(text, currentVersionLabelPattern) {
   let next = replaceOrThrow(text, currentVersionLabelPattern, `$1${desktopTag}$2`, "README current desktop version");
   next = next.replace(
     /(Hermes\.Agent\.CN\.Desktop_)[^_]+(_aarch64\.dmg)/g,
-    `$1${desktopVersion}$2`,
+    `${windowsInstallerPrefix}${desktopVersion}$2`,
   );
   next = next.replace(
     /(Hermes\.Agent\.CN\.Desktop_)[^_]+(_x64\.dmg)/g,
-    `$1${desktopVersion}$2`,
+    `${windowsInstallerPrefix}${desktopVersion}$2`,
   );
   next = next.replace(
     /(Hermes\.Agent\.CN\.Desktop_)[^_]+(_x64-setup\.exe)/g,
-    `$1${desktopVersion}$2`,
+    `${windowsInstallerPrefix}${desktopVersion}$2`,
+  );
+  next = next.replace(
+    new RegExp(`(${escapedWindowsInstallerPrefix})[^_]+(_x64-setup\\.exe)`, "g"),
+    `${windowsInstallerPrefix}${desktopVersion}$2`,
+  );
+  next = next.replace(
+    new RegExp(`(${escapedWindowsInstallerPrefix})[^_]+(_aarch64\\.dmg)`, "g"),
+    `${windowsInstallerPrefix}${desktopVersion}$2`,
+  );
+  next = next.replace(
+    new RegExp(`(${escapedWindowsInstallerPrefix})[^_]+(_x64\\.dmg)`, "g"),
+    `${windowsInstallerPrefix}${desktopVersion}$2`,
   );
   return next;
 }
 
 updateText("README.md", (text) => syncReadme(text, /(当前版本是 `)v[^`]+(`)/));
-updateText("README.en-US.md", (text) => syncReadme(text, /(Current release: `)v[^`]+(`)/));
 
 updateText("docs/macos-signing-and-notarization.md", (text) => text.replace(
   /(Hermes Agent CN Desktop_)[^_]+(_aarch64\.dmg)/g,

@@ -1,6 +1,6 @@
-import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation, useParams } from "react-router-dom";
 import { DEFAULT_THEME_CONFIG, hydrateThemeAtom, usePlatform, type ThemeConfig } from "@hermes/shared-ui";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useSetAtom } from "jotai";
 import { useBootstrapActiveProfile } from "@/hooks/use-profiles";
 import { readUiValue } from "@/lib/ui-store";
@@ -37,13 +37,34 @@ import { AnalyticsRoute } from "@/routes/analytics";
 import { AdvancedRoute, ThemeRoute } from "@/routes/advanced";
 import { CodingAgentsRoute } from "@/routes/coding-agents";
 import { ImOnboardingRoute } from "@/routes/im-onboarding";
-import { GuideRoute } from "@/routes/guide";
 import { OfflineShell } from "@/routes/offline-shell";
-import { runtime } from "@/lib/runtime";
+import { BootSplash } from "@/components/boot-splash";
+import { DeviceTokenDialog } from "@/components/auth/device-token-dialog";
+import { useBackendGate } from "@/hooks/use-backend-gate";
+import {
+  normalizeSettingsPane,
+  openSettingsDialogAtom,
+} from "@/stores/settings-dialog";
+import { getTeamDeviceTokenStatus } from "@/lib/tauri-bridge";
+import {
+  dismissTeamDeviceTokenOnboarding,
+  isTeamDeviceTokenOnboardingDismissed,
+  resetTeamDeviceTokenOnboarding,
+} from "@/stores/auth";
 
 function NewTaskRedirect() {
   const { search } = useLocation();
   return <Navigate to={{ pathname: "/", search }} replace />;
+}
+
+// /settings/<pane> 深链：打开主界面并自动弹出设置弹窗对应面板（兼容旧书签）。
+function SettingsDeepLink() {
+  const { pane } = useParams();
+  const openSettings = useSetAtom(openSettingsDialogAtom);
+  useEffect(() => {
+    openSettings(normalizeSettingsPane(pane));
+  }, [openSettings, pane]);
+  return <Navigate to="/" replace />;
 }
 
 // Wrap each route's content in a local ErrorBoundary so a single page crash
@@ -78,6 +99,7 @@ function BackendApp() {
           <Route path="/memory" element={withBoundary(<MemoryRoute />)} />
           <Route path="/soul" element={withBoundary(<SoulRoute />)} />
           <Route path="/cron" element={withBoundary(<CronRoute />)} />
+          <Route path="/assistant/*" element={withBoundary(<ImOnboardingRoute />)} />
           <Route path="/im/*" element={withBoundary(<ImOnboardingRoute />)} />
           <Route path="/console" element={withBoundary(<ConsoleRoute />)} />
           <Route path="/health" element={withBoundary(<HealthRoute />)} />
@@ -94,7 +116,8 @@ function BackendApp() {
           <Route path="/coding-agents" element={withBoundary(<CodingAgentsRoute />)} />
           <Route path="/about" element={withBoundary(<AdvancedRoute />)} />
           <Route path="/advanced/*" element={withBoundary(<AdvancedRoute />)} />
-          <Route path="/settings" element={<Navigate to="/common" replace />} />
+          <Route path="/settings" element={<Navigate to="/settings/system" replace />} />
+          <Route path="/settings/:pane" element={<SettingsDeepLink />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AppShell>
@@ -110,23 +133,76 @@ function BackendApp() {
 export function App() {
   const platform = usePlatform();
   const hydrateTheme = useSetAtom(hydrateThemeAtom);
-  const location = useLocation();
+  const gate = useBackendGate();
+  const [teamTokenGate, setTeamTokenGate] = useState<"checking" | "loading" | "prompt" | "done">(
+    () => window.__TAURI_INTERNALS__ == null ? "done" : "checking",
+  );
   useEffect(() => {
     hydrateTheme(readUiValue<Partial<ThemeConfig>>("hermes-theme", DEFAULT_THEME_CONFIG));
   }, [hydrateTheme]);
   useEffect(() => {
     void sendTelemetryPingIfDue();
   }, []);
+  useEffect(() => {
+    if (gate !== "ready" || teamTokenGate !== "checking") return;
+    let cancelled = false;
+    void getTeamDeviceTokenStatus()
+      .then((status) => {
+        if (cancelled) return;
+        // A skipped startup prompt is a persisted user choice.  Previously we
+        // only reset the flag after a successful binding, but never consulted
+        // it here; every launch with no token therefore reopened the dialog.
+        if (status.configured) {
+          resetTeamDeviceTokenOnboarding();
+          setTeamTokenGate("loading");
+        } else if (status.invalidated) {
+          // A rejected/revoked token must override an earlier "skip" choice.
+          // The user needs a replacement token or an explicit clear action.
+          resetTeamDeviceTokenOnboarding();
+          setTeamTokenGate("prompt");
+        } else if (isTeamDeviceTokenOnboardingDismissed()) {
+          setTeamTokenGate("done");
+        } else {
+          setTeamTokenGate("prompt");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setTeamTokenGate("done");
+      });
+    return () => { cancelled = true; };
+  }, [gate, teamTokenGate]);
+  useEffect(() => {
+    if (teamTokenGate !== "loading") return;
+    const timer = window.setTimeout(() => setTeamTokenGate("done"), 900);
+    return () => window.clearTimeout(timer);
+  }, [teamTokenGate]);
 
-  const guideState = runtime.getGuideState();
-  const isGuide = location.pathname === "/guide";
   let content: ReactNode;
-  if (guideState === "pending" && !isGuide) {
-    content = <Navigate to="/guide" replace />;
-  } else if (isGuide) {
-    content = withBoundary(<GuideRoute />);
-  } else if (!runtime.isBackendReady()) {
+  if (gate === "booting") {
+    content = <BootSplash />;
+  } else if (gate === "offline") {
     content = <OfflineShell />;
+  } else if (teamTokenGate !== "done") {
+    content = (
+      <>
+        <BootSplash
+          statusText={teamTokenGate === "loading" ? "设备令牌有效，正在加载企业配置…" : "工作台已就绪"}
+          hint={teamTokenGate === "loading" ? "加载完成后将自动进入工作台" : "可连接企业设备，也可以直接进入工作台"}
+          progressStages={teamTokenGate === "loading" ? "令牌验证 · 企业模型 · Skills · 进入工作台" : undefined}
+        />
+        {teamTokenGate === "prompt" ? (
+          <DeviceTokenDialog
+            variant="startup"
+            open
+            onConnected={() => setTeamTokenGate("done")}
+            onSkip={() => {
+              dismissTeamDeviceTokenOnboarding();
+              setTeamTokenGate("done");
+            }}
+          />
+        ) : null}
+      </>
+    );
   } else {
     content = <BackendApp />;
   }

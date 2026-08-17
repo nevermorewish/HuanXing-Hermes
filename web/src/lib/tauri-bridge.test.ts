@@ -4,6 +4,7 @@ import {
   installTauriBridge,
   isTauriDevMode,
   normalizeTauriInvokeError,
+  shouldWaitForRuntimeBootstrap,
 } from "./tauri-bridge";
 
 const mockInvoke = vi.fn();
@@ -90,6 +91,14 @@ describe("isTauriDevMode", () => {
     });
   });
 
+  it("exposes an explicit app quit command instead of closing the webview", async () => {
+    await installTauriBridge();
+
+    await window.hermesDesktop?.quitApp?.();
+
+    expect(mockInvoke).toHaveBeenCalledWith("quit_app", undefined);
+  });
+
   it("exposes debug bundle export through Tauri IPC", async () => {
     await installTauriBridge();
 
@@ -140,6 +149,14 @@ describe("isTauriDevMode", () => {
     await window.hermesDesktop?.checkDesktopUpdate?.();
 
     expect(mockInvoke).toHaveBeenCalledWith("desktop_check_update", undefined);
+  });
+
+  it("exposes desktop update install through Tauri IPC", async () => {
+    await installTauriBridge();
+
+    await window.hermesDesktop?.installDesktopUpdate?.();
+
+    expect(mockInvoke).toHaveBeenCalledWith("desktop_install_update", undefined);
   });
 
   it("exposes external terminal opening through Tauri IPC", async () => {
@@ -262,5 +279,39 @@ describe("isTauriDevMode", () => {
     expect(mockInvoke).toHaveBeenCalledWith("managed_runtime_stop", undefined);
     expect(mockInvoke).toHaveBeenCalledWith("managed_runtime_uninstall", undefined);
     expect(mockInvoke).toHaveBeenCalledWith("managed_runtime_reinstall", undefined);
+  });
+});
+
+describe("shouldWaitForRuntimeBootstrap", () => {
+  it("waits for a managed runtime that is expected to be running", () => {
+    expect(shouldWaitForRuntimeBootstrap({
+      apiBaseUrl: "",
+      connectionMode: "managed",
+      managedRuntimeDesiredState: "running",
+    })).toBe(true);
+  });
+
+  it("mounts the offline UI when the managed runtime was intentionally stopped", () => {
+    expect(shouldWaitForRuntimeBootstrap({
+      apiBaseUrl: "",
+      connectionMode: "managed",
+      managedRuntimeDesiredState: "stopped",
+    })).toBe(false);
+  });
+
+  it("does not wait for an unavailable attached backend", () => {
+    expect(shouldWaitForRuntimeBootstrap({
+      apiBaseUrl: "",
+      connectionMode: "remote",
+      managedRuntimeDesiredState: "running",
+    })).toBe(false);
+  });
+
+  it("does not wait after the backend URL is ready", () => {
+    expect(shouldWaitForRuntimeBootstrap({
+      apiBaseUrl: "http://127.0.0.1:9120",
+      connectionMode: "managed",
+      managedRuntimeDesiredState: "running",
+    })).toBe(false);
   });
 });

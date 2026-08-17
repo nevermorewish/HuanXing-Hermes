@@ -15,12 +15,14 @@ use hermes_agent_cn::bootstrap::{
     acquire_managed_dashboard, connect_local_backend, connect_remote_backend, finalize_bootstrap,
     finalize_offline_bootstrap, install_bundled_runtime_for_bootstrap, record_bootstrap_error,
 };
+use hermes_agent_cn::brand_generated::BRAND_APP_NAME;
 use hermes_agent_cn::commands;
 use hermes_agent_cn::commands::profiles::read_active_profile_sticky;
 use hermes_agent_cn::connection::{self, ConnectionBackend, ConnectionMode};
 use hermes_agent_cn::desktop_control;
 use hermes_agent_cn::process::{dashboard, instance, runtime};
 use hermes_agent_cn::state::{AppState, DashboardHandle};
+use hermes_agent_cn::team_sync;
 use hermes_agent_cn::tray;
 
 /// Build a `DashboardHandle` describing an externally-managed dev dashboard we
@@ -229,6 +231,14 @@ fn main() {
 
             let boot_home_str = boot_home.to_string_lossy().to_string();
 
+            if let Err(error) = hermes_agent_cn::model_registry::migrate_profile_home(
+                &boot_home,
+                hermes_agent_cn::brand_generated::BRAND_PROVIDER_KEY,
+                hermes_agent_cn::brand_generated::BRAND_ACCOUNT_DEFAULT_MODELS,
+            ) {
+                log::warn!("model provider migration failed: {error}");
+            }
+
             // 3. Resolve host/port
             let host = std::env::var("HERMES_DESKTOP_API_HOST")
                 .unwrap_or_else(|_| "127.0.0.1".to_string());
@@ -334,6 +344,9 @@ fn main() {
                             (external_dev_handle(api_base_url), ConnectionMode::Managed)
                         }
                         ConnectionBackend::Managed => {
+                            if let Err(err) = hermes_agent_cn::team_sync::sync_if_configured(&boot_home_for_task).await {
+                                log::warn!("Team enterprise sync failed: {err}");
+                            }
                             match acquire_managed_dashboard(
                                 &app_handle,
                                 options,
@@ -367,7 +380,7 @@ fn main() {
                     }
                 });
 
-                log::info!("Hermes Agent 中文社区桌面版 bootstrapping in background");
+                log::info!("{} bootstrapping in background", BRAND_APP_NAME);
                 return Ok(());
             }
 
@@ -462,12 +475,15 @@ fn main() {
                     .await;
                 });
 
-                log::info!("Hermes Agent 中文社区桌面版 bootstrapping in background");
+                log::info!("{} bootstrapping in background", BRAND_APP_NAME);
                 return Ok(());
             }
 
             // Managed runtime already present (or update channel not configured):
             // block on the happy path — fast on a normal launch.
+            if let Err(err) = tauri::async_runtime::block_on(hermes_agent_cn::team_sync::sync_if_configured(&boot_home_str)) {
+                log::warn!("Team enterprise sync failed: {err}");
+            }
             let handle = match tauri::async_runtime::block_on(acquire_managed_dashboard(
                 app.handle(),
                 options,
@@ -509,6 +525,22 @@ fn main() {
             commands::connection_auth::connection_password_login,
             commands::connection_auth::connection_auth_me,
             commands::connection_auth::connection_oauth_logout,
+            // 内置模型（品牌 serviceUrl 账号）。sk- key 存 OS keyring，
+            // 只有 masked 值会过 IPC。
+            commands::account::account_login,
+            commands::account::account_login_saved,
+            commands::account::account_logout,
+            commands::account::account_status,
+            commands::account::account_fetch_setup,
+            commands::account::account_list_tokens,
+            commands::account::account_balance,
+            commands::account::account_save_models,
+            commands::account::account_test_model,
+            commands::account::account_save_credentials,
+            commands::account::account_has_saved_credentials,
+            commands::account::account_clear_credentials,
+            hermes_agent_cn::model_registry::save_user_provider,
+            hermes_agent_cn::model_registry::delete_user_provider,
             commands::backup::backup_export_profile,
             commands::backup::backup_import_profile,
             commands::config_migration::config_migration_scan,
@@ -525,6 +557,7 @@ fn main() {
             commands::log_export::export_log_snapshot,
             commands::debug_bundle::export_debug_bundle,
             commands::desktop_update::desktop_check_update,
+            commands::desktop_update::desktop_install_update,
             commands::devtools::toggle_devtools,
             commands::environment::environment_check,
             commands::coding_agents::coding_agents_check,
@@ -544,8 +577,12 @@ fn main() {
             commands::runtime_manager::managed_runtime_uninstall,
             commands::runtime_manager::managed_runtime_reinstall,
             commands::profiles::switch_profile,
+            commands::restart::quit_app,
             commands::yolo::get_yolo_mode,
             commands::yolo::set_yolo_mode,
+            team_sync::get_team_device_token_status,
+            team_sync::set_team_device_token,
+            team_sync::clear_team_device_token,
             commands::memory::read_memory,
             commands::memory::add_memory_entry,
             commands::memory::update_memory_entry,
@@ -604,7 +641,7 @@ fn main() {
             _ => {}
         })
         .build(tauri::generate_context!())
-        .expect("error while building Hermes Agent 中文社区桌面版");
+        .expect("error while building desktop app");
 
     app.run(move |app_handle, event| match event {
         tauri::RunEvent::ExitRequested { .. } => {

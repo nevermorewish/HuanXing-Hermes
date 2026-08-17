@@ -17,6 +17,7 @@ import type {
   ConfigMigrationScanResult,
   ConnectionConfigInput,
   ConnectionConfigView,
+  DesktopInstallUpdateResult,
   DesktopUpdateManifestFetchResult,
   CodingAgentsCheckResult,
   EnvironmentCheckResult,
@@ -65,6 +66,16 @@ import type {
   UiEventInput,
   UiStoreSnapshot,
   UiTurnStats,
+  AccountLoginInput,
+  AccountUser,
+  AccountStatusResult,
+  AccountSavedCredentialsInfo,
+  AccountSetupResult,
+  AccountTokenInfo,
+  AccountBalanceInfo,
+  AccountSaveModelsInput,
+  AccountTestModelResult,
+  UserProviderInput,
   WatchPreviewFileResult,
   WriteWorkspaceFileInput,
   WriteWorkspaceFileResult,
@@ -97,6 +108,18 @@ interface BootstrapVersionLine {
   label: "界面";
   version: string;
   commit: string;
+}
+
+interface RuntimeBootstrapConfig {
+  apiBaseUrl?: string;
+  connectionMode?: "managed" | "local" | "remote";
+  managedRuntimeDesiredState?: import("@hermes/protocol").ManagedRuntimeDesiredState;
+}
+
+export function shouldWaitForRuntimeBootstrap(config: RuntimeBootstrapConfig): boolean {
+  if (config.apiBaseUrl || (config.connectionMode ?? "managed") !== "managed") return false;
+  return config.managedRuntimeDesiredState !== "stopped"
+    && config.managedRuntimeDesiredState !== "uninstalled";
 }
 
 function shortBootstrapCommit(commit: string | undefined): string {
@@ -221,6 +244,25 @@ async function invokeCommand<T = any>(command: string, args?: Record<string, unk
   }
 }
 
+export interface TeamDeviceTokenStatus {
+  configured: boolean;
+  invalidated?: boolean;
+  syncedModels: number;
+  syncedSkills: number;
+}
+
+export async function getTeamDeviceTokenStatus(): Promise<TeamDeviceTokenStatus> {
+  return invokeCommand("get_team_device_token_status");
+}
+
+export async function setTeamDeviceToken(token: string): Promise<TeamDeviceTokenStatus> {
+  return invokeCommand("set_team_device_token", { token });
+}
+
+export async function clearTeamDeviceToken(): Promise<void> {
+  return invokeCommand("clear_team_device_token");
+}
+
 function normalizeFileDropPayload(payload: TauriFileDropEventPayload): DesktopFileDropPayload {
   return {
     phase: payload.type,
@@ -234,12 +276,59 @@ function normalizeFileDropPayload(payload: TauriFileDropEventPayload): DesktopFi
 const tauriBridge = {
   windowType: "tauri" as const,
 
+  async quitApp(): Promise<void> {
+    return invokeCommand("quit_app");
+  },
+
   async request(input: ApiRequestInput): Promise<ApiRequestResult> {
     return invokeCommand("api_request", { input });
   },
 
   async externalRequest(input: ApiRequestInput): Promise<ApiRequestResult> {
     return invokeCommand("external_request", { input });
+  },
+
+  async accountLogin(input: AccountLoginInput): Promise<AccountUser> {
+    return invokeCommand("account_login", { input });
+  },
+  async accountStatus(): Promise<AccountStatusResult> {
+    return invokeCommand("account_status");
+  },
+  async accountFetchSetup(): Promise<AccountSetupResult> {
+    return invokeCommand("account_fetch_setup");
+  },
+  async accountListTokens(): Promise<AccountTokenInfo[]> {
+    return invokeCommand("account_list_tokens");
+  },
+  async accountBalance(): Promise<AccountBalanceInfo> {
+    return invokeCommand("account_balance");
+  },
+  async accountSaveModels(input: AccountSaveModelsInput): Promise<AccountStatusResult> {
+    return invokeCommand("account_save_models", { input });
+  },
+  async accountTestModel(modelId: string): Promise<AccountTestModelResult> {
+    return invokeCommand("account_test_model", { modelId });
+  },
+  async accountLogout(): Promise<AccountStatusResult> {
+    return invokeCommand("account_logout");
+  },
+  async accountSaveCredentials(input: AccountLoginInput): Promise<void> {
+    return invokeCommand("account_save_credentials", { input });
+  },
+  async accountHasSavedCredentials(): Promise<AccountSavedCredentialsInfo> {
+    return invokeCommand("account_has_saved_credentials");
+  },
+  async accountLoginSaved(): Promise<AccountUser> {
+    return invokeCommand("account_login_saved");
+  },
+  async accountClearCredentials(): Promise<void> {
+    return invokeCommand("account_clear_credentials");
+  },
+  async saveUserProvider(input: UserProviderInput): Promise<string> {
+    return invokeCommand("save_user_provider", { input });
+  },
+  async deleteUserProvider(providerId: string): Promise<void> {
+    return invokeCommand("delete_user_provider", { providerId });
   },
 
   async uploadFile(input: FileUploadInput): Promise<ApiRequestResult> {
@@ -327,6 +416,10 @@ const tauriBridge = {
 
   async checkDesktopUpdate(): Promise<DesktopUpdateManifestFetchResult> {
     return invokeCommand("desktop_check_update");
+  },
+
+  async installDesktopUpdate(): Promise<DesktopInstallUpdateResult> {
+    return invokeCommand("desktop_install_update");
   },
 
   getRuntimeConfig() {
@@ -1002,7 +1095,7 @@ export async function installTauriBridge(): Promise<void> {
   // the populated apiBaseUrl/sessionToken. In Vite dev we still avoid writing
   // apiBaseUrl into window.__HERMES_RUNTIME__ later, but waiting here prevents
   // the React app from racing the managed dashboard startup.
-  if (!config.apiBaseUrl && config.backendReady !== false) {
+  if (shouldWaitForRuntimeBootstrap(config)) {
     const result = await waitForBootstrap(
       "正在唤醒Hermes...",
       () => invokeCommand("get_runtime_config"),

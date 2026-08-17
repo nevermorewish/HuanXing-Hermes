@@ -29,7 +29,7 @@ jobs:
       - name: Checkout Core backend
         uses: actions/checkout@v4
         with:
-          repository: Eynzof/Hermes-CN-Core
+          repository: nevermorewish/Hermes-CN-Core
           ref: main
           path: Hermes-CN-Core
 
@@ -47,7 +47,8 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          # Hermes-CN-Core main currently declares requires-python >=3.14.
+          python-version: "3.14"
 
       - name: Install Core (Python) into .venv
         working-directory: Hermes-CN-Core

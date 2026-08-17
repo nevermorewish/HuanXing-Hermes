@@ -105,6 +105,7 @@ import { isSingleUrl, urlReferenceText } from "@/lib/composer-url";
 import { imageFileFromClipboardData, readClipboardImageAsFile } from "@/lib/clipboard-image";
 import { downloadExternalImageFile } from "@/lib/transport";
 import { runtime } from "@/lib/runtime";
+import { enterpriseProviderIdsFromConfig } from "@/lib/model-provider-visibility";
 import { ReasoningEffortMenu } from "@/components/composer/reasoning-effort-menu";
 import s from "./goose-composer.module.css";
 
@@ -251,7 +252,7 @@ export function GooseComposer({
   );
   const [modelLoading, setModelLoading] = useState(false);
   const [modelError, setModelError] = useState("");
-  const [modelSearch, setModelSearch] = useState("");
+  const modelButtonRef = useRef<HTMLButtonElement>(null);
   const [switchingModel, setSwitchingModel] = useState(false);
   const [selectedSkill, setSelectedSkill] = useState<ComposerSkillCandidate | null>(null);
   const [skillActiveIndex, setSkillActiveIndex] = useState(0);
@@ -281,6 +282,10 @@ export function GooseComposer({
   const hasProcessingAttachment = attachments.some(isAttachmentBusy);
   const sttEnabled = sttEnabledFromConfig(voiceConfig);
   const maxRecordingSeconds = voiceMaxRecordingSecondsFromConfig(voiceConfig);
+  const enterpriseProviderIds = useMemo(
+    () => enterpriseProviderIdsFromConfig(voiceConfig ?? undefined),
+    [voiceConfig],
+  );
   const contextRisk = contextUsageRisk(contextUsage);
   const contextWarning = contextRiskText(contextRisk, loading);
   const controlsDisabled = disabled || loading;
@@ -1170,16 +1175,17 @@ export function GooseComposer({
     };
   }, [loadModelOptions, modelOptions, modelPicker?.loadOptions, modelPickerDisabled]);
 
-  // When the parent's useModelOptions query resolves *after* this composer
-  // mounts (cache miss on first ever load), backfill our local state so the
-  // picker opens with data instead of a spinner.
+  // Keep the local picker state in sync when the parent's useModelOptions query
+  // changes. This matters after a config save (for example Team enterprise
+  // sync): the shared query is invalidated and refetched, but the composer
+  // may already have mounted with the previous provider list.
   useEffect(() => {
-    if (modelPicker?.initialOptions && !modelOptions) {
+    if (modelPicker?.initialOptions && modelPicker.initialOptions !== modelOptions) {
       setModelOptions(modelPicker.initialOptions);
     }
   }, [modelPicker?.initialOptions, modelOptions]);
 
-  const modelText = modelButtonText(modelPicker, modelOptions);
+  const modelText = modelButtonText(modelPicker, modelOptions, { enterpriseProviderIds });
   const voiceButtonTitle = !sttEnabled
     ? "语音识别（STT）已关闭"
     : voiceStatus === "recording"
@@ -1521,6 +1527,7 @@ export function GooseComposer({
             ) : null}
             {modelPicker ? (
               <button
+                ref={modelButtonRef}
                 className={s.toolButton}
                 type="button"
                 onClick={toggleModelPicker}
@@ -1595,8 +1602,6 @@ export function GooseComposer({
       </div>
       {modelOpen ? (
         <ModelPickerModal
-          modelSearch={modelSearch}
-          onSearchChange={setModelSearch}
           onClose={() => setModelOpen(false)}
           loading={modelLoading}
           error={modelError}
@@ -1616,10 +1621,7 @@ export function GooseComposer({
                 }
               : undefined
           }
-          onConfigureProvider={(providerId) => {
-            setModelOpen(false);
-            modelPicker?.onConfigureProvider?.(providerId);
-          }}
+          anchorRef={modelButtonRef}
         />
       ) : null}
       {workspacePickerOpen ? (
