@@ -1,3 +1,4 @@
+import { BRAND } from "@/lib/brand.generated";
 import { useEffect, useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Popover, useTheme } from "@hermes/shared-ui";
@@ -17,7 +18,7 @@ import {
 } from "lucide-react";
 import { useActiveProfileName, useProfiles, useSetActiveProfile } from "@/hooks/use-profiles";
 import { useStatus } from "@/hooks/use-status";
-import { useAccountLogout, useAccountStatus } from "@/hooks/use-account";
+import { useAccountBalance, useAccountLogout, useAccountStatus } from "@/hooks/use-account";
 import { useModelInfo } from "@/hooks/use-config";
 import { useCommandPalette } from "@/components/command-palette";
 import { openSettingsDialogAtom } from "@/stores/settings-dialog";
@@ -62,17 +63,20 @@ export function AccountPopup() {
   const setHuanxingAccount = useSetAtom(huanxingAuthAtom);
   const accountLogout = useAccountLogout();
   const { data: accountStatus } = useAccountStatus();
+  const ccwork = BRAND.accountBackend === "ccwork";
+  const balance = useAccountBalance(ccwork && open && accountStatus?.loggedIn === true);
   const openAuthDialog = useSetAtom(authDialogOpenAtom);
   const openDeviceTokenDialog = useSetAtom(deviceTokenDialogOpenAtom);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || ccwork) return;
     void getTeamDeviceTokenStatus().then(setTeamDevice).catch(() => setTeamDevice(null));
-  }, [open]);
+  }, [open, ccwork]);
 
   useEffect(() => {
     const user = accountStatus?.user;
-    if (!user || huanxingAccount) return;
+    if (accountStatus && !accountStatus.loggedIn) { if (huanxingAccount) setHuanxingAccount(null); return; }
+    if (!user || (huanxingAccount?.userId === user.id && huanxingAccount.username === user.username)) return;
     setHuanxingAccount({
       serverUrl: accountStatus.serverUrl ?? "",
       userId: user.id,
@@ -158,14 +162,14 @@ export function AccountPopup() {
                 <span className={s.grow}>
                   <span className={s.enterpriseName}>{huanxingAccount.username}</span>
                   <span className={s.enterpriseMeta}>
-                    {huanxingAccountTypeLabel(huanxingAccount.type)}
+                    {ccwork ? "ccwork 账号 · 个人组织" : huanxingAccountTypeLabel(huanxingAccount.type)}
                     {huanxingAccount.enterpriseName ? ` · ${huanxingAccount.enterpriseName}` : ""}
                   </span>
                 </span>
                 <button
                   type="button"
                   className={s.enterpriseLogout}
-                  title="退出企业账号"
+                  title="退出账号"
                   onClick={() => {
                     void accountLogout.mutateAsync().catch(() => undefined).finally(() => {
                       setHuanxingAccount(null);
@@ -187,12 +191,18 @@ export function AccountPopup() {
               }}
             >
               <LogIn size={16} className={s.itemIcon} />
-              <span className={s.grow}>登录 / 注册企业账号</span>
+              <span className={s.grow}>{ccwork ? "登录 / 注册 ccwork 账号" : "登录 / 注册企业账号"}</span>
               <span className={s.tail}>账号登录</span>
             </button>
           )}
 
-          {teamDevice?.configured ? (
+          {ccwork && accountStatus?.loggedIn && <div className={s.enterpriseCard}>
+            <div className={s.enterpriseMeta}>
+              {balance.isLoading ? "正在读取 ccwork 钱包…" : balance.isError ? "ccwork 钱包暂时不可用" : balance.data ? <>可用积分 {balance.data.availableCredits} · 冻结积分 {balance.data.frozenCredits}<br />本月消耗 {balance.data.monthlyConsumedCredits} · 今日消耗 {balance.data.todayConsumedCredits}</> : null}
+            </div>
+            <button type="button" className={s.item} onClick={() => { void window.hermesDesktop?.openExternalUrl?.({ url: BRAND.rechargeUrl }); }}>在 ccwork 查看账单 / 充值</button>
+          </div>}
+          {!ccwork && (teamDevice?.configured ? (
             <div className={s.enterpriseCard}>
               <div className={s.enterpriseRow}>
                 <span className={s.grow}>
@@ -213,7 +223,7 @@ export function AccountPopup() {
               <span className={s.grow}>绑定企业设备令牌</span>
               <span className={s.tail}>同步模型下发</span>
             </button>
-          )}
+          ))}
 
           <div className={s.sep} />
           <button type="button" className={s.item} onClick={() => openSettings("system")}>

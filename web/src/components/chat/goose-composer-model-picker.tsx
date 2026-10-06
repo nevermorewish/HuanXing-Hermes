@@ -32,7 +32,7 @@ import {
 } from "@/lib/model-provider-visibility";
 import { getProviderIconUrl } from "@/lib/provider-icons";
 import { useConfig } from "@/hooks/use-config";
-import { huanxingAuthAtom } from "@/stores/auth";
+import { accountModelNamesAtom, huanxingAuthAtom } from "@/stores/auth";
 import { openSettingsDialogAtom } from "@/stores/settings-dialog";
 import type { ComposerModelPickerProps, ComposerModelSelection } from "./composer-types";
 import s from "./goose-composer.module.css";
@@ -219,6 +219,7 @@ export function buildCandidates(
   modelOptions: ModelOptionsResult | null,
   usageEntries: ModelUsageEntry[],
   limit = 5,
+  modelNames: Readonly<Record<string, string>> = {},
 ): { all: Candidate[]; recent: Candidate[]; configured: Candidate[]; moa: Candidate[] } {
   const all: Candidate[] = [];
   const moa: Candidate[] = [];
@@ -279,6 +280,7 @@ export function buildCandidates(
         providerName: preset?.name ?? providerLabel(provider),
         vendor: preset?.vendor ?? "",
         model: modelId,
+        displayName: isCurrentBrandAccountProvider(provider.slug) ? modelNames[modelId] : undefined,
         baseUrl: preset?.baseUrl,
         apiKeyLabel: preset?.apiKeyLabel ?? keyEnv,
         iconUrl: getProviderIconUrl(preset?.icon),
@@ -364,9 +366,10 @@ export function isTeamServiceProviderUrl(value: unknown): boolean {
 export function groupCandidates(
   modelOptions: ModelOptionsResult | null,
   options: ModelGroupingOptions = {},
+  modelNames: Readonly<Record<string, string>> = {},
 ): ModelGroups {
   const groups: ModelGroups = { enterprise: [], custom: [], builtin: [] };
-  const { all } = buildCandidates(modelOptions, [], Number.MAX_SAFE_INTEGER);
+  const { all } = buildCandidates(modelOptions, [], Number.MAX_SAFE_INTEGER, modelNames);
   const otherBuiltinCandidates: Candidate[] = [];
   const seenBuiltinModels = new Set<string>();
   const showEnterprise = options.showEnterprise ?? true;
@@ -452,6 +455,7 @@ export function ModelPickerModal({
 }: ModelMenuProps) {
   const openSettingsDialog = useSetAtom(openSettingsDialogAtom);
   const huanxingAccount = useAtomValue(huanxingAuthAtom);
+  const modelNames = useAtomValue(accountModelNamesAtom);
   const { data: config } = useConfig();
   const menuRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ bottom: number; left: number } | null>(null);
@@ -469,8 +473,8 @@ export function ModelPickerModal({
       showEnterprise: shouldShowEnterpriseModels(Boolean(huanxingAccount), enterpriseProviderIds),
       enterpriseProviderIds,
       savedCustomProviderIds,
-    }),
-    [enterpriseProviderIds, huanxingAccount, modelOptions, savedCustomProviderIds],
+    }, modelNames),
+    [enterpriseProviderIds, huanxingAccount, modelOptions, savedCustomProviderIds, modelNames],
   );
   const isEmpty = groups.enterprise.length + groups.custom.length + groups.builtin.length === 0;
 

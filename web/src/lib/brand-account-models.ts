@@ -26,6 +26,7 @@ export function isBrandAccountModel(modelId: string): boolean {
 /** Intersect a server catalog with the brand JSON allowlist in brand-defined order. */
 export function selectBrandAccountModels(models: readonly string[]): string[] {
   const available = new Set(models.map((model) => model.trim()).filter(Boolean));
+  if (BRAND.accountBackend === "ccwork" && !BRAND.accountDefaultModels.some((model) => available.has(model))) return [...available];
   return BRAND.accountDefaultModels.filter((model) => available.has(model));
 }
 

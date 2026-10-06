@@ -680,6 +680,8 @@ fn main() {
             // 内置模型（品牌 serviceUrl 账号）。sk- key 存 OS keyring，
             // 只有 masked 值会过 IPC。
             commands::account::account_login,
+            commands::ccwork_account::account_register,
+            commands::ccwork_account::account_send_verification_code,
             commands::account::account_login_saved,
             commands::account::account_logout,
             commands::account::account_status,

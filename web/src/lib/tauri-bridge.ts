@@ -310,6 +310,12 @@ const tauriBridge = {
     return invokeCommand("external_request", { input });
   },
 
+  async accountRegister(input: { baseUrl: string; contact: string; password: string; verificationCode: string; inviteCode?: string }): Promise<AccountUser> {
+    return invokeCommand("account_register", { input });
+  },
+  async accountSendVerificationCode(contact: string, inviteCode?: string): Promise<void> {
+    return invokeCommand("account_send_verification_code", { contact, inviteCode });
+  },
   async accountLogin(input: AccountLoginInput): Promise<AccountUser> {
     return invokeCommand("account_login", { input });
   },

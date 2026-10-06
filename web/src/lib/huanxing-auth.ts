@@ -21,7 +21,7 @@ export interface HuanxingUser {
 
 export interface HuanxingAccount {
   serverUrl: string;
-  userId: number;
+  userId: number | string;
   username: string;
   displayName?: string;
   type?: number;

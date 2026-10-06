@@ -1,3 +1,4 @@
+import { BRAND } from "@/lib/brand.generated";
 import { useState } from "react";
 import { useAtom, useSetAtom } from "jotai";
 import { Dialog } from "@hermes/shared-ui";
@@ -25,6 +26,11 @@ export function AuthDialog() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [email, setEmail] = useState("");
+  const [verificationCode, setVerificationCode] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
+  const [codeBusy, setCodeBusy] = useState(false);
+  const [codeSentAt, setCodeSentAt] = useState(0);
+  const ccwork = BRAND.accountBackend === "ccwork";
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -43,7 +49,7 @@ export function AuthDialog() {
     resetFeedback();
   };
 
-  const handleLogin = async () => {
+  const handleLogin = async (register = false) => {
     if (!username.trim() || !password) {
       setError("请输入用户名和密码。");
       return;
@@ -51,7 +57,9 @@ export function AuthDialog() {
     setBusy(true);
     resetFeedback();
     try {
-      const user = await accountLogin.mutateAsync({
+      const user = register ? await window.hermesDesktop!.accountRegister!({
+        baseUrl: serverUrl, contact: username.trim(), password, verificationCode, inviteCode,
+      }) : await accountLogin.mutateAsync({
         baseUrl: serverUrl,
         username,
         password,
@@ -90,12 +98,20 @@ export function AuthDialog() {
       setError("请输入用户名和密码。");
       return;
     }
-    if (password.length < 8 || password.length > 20) {
-      setError("密码长度需为 8–20 位。");
+    if (password.length < 8 || password.length > (ccwork ? 128 : 20)) {
+      setError(ccwork ? "密码长度需为 8–128 位。" : "密码长度需为 8–20 位。");
       return;
     }
     if (password !== confirmPassword) {
       setError("两次输入的密码不一致。");
+      return;
+    }
+    if (ccwork) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(username.trim()) && !/^1[3-9]\d{9}$/.test(username.trim())) { setError("请输入邮箱或中国大陆手机号。"); return; }
+      if (!/^\d{6}$/.test(verificationCode)) { setError("请输入六位验证码。"); return; }
+      const groups = [/[A-Z]/, /[a-z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((pattern) => pattern.test(password)).length;
+      if (groups < 3) { setError("密码须包含大写、小写、数字、特殊字符中的至少三种。"); return; }
+      await handleLogin(true);
       return;
     }
     setBusy(true);
@@ -113,7 +129,15 @@ export function AuthDialog() {
     }
   };
 
-  const submit = tab === "login" ? handleLogin : handleRegister;
+  const sendCode = async () => {
+    if (Date.now() - codeSentAt < 60_000 || codeBusy) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(username.trim()) && !/^1[3-9]\d{9}$/.test(username.trim())) { setError("请输入邮箱或中国大陆手机号。"); return; }
+    setCodeBusy(true); resetFeedback();
+    try { await window.hermesDesktop!.accountSendVerificationCode!(username.trim(), inviteCode); setCodeSentAt(Date.now()); setNotice("验证码已发送，请查收；一分钟后可重新发送。"); }
+    catch (err) { setError(err instanceof Error ? err.message : "发送验证码失败。"); }
+    finally { setCodeBusy(false); }
+  };
+  const submit = tab === "login" ? () => handleLogin() : handleRegister;
 
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
@@ -127,8 +151,8 @@ export function AuthDialog() {
             <X size={16} />
           </button>
 
-          <h3 className={s.title}>企业账号</h3>
-          <div className={s.sub}>账号登录与设备令牌绑定相互独立</div>
+          <h3 className={s.title}>{ccwork ? "ccwork 账号" : "企业账号"}</h3>
+          <div className={s.sub}>{ccwork ? "模型与用量由 ccwork 账号统一管理" : "账号登录与设备令牌绑定相互独立"}</div>
 
           <div className={s.tabs} role="tablist">
             <button
@@ -160,7 +184,7 @@ export function AuthDialog() {
               if (!busy) void submit();
             }}
           >
-            <label className={s.field}>
+            {!ccwork && <label className={s.field}>
               <span className={s.label}>服务器地址</span>
               <input
                 className={s.input}
@@ -170,14 +194,14 @@ export function AuthDialog() {
                 spellCheck={false}
                 autoComplete="url"
               />
-            </label>
+            </label>}
             <label className={s.field}>
-              <span className={s.label}>用户名</span>
+              <span className={s.label}>{ccwork ? (tab === "register" ? "邮箱 / 手机号" : "用户名 / 邮箱 / 手机号") : "用户名"}</span>
               <input
                 className={s.input}
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
-                placeholder="企业账号用户名"
+                placeholder={ccwork ? "ccwork 账号" : "企业账号用户名"}
                 autoComplete="username"
                 autoFocus
               />
@@ -190,7 +214,7 @@ export function AuthDialog() {
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  placeholder={tab === "register" ? "8–20 位密码" : "密码"}
+                  placeholder={tab === "register" ? (ccwork ? "8–128 位，至少三种字符类型" : "8–20 位密码") : "密码"}
                   autoComplete={tab === "login" ? "current-password" : "new-password"}
                 />
                 <button
@@ -216,7 +240,7 @@ export function AuthDialog() {
                     autoComplete="new-password"
                   />
                 </label>
-                <label className={s.field}>
+                {!ccwork && <label className={s.field}>
                   <span className={s.label}>邮箱（可选）</span>
                   <input
                     className={s.input}
@@ -226,7 +250,12 @@ export function AuthDialog() {
                     placeholder="找回密码时使用"
                     autoComplete="email"
                   />
-                </label>
+                </label>}
+                {ccwork && <>
+                  <label className={s.field}><span className={s.label}>邀请码（可选）</span><input className={s.input} value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} autoComplete="off" /></label>
+                  <label className={s.field}><span className={s.label}>验证码</span><input className={s.input} value={verificationCode} onChange={(event) => setVerificationCode(event.target.value)} inputMode="numeric" maxLength={6} autoComplete="one-time-code" placeholder="六位数字验证码" /></label>
+                  <button type="button" className={s.submit} disabled={busy || codeBusy} onClick={() => void sendCode()}>{codeBusy ? "发送中…" : "发送验证码"}</button>
+                </> }
               </>
             ) : null}
 

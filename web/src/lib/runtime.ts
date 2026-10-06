@@ -428,12 +428,12 @@ export interface HermesGitBridge {
 }
 
 export interface AccountLoginInput { baseUrl: string; username: string; password: string; }
-export interface AccountUser { id: number; username: string; displayName: string; role: number; status: number; group: string; }
+export interface AccountUser { id: number | string; username: string; displayName: string; role: number; status: number; group: string; }
 export interface AccountStatusResult { loggedIn: boolean; user?: AccountUser; serverUrl?: string; hasKey: boolean; maskedKey?: string; }
 export interface AccountSavedCredentialsInfo { hasSaved: boolean; username?: string; baseUrl?: string; }
-export interface AccountSetupResult { user: AccountUser; baseUrl: string; models: string[]; modelEndpointTypes?: Record<string, string[]>; hasKey: boolean; maskedKey?: string; }
+export interface AccountSetupResult { user: AccountUser; baseUrl: string; models: string[]; modelEndpointTypes?: Record<string, string[]>; modelNames?: Record<string, string>; hasKey: boolean; maskedKey?: string; }
 export interface AccountTokenInfo { id: number; name: string; group: string; status: number; }
-export interface AccountBalanceInfo { quota: number; usedQuota: number; quotaPerUnit: number; displayInCurrency: boolean; topUpUrl: string; }
+export interface AccountBalanceInfo { quota: number; usedQuota: number; quotaPerUnit: number; displayInCurrency: boolean; topUpUrl: string; availableCredits?: string; frozenCredits?: string; monthlyConsumedCredits?: string; todayConsumedCredits?: string; }
 export interface AccountSaveModelsInput { models: string[]; modelEndpointTypes?: Record<string, string[]>; primaryModelId?: string; tokenId?: number; }
 export interface AccountTestModelResult { ok: boolean; latencyMs?: number; reply?: string; error?: string; }
 export interface UserProviderInput {
@@ -487,6 +487,8 @@ declare global {
       fatalErrorAndExit?(input: { title: string; message: string }): Promise<never>;
       request(input: ElectronApiRequestInput): Promise<ElectronApiRequestResult>;
       externalRequest?(input: ElectronApiRequestInput): Promise<ElectronApiRequestResult>;
+      accountRegister?(input: { baseUrl: string; contact: string; password: string; verificationCode: string; inviteCode?: string }): Promise<AccountUser>;
+      accountSendVerificationCode?(contact: string, inviteCode?: string): Promise<void>;
       accountLogin?(input: AccountLoginInput): Promise<AccountUser>;
       accountStatus?(): Promise<AccountStatusResult>;
       accountFetchSetup?(): Promise<AccountSetupResult>;

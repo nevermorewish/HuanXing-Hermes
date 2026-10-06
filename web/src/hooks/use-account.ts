@@ -1,3 +1,6 @@
+import { useSetAtom } from "jotai";
+import { accountModelNamesAtom } from "@/stores/auth";
+import { BRAND } from "@/lib/brand.generated";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { invalidateModelOptionsCache } from "@/lib/model-options-cache";
 import type {
@@ -23,9 +26,16 @@ export function isAccountLoginAvailable(): boolean {
 }
 
 export function useAccountStatus() {
+  const setModelNames = useSetAtom(accountModelNamesAtom);
   return useQuery<AccountStatusResult>({
     queryKey: ["account-status"],
-    queryFn: () => bridge().accountStatus!(),
+    queryFn: async () => {
+      const status = await bridge().accountStatus!();
+      if (BRAND.accountBackend === "ccwork") {
+        setModelNames(status.loggedIn ? (await bridge().accountFetchSetup!()).modelNames ?? {} : {});
+      }
+      return status;
+    },
     enabled: isAccountLoginAvailable(),
     staleTime: 30_000,
   });
@@ -40,7 +50,8 @@ export function useAccountLogin() {
 }
 
 export function useAccountFetchSetup() {
-  return useMutation<AccountSetupResult, Error, void>({ mutationFn: () => bridge().accountFetchSetup!() });
+  const setModelNames = useSetAtom(accountModelNamesAtom);
+  return useMutation<AccountSetupResult, Error, void>({ mutationFn: async () => { const setup = await bridge().accountFetchSetup!(); setModelNames(setup.modelNames ?? {}); return setup; } });
 }
 
 export function useAccountTokens() {
@@ -52,11 +63,12 @@ export function useAccountTokens() {
   });
 }
 
-export function useAccountBalance() {
+export function useAccountBalance(enabled = false) {
   return useQuery<AccountBalanceInfo>({
     queryKey: ["account-balance"],
     queryFn: () => bridge().accountBalance!(),
-    enabled: false,
+    enabled: enabled && isAccountLoginAvailable(),
+    refetchInterval: enabled ? 30_000 : false,
     staleTime: 15_000,
   });
 }
@@ -83,7 +95,10 @@ export function useAccountLogout() {
   const queryClient = useQueryClient();
   return useMutation<AccountStatusResult, Error, void>({
     mutationFn: () => bridge().accountLogout!(),
-    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["account-status"] }); },
+    onSuccess: () => {
+      invalidateModelOptionsCache();
+      for (const key of ["account-status", "account-balance", "model-options", "model-info", "config"]) void queryClient.invalidateQueries({ queryKey: [key] });
+    },
   });
 }
 

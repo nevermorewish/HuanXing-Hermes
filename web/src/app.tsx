@@ -1,3 +1,4 @@
+import { BRAND } from "@/lib/brand.generated";
 import { Routes, Route, Navigate, useLocation, useParams } from "react-router-dom";
 import { DEFAULT_THEME_CONFIG, hydrateThemeAtom, usePlatform, type ThemeConfig } from "@hermes/shared-ui";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
@@ -188,7 +189,7 @@ export function App() {
   const hydrateTheme = useSetAtom(hydrateThemeAtom);
   const gate = useBackendGate();
   const [teamTokenGate, setTeamTokenGate] = useState<"checking" | "loading" | "prompt" | "done">(
-    () => window.__TAURI_INTERNALS__ == null ? "done" : "checking",
+    () => BRAND.accountBackend === "ccwork" || window.__TAURI_INTERNALS__ == null ? "done" : "checking",
   );
   useEffect(() => {
     hydrateTheme(readUiValue<Partial<ThemeConfig>>("hermes-theme", DEFAULT_THEME_CONFIG));

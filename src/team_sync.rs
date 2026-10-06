@@ -527,6 +527,9 @@ fn clear_managed(home: &Path) -> Result<(), String> {
 }
 
 pub async fn sync_if_configured(home: &str) -> Result<(), String> {
+    if crate::brand_generated::BRAND_ACCOUNT_BACKEND == "ccwork" {
+        return Ok(());
+    }
     if let Some(token) = read_token(Path::new(home)) {
         match sync_home(Path::new(home), &token).await {
             Ok(_) => {

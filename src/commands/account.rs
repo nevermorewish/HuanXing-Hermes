@@ -26,7 +26,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::State;
 
-use crate::brand_generated::{BRAND_ACCOUNT_DEFAULT_MODELS, BRAND_APP_NAME, BRAND_PROVIDER_KEY};
+#[cfg(not(test))]
+use crate::brand_generated::BRAND_ACCOUNT_DEFAULT_MODELS;
+use crate::brand_generated::{BRAND_APP_NAME, BRAND_PROVIDER_KEY};
+// Legacy newapi provider tests use an explicit catalog independent of the active brand.
+#[cfg(test)]
+const BRAND_ACCOUNT_DEFAULT_MODELS: &[&str] = &[
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+    "gpt-5.6-sol",
+    "kimi-k3",
+    "glm-5.2",
+    "claude-opus-5",
+];
 use crate::error::AppError;
 use crate::model_registry::{
     apply_managed_providers_json, clear_default_model_if_managed_json, managed_provider_id,
@@ -75,12 +87,41 @@ struct SessionState {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountUser {
-    pub id: i64,
+    pub id: AccountUserId,
     pub username: String,
     pub display_name: String,
     pub role: i64,
     pub status: i64,
     pub group: String,
+}
+
+/// Preserve both legacy numeric IDs and ccwork UUIDs across IPC and keyring.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum AccountUserId {
+    Numeric(i64),
+    Uuid(String),
+}
+
+impl std::fmt::Display for AccountUserId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Numeric(id) => id.fmt(f),
+            Self::Uuid(id) => id.fmt(f),
+        }
+    }
+}
+
+impl From<i64> for AccountUserId {
+    fn from(id: i64) -> Self {
+        Self::Numeric(id)
+    }
+}
+
+impl PartialEq<i64> for AccountUserId {
+    fn eq(&self, id: &i64) -> bool {
+        matches!(self, Self::Numeric(value) if value == id)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -100,6 +141,14 @@ pub struct AccountBalance {
     pub quota_per_unit: f64,
     pub display_in_currency: bool,
     pub top_up_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available_credits: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frozen_credits: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub monthly_consumed_credits: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub today_consumed_credits: Option<String>,
 }
 
 // ---- inputs -------------------------------------------------------------
@@ -151,6 +200,7 @@ pub struct SetupResult {
     pub base_url: String,
     pub models: Vec<String>,
     pub model_endpoint_types: ModelEndpointTypes,
+    pub model_names: BTreeMap<String, String>,
     pub has_key: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub masked_key: Option<String>,
@@ -537,7 +587,7 @@ async fn account_json(
     method: reqwest::Method,
     url: &str,
     cookie: &str,
-    user_id: i64,
+    user_id: AccountUserId,
     body: Option<Value>,
 ) -> Result<(u16, Value), AppError> {
     let mut req = HTTP
@@ -588,7 +638,7 @@ fn require_session() -> Result<SessionState, AppError> {
 // touching a real credential store.
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-mod secret_store {
+pub(super) mod secret_store {
     use crate::error::AppError;
 
     const SERVICE: &str = "hermes-agent-cn-desktop.account";
@@ -628,7 +678,7 @@ mod secret_store {
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-mod secret_store {
+pub(super) mod secret_store {
     use crate::error::AppError;
     use std::collections::HashMap;
     use std::sync::{LazyLock, Mutex};
@@ -665,7 +715,7 @@ fn key_owner_account() -> String {
     format!("{}-account-key-owner", BRAND_PROVIDER_KEY)
 }
 
-fn key_owner_tag(base_url: &str, user_id: i64) -> String {
+fn key_owner_tag(base_url: &str, user_id: impl std::fmt::Display) -> String {
     format!("{}#{}", normalize_base_url(base_url), user_id)
 }
 
@@ -673,7 +723,7 @@ fn store_key_for(session: &SessionState, key: &str) -> Result<(), AppError> {
     secret_store::set(&secret_account(), key)?;
     secret_store::set(
         &key_owner_account(),
-        &key_owner_tag(&session.base_url, session.user.id),
+        &key_owner_tag(&session.base_url, &session.user.id),
     )
 }
 
@@ -684,7 +734,7 @@ fn stored_key_for(session: &SessionState) -> Result<Option<String>, AppError> {
         return Ok(None);
     };
     let owner = secret_store::get(&key_owner_account())?;
-    let expected = key_owner_tag(&session.base_url, session.user.id);
+    let expected = key_owner_tag(&session.base_url, &session.user.id);
     match owner {
         Some(tag) if tag == expected => Ok(Some(key)),
         _ => Ok(None),
@@ -906,7 +956,7 @@ fn parse_account_user(
     .filter(|name| !generic_display_name(name))
     .unwrap_or_else(|| username.clone());
     Ok(AccountUser {
-        id,
+        id: id.into(),
         username,
         display_name,
         role: i64_field(data, &["role"]).unwrap_or(0),
@@ -921,14 +971,21 @@ async fn fetch_self_user(session: &SessionState) -> Result<AccountUser, AppError
         reqwest::Method::GET,
         &format!("{}/api/user/self", session.base_url),
         &session.session_cookie,
-        session.user.id,
+        session.user.id.clone(),
         None,
     )
     .await?;
     if body.get("success").and_then(Value::as_bool) == Some(false) {
         return Err(envelope_error("获取账户信息", status, &body));
     }
-    parse_account_user(&body, Some(session.user.id), &session.user.username)
+    parse_account_user(
+        &body,
+        match session.user.id {
+            AccountUserId::Numeric(id) => Some(id),
+            _ => None,
+        },
+        &session.user.username,
+    )
 }
 
 async fn refresh_session_user(session: SessionState) -> Result<SessionState, AppError> {
@@ -1079,7 +1136,7 @@ async fn fetch_models_pricing(session: &SessionState) -> Result<AccountModelCata
         reqwest::Method::GET,
         &format!("{}/api/pricing", session.base_url),
         &session.session_cookie,
-        session.user.id,
+        session.user.id.clone(),
         None,
     )
     .await?;
@@ -1140,7 +1197,7 @@ async fn fetch_models_legacy(session: &SessionState) -> Result<Vec<String>, AppE
             reqwest::Method::GET,
             &format!("{}{}", session.base_url, path),
             &session.session_cookie,
-            session.user.id,
+            session.user.id.clone(),
             None,
         )
         .await
@@ -1168,7 +1225,7 @@ async fn fetch_token_items(session: &SessionState) -> Result<Vec<Value>, AppErro
         reqwest::Method::GET,
         &format!("{}/api/token/?p=0&size=100", session.base_url),
         &session.session_cookie,
-        session.user.id,
+        session.user.id.clone(),
         None,
     )
     .await?;
@@ -1194,7 +1251,7 @@ async fn fetch_token_items_compat(session: &SessionState) -> Result<Vec<Value>, 
             reqwest::Method::GET,
             &url,
             &session.session_cookie,
-            session.user.id,
+            session.user.id.clone(),
             None,
         )
         .await
@@ -1225,7 +1282,7 @@ async fn create_token(session: &SessionState) -> Result<(), AppError> {
         reqwest::Method::POST,
         &format!("{}/api/token/", session.base_url),
         &session.session_cookie,
-        session.user.id,
+        session.user.id.clone(),
         Some(json!({
             "name": BRAND_APP_NAME,
             "unlimited_quota": true,
@@ -1253,7 +1310,7 @@ async fn create_token_compat(session: &SessionState) -> Result<Option<String>, A
             reqwest::Method::POST,
             &format!("{}{}", session.base_url, path),
             &session.session_cookie,
-            session.user.id,
+            session.user.id.clone(),
             Some(payload.clone()),
         )
         .await
@@ -1283,7 +1340,7 @@ async fn fetch_token_key(session: &SessionState, token_id: i64) -> Result<String
         reqwest::Method::POST,
         &format!("{}/api/token/{}/key", session.base_url, token_id),
         &session.session_cookie,
-        session.user.id,
+        session.user.id.clone(),
         None,
     )
     .await
@@ -1299,7 +1356,7 @@ async fn fetch_token_key(session: &SessionState, token_id: i64) -> Result<String
         reqwest::Method::GET,
         &format!("{}/api/token/{}", session.base_url, token_id),
         &session.session_cookie,
-        session.user.id,
+        session.user.id.clone(),
         None,
     )
     .await?;
@@ -1386,7 +1443,9 @@ fn pick_token(items: &[Value], token_id: Option<i64>) -> Option<Value> {
 
 // ---- dashboard config I/O ------------------------------------------------
 
-fn dashboard_state(state: &State<'_, AppState>) -> Result<(String, Option<String>), AppError> {
+pub(super) fn dashboard_state(
+    state: &State<'_, AppState>,
+) -> Result<(String, Option<String>), AppError> {
     let inner = state.inner.lock()?;
     Ok((inner.api_base_url.clone(), inner.session_token.clone()))
 }
@@ -1401,7 +1460,7 @@ fn apply_auth(mut req: reqwest::RequestBuilder, token: Option<&str>) -> reqwest:
 }
 
 /// GET /api/config from the dashboard, returning the parsed config object.
-async fn read_config(api_base: &str, token: Option<&str>) -> Result<Value, AppError> {
+pub(super) async fn read_config(api_base: &str, token: Option<&str>) -> Result<Value, AppError> {
     let url = format!("{}/api/config", api_base.trim_end_matches('/'));
     let res = apply_auth(DASHBOARD_HTTP.get(&url), token).send().await?;
     let status = res.status().as_u16();
@@ -1417,7 +1476,11 @@ async fn read_config(api_base: &str, token: Option<&str>) -> Result<Value, AppEr
 }
 
 /// PUT /api/config with the `{ config }` envelope the dashboard expects.
-async fn write_config(api_base: &str, token: Option<&str>, config: &Value) -> Result<(), AppError> {
+pub(super) async fn write_config(
+    api_base: &str,
+    token: Option<&str>,
+    config: &Value,
+) -> Result<(), AppError> {
     let url = format!("{}/api/config", api_base.trim_end_matches('/'));
     let res = apply_auth(DASHBOARD_HTTP.put(&url), token)
         .json(&json!({ "config": config }))
@@ -1661,6 +1724,9 @@ pub async fn account_login(
     input: LoginInput,
     state: State<'_, AppState>,
 ) -> Result<AccountUser, AppError> {
+    if super::ccwork_account::enabled() {
+        return super::ccwork_account::login(input, &state).await;
+    }
     let user = do_login(&input.base_url, &input.username, &input.password).await?;
     let session = require_session()?;
     // 换了账号（或换了服务地址）就丢掉上一个用户的 key，别让它被复用。
@@ -1677,7 +1743,10 @@ pub async fn account_login(
 }
 
 #[tauri::command]
-pub async fn account_status() -> Result<StatusResult, AppError> {
+pub async fn account_status(state: State<'_, AppState>) -> Result<StatusResult, AppError> {
+    if super::ccwork_account::enabled() {
+        return super::ccwork_account::status(&state).await;
+    }
     let session = match restore_session_from_store()? {
         Some(session) => Some(
             refresh_session_user(session.clone())
@@ -1709,6 +1778,9 @@ pub async fn account_status() -> Result<StatusResult, AppError> {
 /// key itself is never returned — only a masked preview.
 #[tauri::command]
 pub async fn account_fetch_setup() -> Result<SetupResult, AppError> {
+    if super::ccwork_account::enabled() {
+        return super::ccwork_account::setup().await;
+    }
     let session = require_session()?;
     let catalog = select_brand_account_catalog(fetch_models(&session).await?);
     let key = stored_key()?;
@@ -1717,6 +1789,7 @@ pub async fn account_fetch_setup() -> Result<SetupResult, AppError> {
         base_url: session.base_url.clone(),
         models: catalog.models,
         model_endpoint_types: catalog.endpoint_types,
+        model_names: BTreeMap::new(),
         has_key: key.is_some(),
         masked_key: key.as_deref().map(mask_key),
     })
@@ -1724,6 +1797,9 @@ pub async fn account_fetch_setup() -> Result<SetupResult, AppError> {
 
 #[tauri::command]
 pub async fn account_list_tokens() -> Result<Vec<AccountToken>, AppError> {
+    if super::ccwork_account::enabled() {
+        return Ok(Vec::new());
+    }
     let session = require_session()?;
     let items = fetch_token_items_compat(&session).await?;
     Ok(items
@@ -1752,12 +1828,15 @@ pub async fn account_list_tokens() -> Result<Vec<AccountToken>, AppError> {
 
 #[tauri::command]
 pub async fn account_balance() -> Result<AccountBalance, AppError> {
+    if super::ccwork_account::enabled() {
+        return super::ccwork_account::balance().await;
+    }
     let session = require_session()?;
     let (_, self_body) = account_json(
         reqwest::Method::GET,
         &format!("{}/api/user/self", session.base_url),
         &session.session_cookie,
-        session.user.id,
+        session.user.id.clone(),
         None,
     )
     .await?;
@@ -1767,7 +1846,7 @@ pub async fn account_balance() -> Result<AccountBalance, AppError> {
         reqwest::Method::GET,
         &format!("{}/api/status", session.base_url),
         &session.session_cookie,
-        session.user.id,
+        session.user.id.clone(),
         None,
     )
     .await?;
@@ -1788,6 +1867,10 @@ pub async fn account_balance() -> Result<AccountBalance, AppError> {
         quota_per_unit,
         display_in_currency,
         top_up_url,
+        available_credits: None,
+        frozen_credits: None,
+        monthly_consumed_credits: None,
+        today_consumed_credits: None,
     })
 }
 
@@ -1799,6 +1882,9 @@ pub async fn account_save_models(
     input: SaveModelsInput,
     state: State<'_, AppState>,
 ) -> Result<StatusResult, AppError> {
+    if super::ccwork_account::enabled() {
+        return super::ccwork_account::save_models(input, &state).await;
+    }
     if input.models.is_empty() && input.token_id.is_none() {
         return Err(AppError::InvalidRequest("未选择任何模型或令牌".to_string()));
     }
@@ -1843,11 +1929,14 @@ pub async fn account_save_models(
     );
     write_config(&dash_base, token.as_deref(), &merged).await?;
 
-    account_status().await
+    account_status(state).await
 }
 
 #[tauri::command]
 pub async fn account_test_model(model_id: String) -> Result<TestModelResult, AppError> {
+    if super::ccwork_account::enabled() {
+        return super::ccwork_account::test_model(&model_id).await;
+    }
     if !is_brand_account_model(&model_id) {
         return Err(AppError::InvalidRequest(
             "Model is outside the active brand allowlist".to_string(),
@@ -1978,16 +2067,19 @@ pub async fn account_clear_credentials() -> Result<(), AppError> {
 
 #[tauri::command]
 pub async fn account_logout(state: State<'_, AppState>) -> Result<StatusResult, AppError> {
+    if super::ccwork_account::enabled() {
+        return super::ccwork_account::logout(&state).await;
+    }
     *SESSION.lock()? = None;
     secret_store::delete(&session_account())?;
     // key 与它的归属记录必须一起清，否则残留的归属会让下一个登录用户被误判为
     // 「同一个人」而复用一把已经不存在的 key。
     clear_stored_key()?;
     clear_account_providers(&state).await?;
-    account_status().await
+    account_status(state).await
 }
 
-async fn clear_account_providers(state: &State<'_, AppState>) -> Result<(), AppError> {
+pub(super) async fn clear_account_providers(state: &State<'_, AppState>) -> Result<(), AppError> {
     let (dash_base, token) = dashboard_state(state)?;
     let mut config = read_config(&dash_base, token.as_deref()).await?;
     apply_managed_providers_json(&mut config, &[ManagedNamespace::Account], &[])
@@ -2065,7 +2157,7 @@ mod tests {
             base_url: base_url.to_string(),
             session_cookie: "session=x".to_string(),
             user: AccountUser {
-                id: user_id,
+                id: user_id.into(),
                 username: format!("user{user_id}"),
                 display_name: String::new(),
                 role: 1,
