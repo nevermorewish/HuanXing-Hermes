@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Popover } from "@hermes/shared-ui";
+import { LoadingState, Popover } from "@hermes/shared-ui";
 import {
   ExternalLink,
   FolderPlus,
@@ -26,6 +26,7 @@ import {
   togglePinnedWorkspaceProject,
   type WorkspaceProject,
 } from "@/lib/workspaces";
+import { useConfirm } from "@/lib/use-confirm";
 import { runtime } from "@/lib/runtime";
 import { TopBar, TopBarActionButton } from "@/components/top-bar/top-bar";
 import s from "./projects.module.css";
@@ -86,20 +87,20 @@ function RowMenu({ pinned, desktopAvailable, onTogglePin, onOpenInFinder, onDele
       >
         <Popover.Close asChild>
           <button type="button" onClick={onTogglePin} role="menuitem">
-            {pinned ? <PinOff size={13} /> : <Pin size={13} />}
+            {pinned ? <PinOff size={12} /> : <Pin size={12} />}
             {pinned ? "取消置顶" : "置顶项目"}
           </button>
         </Popover.Close>
         {desktopAvailable ? (
           <Popover.Close asChild>
             <button type="button" onClick={onOpenInFinder} role="menuitem">
-              <ExternalLink size={13} /> 在 Finder 打开
+              <ExternalLink size={12} /> 在 Finder 打开
             </button>
           </Popover.Close>
         ) : null}
         <Popover.Close asChild>
           <button type="button" onClick={onDelete} role="menuitem" data-tone="danger">
-            <Trash2 size={13} /> 删除项目
+            <Trash2 size={12} /> 删除项目
           </button>
         </Popover.Close>
       </Popover.Content>
@@ -115,6 +116,7 @@ export function ProjectsRoute() {
   const [pinnedProjectPaths, setPinnedProjectPaths] = useState(readPinnedWorkspaceProjectPaths);
   const [searchQuery, setSearchQuery] = useState("");
   const [openMenuPath, setOpenMenuPath] = useState<string | null>(null);
+  const { confirm, prompt } = useConfirm();
 
   useEffect(() => {
     return subscribeWorkspaceChanges(() => {
@@ -182,12 +184,22 @@ export function ProjectsRoute() {
     try {
       let nextPath = "";
       if (runtime.isRemote()) {
-        nextPath = window.prompt("输入远端服务器上的项目绝对路径", "") ?? "";
+        nextPath = (await prompt({
+          title: "添加远端项目",
+          body: "输入远端服务器上的项目绝对路径",
+          confirmLabel: "添加",
+          input: { placeholder: "/path/to/project" },
+        })) ?? "";
       } else if (desktopAvailable && window.hermesDesktop?.pickDirectory) {
         const result = await window.hermesDesktop.pickDirectory();
         if (!result.canceled) nextPath = result.paths[0] ?? "";
       } else {
-        nextPath = window.prompt("输入项目工作区路径（绝对路径）", "") ?? "";
+        nextPath = (await prompt({
+          title: "添加项目",
+          body: "输入项目工作区路径（绝对路径）",
+          confirmLabel: "添加",
+          input: { placeholder: "C:\\path\\to\\project" },
+        })) ?? "";
       }
       const normalized = normalizeWorkspacePath(nextPath);
       if (!normalized) return;
@@ -196,7 +208,7 @@ export function ProjectsRoute() {
     } catch (error) {
       console.error("Failed to add project:", error);
     }
-  }, [desktopAvailable]);
+  }, [desktopAvailable, prompt]);
 
   const handleOpenInFinder = useCallback(async (project: WorkspaceProject) => {
     setOpenMenuPath(null);
@@ -215,16 +227,19 @@ export function ProjectsRoute() {
     setPinnedProjectPaths(togglePinnedWorkspaceProject(project.path));
   }, []);
 
-  const handleDelete = useCallback((project: WorkspaceProject) => {
+  const handleDelete = useCallback(async (project: WorkspaceProject) => {
     setOpenMenuPath(null);
-    const confirmed = window.confirm(
-      `确认删除项目「${project.name}」？该工作区下的会话会被解除关联，但会话本身不会删除。`,
-    );
+    const confirmed = await confirm({
+      title: "删除项目",
+      body: `确认删除项目「${project.name}」？该工作区下的会话会被解除关联，但会话本身不会删除。`,
+      confirmLabel: "删除",
+      danger: true,
+    });
     if (!confirmed) return;
     removeWorkspaceProject(project.path);
     setProjects(readWorkspaceProjects());
     setPinnedProjectPaths(readPinnedWorkspaceProjectPaths());
-  }, []);
+  }, [confirm]);
 
   const goProject = useCallback(
     (project: WorkspaceProject) => {
@@ -244,7 +259,7 @@ export function ProjectsRoute() {
         }
         right={
           <TopBarActionButton onClick={handleAddProject}>
-            <FolderPlus size={13} />
+            <FolderPlus size={12} />
             添加项目
           </TopBarActionButton>
         }
@@ -252,7 +267,7 @@ export function ProjectsRoute() {
 
       <div className={s.filters}>
         <div className={s.searchBox}>
-          <Search size={13} />
+          <Search size={12} />
           <input
             type="search"
             placeholder="按名称或路径搜索…"
@@ -264,7 +279,9 @@ export function ProjectsRoute() {
       </div>
 
       <div className={s.scroll}>
-        {projects.length === 0 ? (
+        {isLoading ? (
+          <LoadingState variant="page" label="正在加载项目…" />
+        ) : projects.length === 0 ? (
           <div className={s.emptyState}>
             <FolderPlus size={28} />
             <p>还没有项目</p>
@@ -339,7 +356,7 @@ export function ProjectsRoute() {
                               className={s.menuTrigger}
                               aria-label="项目操作"
                             >
-                              <MoreHorizontal size={14} />
+                              <MoreHorizontal size={16} />
                             </button>
                           </Popover.Trigger>
                           <RowMenu
@@ -366,7 +383,7 @@ export function ProjectsRoute() {
           {formatTokens(aggregates.reduce((sum, item) => sum + item.totalTokens, 0))} tokens
         </span>
         <button type="button" className={s.footAction} onClick={handleAddProject}>
-          <Plus size={13} /> 添加项目
+          <Plus size={12} /> 添加项目
         </button>
       </div>
     </main>

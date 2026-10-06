@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import {
   Copy,
   ExternalLink,
+  BarChart3,
   Folder,
   Info,
   Languages,
@@ -14,7 +15,21 @@ import {
   User,
 } from "lucide-react";
 import type { SkillInfo } from "@hermes/protocol";
-import { useSkillMarkdown, useSkills, useToggleSkill } from "@/hooks/use-skills";
+import {
+  Button,
+  Dialog,
+  Input as UiInput,
+  LoadingState,
+  PageTabs,
+  Select as UiSelect,
+  type PageTabItem,
+} from "@hermes/shared-ui";
+import {
+  useCopyBuiltinSkill,
+  useSkillMarkdown,
+  useSkills,
+  useToggleSkill,
+} from "@/hooks/use-skills";
 import {
   useActiveProfileName,
   useManagementProfile,
@@ -30,8 +45,9 @@ import {
   translateSkill,
 } from "@/lib/skill-translations";
 import { MarkdownText } from "@/components/chat/markdown-renderer";
-import { TopBarActions } from "@/components/top-bar/top-bar";
+import { TopBar, TopBarActionButton } from "@/components/top-bar/top-bar";
 import { CopyButton } from "@/components/ui/copy-button";
+import { SkillUsageStats } from "@/components/skills/skill-usage-stats";
 import {
   isUserSkill,
   resolveSkillOrigin,
@@ -40,7 +56,7 @@ import {
 } from "@/lib/skill-origin";
 import s from "./skills.module.css";
 
-type Tab = "builtin" | "user" | "market";
+type Tab = "builtin" | "market" | "stats" | "user";
 type Filter = "all" | "enabled" | "disabled";
 type Lang = "zh" | "en";
 
@@ -101,28 +117,96 @@ function markdownWithoutFrontmatter(content: string): string {
   return normalized.slice(match[0].length).replace(/^\s+/, "");
 }
 
+export function childPath(parent: string | undefined, child: string): string | null {
+  const normalized = parent?.trim().replace(/[\\/]+$/, "");
+  if (!normalized) return null;
+  const separator = normalized.includes("\\") ? "\\" : "/";
+  return `${normalized}${separator}${child}`;
+}
+
+export function suggestedSkillCopyName(source: string, existing: readonly string[]): string {
+  const occupied = new Set(existing);
+  const base = `${source}-custom`.slice(0, 64).replace(/[._-]+$/, "") || "custom-skill";
+  if (!occupied.has(base)) return base;
+  for (let suffix = 2; suffix < 10_000; suffix += 1) {
+    const marker = `-${suffix}`;
+    const candidate = `${base.slice(0, 64 - marker.length).replace(/[._-]+$/, "")}${marker}`;
+    if (!occupied.has(candidate)) return candidate;
+  }
+  return "custom-skill";
+}
+
+export function resolveSkillsManagementScope(
+  managementProfile: string | null,
+  activeProfile: string,
+  profileNames: readonly string[],
+  profilesLoaded: boolean,
+): string | null {
+  if (!managementProfile || managementProfile === activeProfile) return null;
+  if (profilesLoaded && !profileNames.includes(managementProfile)) return null;
+  return managementProfile;
+}
+
 export function SkillsRoute() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   // 管理范围：/skills?profile=X 深链或档案页「管理技能」会设它。scope ≠ 活跃档案时，
   // 技能列表/启停就地作用于该档案（不切换 dashboard），并显示提示横幅。
   const active = useActiveProfileName();
   const mgmt = useManagementProfile();
   const setMgmt = useSetManagementProfile();
-  const scope = mgmt && mgmt !== active ? mgmt : null;
   const profilesQuery = useProfiles();
-  const profileNames = (profilesQuery.data ?? []).map((p) => p.name);
+  const profileNames = useMemo(
+    () => (profilesQuery.data ?? []).map((profile) => profile.name),
+    [profilesQuery.data],
+  );
+  const scope = resolveSkillsManagementScope(
+    mgmt,
+    active,
+    profileNames,
+    profilesQuery.isSuccess,
+  );
   const urlProfile = searchParams.get("profile");
   useEffect(() => {
     if (urlProfile) setMgmt(urlProfile);
   }, [urlProfile, setMgmt]);
 
+  useEffect(() => {
+    if (mgmt && profilesQuery.isSuccess && !profileNames.includes(mgmt)) {
+      setMgmt(null);
+    }
+  }, [mgmt, profileNames, profilesQuery.isSuccess, setMgmt]);
+
+  // Sync management scope TO the URL whenever it changes, so the scope
+  // survives page refresh (Bug #4 fix — URL-Driven Scope).
+  // Handles both onSelect changes and external clearing (active-profile switch).
+  useEffect(() => {
+    setSearchParams((prev) => {
+      const current = scope;
+      const inUrl = prev.get("profile");
+      if (current && current !== inUrl) {
+        prev.set("profile", current);
+      } else if (!current && inUrl) {
+        prev.delete("profile");
+      } else {
+        return prev; // already in sync — skip update
+      }
+      return prev;
+    }, { replace: true });
+  }, [scope, setSearchParams]);
+
   const { data: skills, isLoading, isFetching, isError, error, refetch } = useSkills(scope);
   const toggleSkill = useToggleSkill(scope);
+  const copyBuiltinSkill = useCopyBuiltinSkill(scope);
   const [tab, setTab] = useState<Tab>("builtin");
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [lang, setLang] = useState<Lang>("zh");
+  const [copyDialogOpen, setCopyDialogOpen] = useState(false);
+  const [copySourceName, setCopySourceName] = useState("");
+  const [copyName, setCopyName] = useState("");
+  const [copyValidationError, setCopyValidationError] = useState("");
+  const [userActionMessage, setUserActionMessage] = useState("");
   const selectedFromQuery = searchParams.get("skill");
 
   const { builtin, user } = useMemo(() => {
@@ -135,6 +219,79 @@ export function SkillsRoute() {
 
   const currentList = tab === "builtin" ? builtin : tab === "user" ? user : [];
   const enabledCount = (skills ?? []).filter((sk) => sk.enabled).length;
+  const managedProfileName = scope || active;
+  const managedProfilePath = profilesQuery.data?.find(
+    (profile) => profile.name === managedProfileName,
+  )?.path;
+  const userSkillsPath = childPath(managedProfilePath, "skills");
+
+  const selectCopySource = (sourceName: string) => {
+    setCopySourceName(sourceName);
+    setCopyName(suggestedSkillCopyName(sourceName, (skills ?? []).map((skill) => skill.name)));
+    setCopyValidationError("");
+    copyBuiltinSkill.reset();
+  };
+
+  const openCopyDialog = () => {
+    const first = builtin[0];
+    if (!first) return;
+    selectCopySource(first.name);
+    setCopyDialogOpen(true);
+  };
+
+  const openUserSkillsDirectory = async () => {
+    setUserActionMessage("");
+    if (!userSkillsPath) {
+      setUserActionMessage("尚未读取到当前档案目录，请刷新后重试。");
+      return;
+    }
+    if (!window.hermesDesktop?.openWorkspacePath) {
+      setUserActionMessage("当前环境不支持打开本机目录。");
+      return;
+    }
+    try {
+      const result = await window.hermesDesktop.openWorkspacePath({ path: userSkillsPath });
+      if (!result.ok) {
+        setUserActionMessage(result.body || result.statusText || "打开 Skills 目录失败。");
+      }
+    } catch (error) {
+      setUserActionMessage(error instanceof Error ? error.message : "打开 Skills 目录失败。");
+    }
+  };
+
+  const submitSkillCopy = async () => {
+    const name = copyName.trim();
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(name)) {
+      setCopyValidationError("名称需为 1–64 位小写字母、数字、点、下划线或连字符，并以字母或数字开头。");
+      return;
+    }
+    if ((skills ?? []).some((skill) => skill.name === name)) {
+      setCopyValidationError("这个 Skill 名称已存在，请换一个名称。");
+      return;
+    }
+    const source = builtin.find((skill) => skill.name === copySourceName);
+    if (!source) {
+      setCopyValidationError("请选择一个可复制的内置 Skill。");
+      return;
+    }
+    setCopyValidationError("");
+    try {
+      await copyBuiltinSkill.mutateAsync({
+        sourceName: source.name,
+        name,
+        category: source.category,
+      });
+      await refetch();
+      setSelectedName(name);
+      setFilter("all");
+      setSearch("");
+      setTab("user");
+      setCopyDialogOpen(false);
+      setUserActionMessage(`已创建 ${name}，现在可以在文件系统中继续编辑。`);
+    } catch {
+      // Mutation state renders the backend's validated error below.
+    }
+  };
 
   useEffect(() => {
     if (!selectedFromQuery || !skills?.length) return;
@@ -192,102 +349,87 @@ export function SkillsRoute() {
   const selected =
     filtered.find((sk) => sk.name === selectedName) ?? filtered[0] ?? null;
 
+  const tabHint = (
+    <span className={s.tabHint}>
+      <Info size={12} />
+      {tab === "builtin"
+        ? "内置 Skill 由 Hermes 团队维护，仅可启用 / 禁用"
+        : tab === "market"
+          ? "精选 Skill 市场与目录，点击卡片会在外部浏览器打开"
+          : tab === "stats"
+            ? "按当前管理档案统计已完成的 Skill 加载调用"
+            : "自建 Skill 保存在"}
+      {tab === "user" && <code>~/.hermes/skills/</code>}
+    </span>
+  );
+
   return (
     <main className={s.page}>
-      <div className={s.paneTop} data-window-drag data-tauri-drag-region="deep">
-        <span className={s.paneTopTitle}>技能</span>
-        <span className={s.paneTopMeta}>
-          {skills
-            ? `${builtin.length} 个内置 · ${user.length} 个自建 · ${enabledCount} 已启用`
-            : isLoading
-              ? "加载中…"
-              : "—"}
-        </span>
-        <div className={s.paneTopActions}>
-          <button
-            className={s.btn}
+      <TopBar
+        title="技能"
+        sub={skills
+          ? `${builtin.length} 个内置 · ${user.length} 个自建 · ${enabledCount} 已启用`
+          : isLoading
+            ? "加载中…"
+            : "—"}
+        right={
+          <TopBarActionButton
             type="button"
             onClick={() => void refetch()}
             disabled={isFetching}
+            loading={isFetching}
+            leadingIcon={<RefreshCw size={12} />}
           >
-            <RefreshCw size={13} />
-            {isFetching ? "刷新中" : "同步内置"}
-          </button>
-          <TopBarActions />
-        </div>
-      </div>
+            同步内置
+          </TopBarActionButton>
+        }
+      />
+
+      <PageTabs
+        aria-label="技能页面"
+        items={[
+          { value: "builtin", label: "内置 Skills", icon: <Package />, count: builtin.length },
+          { value: "market", label: "Skill 市场", icon: <Store /> },
+          { value: "stats", label: "统计", icon: <BarChart3 /> },
+          { value: "user", label: "我的 Skills", icon: <User />, count: user.length },
+        ] satisfies readonly PageTabItem<Tab>[]}
+        value={tab}
+        onValueChange={(nextTab) => {
+          setTab(nextTab);
+          setSelectedName(null);
+        }}
+        end={tabHint}
+      />
 
       {scope && (
-        <ProfileScopeBanner
-          scope={scope}
-          profileNames={profileNames}
-          onSelect={(name) => setMgmt(name && name !== active ? name : null)}
-        />
+        <div className={s.scopeRail}>
+          <ProfileScopeBanner
+            scope={scope}
+            profileNames={profileNames}
+            onSelect={(name) => setMgmt(name && name !== active ? name : null)}
+          />
+        </div>
       )}
-
-      {/* 顶部 tab：内置 / 我的 / 市场 */}
-      <div className={s.toptabs}>
-        <button
-          type="button"
-          className={s.toptab}
-          data-active={tab === "builtin"}
-          onClick={() => {
-            setTab("builtin");
-            setSelectedName(null);
-          }}
-        >
-          <Package size={14} />
-          内置 Skills
-          <span className={s.toptabCount}>{builtin.length}</span>
-        </button>
-        <button
-          type="button"
-          className={s.toptab}
-          data-active={tab === "user"}
-          onClick={() => {
-            setTab("user");
-            setSelectedName(null);
-          }}
-        >
-          <User size={14} />
-          我的 Skills
-          <span className={s.toptabCount}>{user.length}</span>
-        </button>
-        <button
-          type="button"
-          className={s.toptab}
-          data-active={tab === "market"}
-          onClick={() => {
-            setTab("market");
-            setSelectedName(null);
-          }}
-        >
-          <Store size={14} />
-          Skill 市场
-        </button>
-        <span className={s.toptabSpacer} />
-        <span className={s.toptabHint}>
-          <Info size={13} />
-          {tab === "builtin"
-            ? "内置 Skill 由 Hermes 团队维护，仅可启用 / 禁用"
-            : tab === "user"
-              ? "自建 Skill 保存在"
-              : "精选 Skill 市场与目录，点击卡片会在外部浏览器打开"}
-          {tab === "user" && <code>~/.hermes/skills/</code>}
-        </span>
-      </div>
 
       {/* 主体 */}
       {tab === "market" ? (
         <SkillMarket />
+      ) : tab === "stats" ? (
+        <SkillUsageStats profileOverride={scope} />
       ) : isLoading ? (
-        <div className={s.statePane}>加载中…</div>
+        <LoadingState variant="page" label="正在加载技能…" />
       ) : isError ? (
         <div className={s.statePane}>
           技能加载失败：{error instanceof Error ? error.message : "unknown error"}
         </div>
       ) : tab === "user" && user.length === 0 ? (
-        <UserEmptyState />
+        <UserEmptyState
+          canCopy={builtin.length > 0}
+          canOpen={Boolean(userSkillsPath && window.hermesDesktop?.openWorkspacePath)}
+          message={userActionMessage}
+          onCopy={openCopyDialog}
+          onOpen={() => void openUserSkillsDirectory()}
+        />
       ) : (
         <div className={s.split}>
           <aside className={s.listSide}>
@@ -380,6 +522,80 @@ export function SkillsRoute() {
           )}
         </div>
       )}
+
+      <Dialog.Root
+        open={copyDialogOpen}
+        onOpenChange={(open) => {
+          setCopyDialogOpen(open);
+          if (!open) {
+            setCopyValidationError("");
+            copyBuiltinSkill.reset();
+          }
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay />
+          <Dialog.Content className={s.copyDialog} aria-describedby="copy-skill-description">
+            <div className={s.copyDialogHeader}>
+              <Dialog.Title className={s.copyDialogTitle}>基于内置 Skill 复制</Dialog.Title>
+              <Dialog.Description id="copy-skill-description" className={s.copyDialogDescription}>
+                选择模板并为你的副本指定唯一 ID。副本写入当前管理档案，可以安全修改。
+              </Dialog.Description>
+            </div>
+            <div className={s.copyDialogBody}>
+              <label className={s.copyField} htmlFor="copy-skill-source">
+                <span>内置 Skill</span>
+                <UiSelect
+                  id="copy-skill-source"
+                  value={copySourceName}
+                  onChange={(event) => selectCopySource(event.target.value)}
+                >
+                  {builtin.map((skill) => (
+                    <option key={skill.name} value={skill.name}>
+                      {translateSkill(skill.name, skill.description).displayName} · {skill.name}
+                    </option>
+                  ))}
+                </UiSelect>
+              </label>
+              <label className={s.copyField} htmlFor="copy-skill-name">
+                <span>副本 ID</span>
+                <UiInput
+                  id="copy-skill-name"
+                  value={copyName}
+                  onChange={(event) => {
+                    setCopyName(event.target.value);
+                    setCopyValidationError("");
+                    copyBuiltinSkill.reset();
+                  }}
+                  autoComplete="off"
+                  spellCheck={false}
+                  mono
+                />
+              </label>
+              {(copyValidationError || copyBuiltinSkill.isError) && (
+                <div className={s.copyDialogError} role="alert">
+                  {copyValidationError || (copyBuiltinSkill.error instanceof Error
+                    ? copyBuiltinSkill.error.message
+                    : "复制 Skill 失败。")}
+                </div>
+              )}
+            </div>
+            <div className={s.copyDialogActions}>
+              <Dialog.Close asChild>
+                <Button variant="ghost">取消</Button>
+              </Dialog.Close>
+              <Button
+                variant="solid"
+                tone="accent"
+                loading={copyBuiltinSkill.isPending}
+                onClick={() => void submitSkillCopy()}
+              >
+                创建副本
+              </Button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </main>
   );
 }
@@ -418,7 +634,7 @@ function SkillRow({ skill, active, onSelect, onToggle, showBuiltinTag }: SkillRo
         <Dot tone={skill.enabled ? "ok" : "neutral"} />
         <span className={s.skillRowName}>{tr.displayName}</span>
         {showBuiltinTag && <span className={`${s.rowTag} ${s.rowTagBuiltin}`}>内置</span>}
-        <span style={{ marginLeft: "auto" }} onClick={(e) => e.stopPropagation()}>
+        <span className={s.skillToggleSlot} onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
             className={s.toggle}
@@ -494,7 +710,7 @@ function SkillDetail({
               className={s.btn}
               title="复制原文 ID"
             >
-              <Copy size={13} />
+              <Copy size={12} />
               复制 ID
             </CopyButton>
             <button
@@ -522,7 +738,7 @@ function SkillDetail({
 
         {tab === "builtin" && (
           <div className={s.readonlyNotice}>
-            <Lock size={14} className={s.readonlyLock} />
+            <Lock size={16} className={s.readonlyLock} />
             <div>
               <strong>这是 Hermes 内置 Skill。</strong>
               只能启用 / 禁用，不能修改。下次执行 <code>同步内置</code> 时会被覆盖。
@@ -583,7 +799,7 @@ function SkillDetail({
             )}
             {isTranslated ? (
               <div className={s.descriptionCardFooter}>
-                <Languages size={13} />
+                <Languages size={12} />
                 中文版基于 SKILL.md description 字段翻译。完整 SKILL.md 内容请到来源目录查看。
               </div>
             ) : null}
@@ -596,7 +812,7 @@ function SkillDetail({
             <div className={s.secHeadRight}>
               {markdown?.content ? (
                 <CopyButton text={markdown.content} className={s.btn}>
-                  <Copy size={13} />
+                  <Copy size={12} />
                   复制 Markdown
                 </CopyButton>
               ) : null}
@@ -604,7 +820,7 @@ function SkillDetail({
           </div>
           <div className={s.markdownCard} aria-busy={markdownQuery.isFetching}>
             {markdownQuery.isLoading ? (
-              <div className={s.markdownState}>正在读取 SKILL.md…</div>
+              <LoadingState variant="block" label="正在读取 SKILL.md…" />
             ) : markdownQuery.isError ? (
               <div className={s.markdownState} data-tone="error">
                 读取失败：{markdownQuery.error instanceof Error ? markdownQuery.error.message : "unknown error"}
@@ -625,27 +841,27 @@ function SkillDetail({
           </div>
           <div className={`${s.descriptionCard} ${s.sourceCard}`}>
             <div className={s.sourceRow}>
-              <Folder size={14} className={s.sourceIcon} />
+              <Folder size={16} className={s.sourceIcon} />
               <div className={s.sourceText}>
                 <span className={s.sourceLabel}>实际安装目录</span>
                 <code>{sourcePath}</code>
               </div>
               {resolvedSourcePath && (
                 <CopyButton text={resolvedSourcePath} className={s.btn}>
-                  <Copy size={13} />
+                  <Copy size={12} />
                   复制
                 </CopyButton>
               )}
             </div>
             {skillFile && (
               <div className={s.sourceRow}>
-                <Folder size={14} className={s.sourceIcon} />
+                <Folder size={16} className={s.sourceIcon} />
                 <div className={s.sourceText}>
                   <span className={s.sourceLabel}>SKILL.md</span>
                   <code>{skillFile}</code>
                 </div>
                 <CopyButton text={skillFile} className={s.btn}>
-                  <Copy size={13} />
+                  <Copy size={12} />
                   复制
                 </CopyButton>
               </div>
@@ -663,11 +879,23 @@ function SkillDetail({
 
 /* ── 「我的 Skills」空状态 ─────────────────────────────────── */
 
-function UserEmptyState() {
+function UserEmptyState({
+  canCopy,
+  canOpen,
+  message,
+  onCopy,
+  onOpen,
+}: {
+  canCopy: boolean;
+  canOpen: boolean;
+  message: string;
+  onCopy: () => void;
+  onOpen: () => void;
+}) {
   return (
     <div className={s.emptyState}>
       <div className={s.emptyStateIcon}>
-        <User size={26} />
+        <User size={28} />
       </div>
       <h2 className={s.emptyStateTitle}>还没有自建 Skill</h2>
       <p className={s.emptyStateBody}>
@@ -675,18 +903,19 @@ function UserEmptyState() {
         放到 <code>~/.hermes/skills/&lt;分类&gt;/&lt;名称&gt;/</code> 目录下，
         刷新就会出现在这里。
         <br />
-        在线编辑器规划中——目前请通过文件系统手动管理。
+        复制模板后，可通过文件系统继续编辑。
       </p>
       <div className={s.emptyStateActions}>
-        <button type="button" className={s.btn}>
-          <Folder size={13} />
+        <button type="button" className={s.btn} onClick={onOpen} disabled={!canOpen}>
+          <Folder size={12} />
           打开 ~/.hermes/skills/
         </button>
-        <button type="button" className={s.btnPrimary}>
-          <Plus size={13} />
+        <button type="button" className={s.btnPrimary} onClick={onCopy} disabled={!canCopy}>
+          <Plus size={12} />
           基于内置 Skill 复制
         </button>
       </div>
+      {message && <div className={s.emptyStateMessage} role="status">{message}</div>}
     </div>
   );
 }
@@ -720,7 +949,7 @@ function SkillMarket() {
             <p className={s.marketWhy}>{item.why}</p>
             <span className={s.marketCta}>
               {item.cta}
-              <ExternalLink size={13} />
+              <ExternalLink size={12} />
             </span>
           </a>
         ))}

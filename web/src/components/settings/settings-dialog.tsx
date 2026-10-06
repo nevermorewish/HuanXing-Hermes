@@ -276,7 +276,7 @@ export function SettingsDialog() {
                   data-active={pane === item.pane ? "true" : undefined}
                   onClick={() => setPane(item.pane)}
                 >
-                  <Icon size={14} className={s.navIcon} />
+                  <Icon size={16} className={s.navIcon} />
                   {item.label}
                 </button>
               );

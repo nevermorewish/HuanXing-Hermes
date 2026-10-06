@@ -9,8 +9,13 @@ export interface ProviderCatalogModel {
   label?: string;
   contextWindow?: number;
   supportsVision?: boolean;
+  supportsPdf?: boolean;
+  supportsAudio?: boolean;
+  supportsVideo?: boolean;
   supportsTools?: boolean;
   supportsReasoning?: boolean;
+  supportsReasoningControl?: boolean;
+  openWeights?: boolean;
 }
 
 /**
@@ -321,7 +326,7 @@ export function parseContextWindowInput(raw: string | undefined): number {
   return Math.floor(parsed);
 }
 
-export const BUILTIN_PROVIDER_CATALOG_VERSION = "2026.07.18.4";
+export const BUILTIN_PROVIDER_CATALOG_VERSION = "2026.07.26.1";
 
 export const BUILTIN_PROVIDER_CATALOG: ProviderCatalog = {
   version: BUILTIN_PROVIDER_CATALOG_VERSION,
@@ -512,10 +517,12 @@ export const BUILTIN_PROVIDER_CATALOG: ProviderCatalog = {
       icon: "kimi",
       websiteUrl: "https://www.kimi.com/code",
       docsUrl: "https://platform.moonshot.cn/docs",
-      defaultModel: "kimi-k2.6",
+      defaultModel: "kimi-k3",
       models: [
-        { id: "kimi-k2.7-code", supportsTools: true, supportsReasoning: true },
-        { id: "kimi-k2.6", supportsTools: true },
+        { id: "kimi-k3", contextWindow: 1_000_000, supportsTools: true, supportsReasoning: true, supportsVision: true },
+        { id: "kimi-k2.7-code-highspeed", contextWindow: 262_144, supportsTools: true, supportsReasoning: true, supportsVision: true },
+        { id: "kimi-k2.7-code", contextWindow: 262_144, supportsTools: true, supportsReasoning: true, supportsVision: true },
+        { id: "kimi-k2.6", contextWindow: 262_144, supportsTools: true, supportsReasoning: true, supportsVision: true },
         { id: "kimi-k2-0905-preview", supportsTools: true },
         { id: "kimi-latest", supportsTools: true },
         { id: "moonshot-v1-128k" },
@@ -732,7 +739,8 @@ export const BUILTIN_PROVIDER_CATALOG: ProviderCatalog = {
       models: [
         { id: "Qwen/Qwen3-Coder-480B-A35B-Instruct", supportsTools: true },
         { id: "zai-org/GLM-5.2", supportsTools: true, supportsReasoning: true },
-        { id: "deepseek-ai/DeepSeek-V4-Pro", supportsTools: true, supportsReasoning: true },
+        { id: "deepseek-ai/DeepSeek-V4-Pro", contextWindow: 1_049_000, supportsTools: true, supportsReasoning: true },
+        { id: "deepseek-ai/DeepSeek-V4-Flash", contextWindow: 1_049_000, supportsTools: true, supportsReasoning: true },
         { id: "deepseek-ai/DeepSeek-V3.2", supportsTools: true },
         { id: "deepseek-ai/DeepSeek-R1", supportsReasoning: true },
       ],
@@ -1059,7 +1067,7 @@ export const BUILTIN_PROVIDER_CATALOG: ProviderCatalog = {
       icon: "rightcode",
       websiteUrl: "https://www.right.codes",
       promotion: {
-        url: "https://www.right.codes/register?aff=d7899e4a",
+        url: "https://right.codes/register?aff=e4158139",
         badge: "partner",
       },
       defaultModel: "claude-opus-4-8",
@@ -1575,6 +1583,51 @@ export function buildCurrentModelConfigUpdate(
     // 避免把上一个模型的窗口串到新模型。
     model_context_length: parseContextWindowInput(input.contextWindow),
   };
+}
+
+/**
+ * 「保存配置」是否应顺带把该服务商提升为默认主模型。
+ *
+ * 首次运行时配置页还没有任何可用模型（/api/model/info 返回空 provider /
+ * model），用户点「保存配置」的直觉就是"让工作台用上这个模型"。此时把顶层
+ * model.* 一起落盘，工作台/新会话才会用新模型，而不是继续显示旧的（甚至已
+ * 失效的）默认模型。已有默认模型时保持原语义：保存配置只写 providers.<id>，
+ * 不切换主模型。
+ *
+ * modelInfo 未加载（undefined/null）时保守返回 false，避免在信息未就绪时
+ * 误把正在编辑的服务商提升为默认。
+ */
+export function shouldPromoteProviderOnSave(
+  modelInfo: { model?: string | null; provider?: string | null } | null | undefined,
+): boolean {
+  if (!modelInfo) return false;
+  return !modelInfo.model?.trim() || !modelInfo.provider?.trim();
+}
+
+/**
+ * 「保存配置」是否需要一并更新顶层默认主模型（model.*）。
+ *
+ * 两种情况需要：
+ * 1. 当前选中的服务商就是默认主模型的服务商（provider id 相同，无论用户是否
+ *    改了模型/Base URL）：编辑当前默认服务商后点「保存配置」，默认主模型必须
+ *    跟着更新——否则 config.model 与 providers.<id> 脱节，UI 上「已是当前模
+ *    型」会翻回「设为当前模型」，工作台默认模型仍是旧的（甚至已失效的）。
+ * 2. 首次运行还没有默认模型（shouldPromoteProviderOnSave）。
+ *
+ * modelInfo 未加载时，靠 currentProviderId 是否命中来判断；两者都为空时保守
+ * 返回 false，避免在信息未就绪时误改默认主模型。
+ */
+export function shouldUpdateDefaultModelOnSave(params: {
+  currentProviderId: string;
+  selectedProviderId: string;
+  modelInfo?: { model?: string | null; provider?: string | null } | null;
+}): boolean {
+  if (shouldPromoteProviderOnSave(params.modelInfo)) return true;
+  return Boolean(
+    params.selectedProviderId &&
+      params.currentProviderId &&
+      params.currentProviderId === params.selectedProviderId,
+  );
 }
 
 export function mergeProviderCatalog(base: ProviderCatalog, remote: ProviderCatalog): ProviderCatalog {

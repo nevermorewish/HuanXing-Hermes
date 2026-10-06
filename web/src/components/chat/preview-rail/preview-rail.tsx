@@ -1,4 +1,5 @@
 import { useAtom, useAtomValue } from "jotai";
+import { useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   FileText,
@@ -8,6 +9,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  DEFAULT_PREVIEW_PANEL,
   PREVIEW_PANEL_QUERY_KEY,
   UNSAVED_DISCARD_CONFIRM,
   normalizePreviewPanel,
@@ -19,6 +21,7 @@ import {
   previewRailSelectionMapAtom,
   type PreviewRailSelection,
 } from "@/stores/preview-rail";
+import { useConfirm } from "@/lib/use-confirm";
 import { WebPreviewTab } from "./web-preview-tab";
 import { FilePreviewTab } from "./file-preview-tab";
 import { ReviewTab } from "./review-tab";
@@ -52,12 +55,37 @@ export function PreviewRail({ sessionId, workspaceRoot, onClose }: PreviewRailPr
   const editorDirty = useAtomValue(previewEditorDirtyAtom);
   const remote = runtime.isRemote();
   const localOnlyPanel = active === "files" || active === "review";
+  const didInitPanel = useRef(false);
+  const { confirm } = useConfirm();
 
-  const setActive = (panel: PreviewPanel) => {
+  // On mount, ensure the URL has a ?panel= parameter so the tab selection
+  // survives page refresh (F5). The browser preserves the URL, so a tab
+  // explicitly set via setActive() already persists — this handles the
+  // case where the panel opens programmatically (⌘B / TopBar button) without
+  // any tab having been clicked yet.
+  useEffect(() => {
+    if (didInitPanel.current) return;
+    didInitPanel.current = true;
+    if (!searchParams.has(PREVIEW_PANEL_QUERY_KEY)) {
+      const next = new URLSearchParams(searchParams);
+      next.set(PREVIEW_PANEL_QUERY_KEY, DEFAULT_PREVIEW_PANEL);
+      setSearchParams(next, { replace: true });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setActive = async (panel: PreviewPanel) => {
     if (panel === active) return;
     // Leaving 文件 unmounts FilePreviewTab and drops any unsaved draft —
     // confirm first instead of losing it silently.
-    if (active === "files" && editorDirty && !window.confirm(UNSAVED_DISCARD_CONFIRM)) return;
+    if (active === "files" && editorDirty) {
+      const confirmed = await confirm({
+        title: "放弃未保存的修改",
+        body: UNSAVED_DISCARD_CONFIRM,
+        confirmLabel: "放弃修改",
+        danger: true,
+      });
+      if (!confirmed) return;
+    }
     const next = new URLSearchParams(searchParams);
     next.set(PREVIEW_PANEL_QUERY_KEY, panel);
     setSearchParams(next, { replace: true });
@@ -86,7 +114,7 @@ export function PreviewRail({ sessionId, workspaceRoot, onClose }: PreviewRailPr
               disabled
               title="产物收集依赖后端能力，后续版本提供"
             >
-              <Icon size={13} aria-hidden />
+              <Icon size={12} aria-hidden />
               {label}
             </button>
           ))}
@@ -100,9 +128,9 @@ export function PreviewRail({ sessionId, workspaceRoot, onClose }: PreviewRailPr
               data-active={active === key ? "true" : undefined}
               disabled={remote && (key === "files" || key === "review")}
               title={remote && (key === "files" || key === "review") ? "远端模式下禁用桌面端本机文件能力" : undefined}
-              onClick={() => setActive(key)}
+              onClick={() => void setActive(key)}
             >
-              <Icon size={13} aria-hidden />
+              <Icon size={12} aria-hidden />
               {label}
               {key === "files" && editorDirty ? (
                 <span className={s.tabDirtyDot} aria-label="有未保存的修改" title="有未保存的修改" />
@@ -111,7 +139,7 @@ export function PreviewRail({ sessionId, workspaceRoot, onClose }: PreviewRailPr
           ))}
         </div>
         <button className={s.close} type="button" onClick={onClose} aria-label="关闭预览面板">
-          <X size={14} aria-hidden />
+          <X size={16} aria-hidden />
         </button>
       </header>
 

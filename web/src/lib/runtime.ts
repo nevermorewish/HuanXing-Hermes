@@ -1,3 +1,8 @@
+import {
+  deferBackendVersionCheckForOfflineRuntime,
+  resetVersionCheck,
+  type BackendRecoveryReason,
+} from "./version-check";
 import type {
   ApplyConnectionResult,
   BackupExportResult,
@@ -15,6 +20,8 @@ import type {
   EnvironmentCheckResult,
   ExportLogSnapshotInput,
   ExportLogSnapshotResult,
+  ExportSessionJsonInput,
+  ExportSessionJsonResult,
   FileUploadInput,
   HermesMessageMetadata,
   ImOnboardingApplyInput,
@@ -36,6 +43,9 @@ import type {
   SwitchProfileInput,
   SwitchProfileResult,
   TestConnectionResult,
+  UiInstallUpdateResult,
+  UiUpdateCheckResult,
+  UiUpdateReadyPayload,
   YoloModeStatus,
 } from "@hermes/protocol";
 
@@ -450,19 +460,31 @@ declare global {
       dashboardApiBaseUrl?: string;
       gatewayUrl?: string;
       sessionToken?: string;
+      /** Kernel version from the active managed runtime install record. */
+      kernelVersion?: string;
       currentProfile?: string;
       /** "managed" for desktop-owned runtime, "local"/"remote" for attached backends. */
       connectionMode?: ConnectionMode;
       backendReady?: boolean;
+      /** Why only the offline repair shell is mounted instead of the backend UI. */
+      backendRecoveryReason?: BackendRecoveryReason;
       guideState?: import("@hermes/protocol").GuideState;
       managedRuntimeDesiredState?: import("@hermes/protocol").ManagedRuntimeDesiredState;
       managedRuntimeLifecycleState?: import("@hermes/protocol").ManagedRuntimeLifecycleState;
       /** Running as the portable (unzip-and-run) desktop distribution. */
       portable?: boolean;
+      /** True when the managed runtime runs in-process (embedded CPython).
+       *  apiBaseUrl is the `embedded://local` placeholder; REST goes through
+       *  native IPC and the gateway rides the in-memory relay (zero HTTP). */
+      embedded?: boolean;
+      /** UI is running in a system browser through the desktop loopback relay. */
+      browserCompanion?: boolean;
     };
     hermesDesktop?: {
       windowType: "electron" | "tauri";
       quitApp?(): Promise<void>;
+      /** Fatal compatibility/error dialog + force-quit the app. */
+      fatalErrorAndExit?(input: { title: string; message: string }): Promise<never>;
       request(input: ElectronApiRequestInput): Promise<ElectronApiRequestResult>;
       externalRequest?(input: ElectronApiRequestInput): Promise<ElectronApiRequestResult>;
       accountLogin?(input: AccountLoginInput): Promise<AccountUser>;
@@ -487,14 +509,32 @@ declare global {
       createWorkspaceProject?(): Promise<ElectronFilePickerResult>;
       openWorkspacePath?(input: { path: string }): Promise<ElectronApiRequestResult>;
       openExternalUrl?(input: { url: string }): Promise<ElectronSimpleResult>;
+      openBrowserCompanion?(): Promise<{ ok: boolean; url: string; port: number }>;
       exportLogSnapshot?(input: ExportLogSnapshotInput): Promise<ExportLogSnapshotResult>;
+      exportSessionJson?(input: ExportSessionJsonInput): Promise<ExportSessionJsonResult>;
       exportDebugBundle?(input?: ExportDebugBundleInput): Promise<ExportDebugBundleResult>;
       environmentCheck?(): Promise<EnvironmentCheckResult>;
       codingAgentsCheck?(): Promise<CodingAgentsCheckResult>;
       checkDesktopUpdate?(): Promise<DesktopUpdateManifestFetchResult>;
       installDesktopUpdate?(): Promise<DesktopInstallUpdateResult>;
+      getUpdateConfig?(): Promise<import("@hermes/protocol").UpdateConfigSnapshot>;
+      setUpdateConfig?(config: import("@hermes/protocol").UpdateConfig): Promise<import("@hermes/protocol").UpdateConfigSnapshot>;
+      appUpdateCheck?(): Promise<import("@hermes/protocol").AppUpdateCheckResult>;
+      appUpdateInstall?(): Promise<import("@hermes/protocol").AppUpdateInstallResult>;
+      onAppUpdateProgress?(handler: (payload: import("@hermes/protocol").AppUpdateProgressPayload) => void): () => void;
+      /** Track B UI hot update: signed web-dist zip swap without restarting the
+       *  kernel. The Rust side reloads the window after a successful install;
+       *  the `ui-update-ready` listener is the renderer-side fallback. */
+      uiCheckUpdate?(): Promise<UiUpdateCheckResult>;
+      uiInstallUpdate?(): Promise<UiInstallUpdateResult>;
+      uiRollback?(): Promise<UiInstallUpdateResult>;
+      onUiUpdateReady?(handler: (payload: UiUpdateReadyPayload) => void): () => void;
+      hotUpdateBackend?(input: { sourceRoot?: string; skipGit?: boolean }): Promise<import("@hermes/protocol").HotUpdateBackendResult>;
+      onHotUpdateProgress?(handler: (payload: import("@hermes/protocol").HotUpdateProgressPayload) => void): () => void;
       getRuntimeConfig?(): Window["__HERMES_RUNTIME__"];
       refreshGatewayUrl?(): Promise<{ gatewayUrl: string; sessionToken?: string }>;
+      /** Embedded mode only: Core version read from Python via IPC (no HTTP). */
+      getBackendVersion?(): Promise<{ version: string }>;
       getRuntimeInfo?(): Promise<RuntimeInfo>;
       checkRuntimeUpdate?(): Promise<RuntimeUpdateCheckResult>;
       installRuntimeUpdate?(): Promise<RuntimeInstallUpdateResult>;
@@ -550,6 +590,7 @@ declare global {
       terminalResize?(input: { terminalId: string; cols: number; rows: number }): Promise<boolean>;
       terminalClose?(input: { terminalId: string }): Promise<boolean>;
       onTerminalOutput?(handler: (event: TerminalEventPayload) => void): () => void;
+      readFileDataUrl?(path: string): Promise<string>;
       readWorkspaceFile?(input: ReadWorkspaceFileInput): Promise<FilePreview>;
       writeWorkspaceFile?(input: WriteWorkspaceFileInput): Promise<WriteWorkspaceFileResult>;
       /** Git ops backing the review pane (issue #328). */
@@ -641,16 +682,36 @@ export const runtime = {
 
   applyRuntimeControlResult(result: RuntimeControlResult): void {
     if (!window.__HERMES_RUNTIME__) return;
-    window.__HERMES_RUNTIME__.backendReady = result.backendReady;
+    // Managed-runtime control snapshots are also shown while attached to an
+    // external backend. In that mode they must not overwrite the external
+    // backend's readiness/recovery gate. For managed mode, preserve the
+    // intentional-offline exemption after stop/uninstall refreshes.
+    if (window.__HERMES_RUNTIME__.connectionMode !== "local"
+      && window.__HERMES_RUNTIME__.connectionMode !== "remote") {
+      resetVersionCheck();
+      window.__HERMES_RUNTIME__.backendReady = result.backendReady;
+      if (!result.backendReady && result.desiredState !== "running") {
+        deferBackendVersionCheckForOfflineRuntime();
+        window.__HERMES_RUNTIME__.backendRecoveryReason = "managed-runtime-offline";
+      } else {
+        window.__HERMES_RUNTIME__.backendRecoveryReason = undefined;
+      }
+    }
     window.__HERMES_RUNTIME__.guideState = result.guideState;
     window.__HERMES_RUNTIME__.managedRuntimeDesiredState = result.desiredState;
     window.__HERMES_RUNTIME__.managedRuntimeLifecycleState = result.lifecycleState;
   },
 
-  /** True when running as the portable (unzip-and-run) desktop distribution. */
-  isPortable(): boolean {
-    return window.__HERMES_RUNTIME__?.portable ?? false;
-  },
+    /** True when running as the portable (unzip-and-run) desktop distribution. */
+    isPortable(): boolean {
+      return window.__HERMES_RUNTIME__?.portable ?? false;
+    },
+    /** True when the managed runtime runs in-process (embedded CPython).
+     *  In this mode REST must go through native IPC and the gateway must ride
+     *  the Rust relay — there is no loopback HTTP/WebSocket at all. */
+    isEmbedded(): boolean {
+      return window.__HERMES_RUNTIME__?.embedded ?? false;
+    },
 
   getApiUrl(path: string): string {
     const baseUrl = window.__HERMES_RUNTIME__?.apiBaseUrl;
@@ -699,6 +760,8 @@ export const runtime = {
   // 所以也一起更新。
   applySwitchProfileResult(result: SwitchProfileResult): void {
     if (!result.ok || !window.__HERMES_RUNTIME__) return;
+    // New profile may point to a different backend installation/version.
+    resetVersionCheck();
     if (result.apiBaseUrl) window.__HERMES_RUNTIME__.apiBaseUrl = result.apiBaseUrl;
     if (result.gatewayUrl) window.__HERMES_RUNTIME__.gatewayUrl = result.gatewayUrl;
     if (result.sessionToken) window.__HERMES_RUNTIME__.sessionToken = result.sessionToken;
@@ -710,6 +773,8 @@ export const runtime = {
   // transport call and WebSocket reconnect use the live dashboard.
   applyYoloRestartResult(result: SetYoloModeResult): void {
     if (!result.ok || !result.restarted || !window.__HERMES_RUNTIME__) return;
+    // Managed runtime was restarted; re-verify its version on next contact.
+    resetVersionCheck();
     if (result.apiBaseUrl) {
       // In Vite dev `apiBaseUrl` is intentionally undefined (relative paths go
       // through the proxy); only refresh it when production already set it.
@@ -723,6 +788,8 @@ export const runtime = {
   },
   applyConfigMigrationResult(result: ConfigMigrationImportResult): void {
     if (!result.ok || !window.__HERMES_RUNTIME__) return;
+    // Migration may have swapped the backend/profile under us.
+    resetVersionCheck();
     if (result.apiBaseUrl) {
       if (window.__HERMES_RUNTIME__.apiBaseUrl) {
         window.__HERMES_RUNTIME__.apiBaseUrl = result.apiBaseUrl;
@@ -735,6 +802,8 @@ export const runtime = {
   },
   applyBackupImportResult(result: BackupImportResult): void {
     if ((!result.ok && !result.recoveredPreviousProfile) || !window.__HERMES_RUNTIME__) return;
+    // Backup restore may have switched backend/profile; re-verify.
+    resetVersionCheck();
     if (result.apiBaseUrl) {
       if (window.__HERMES_RUNTIME__.apiBaseUrl) {
         window.__HERMES_RUNTIME__.apiBaseUrl = result.apiBaseUrl;

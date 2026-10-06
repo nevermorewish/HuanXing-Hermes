@@ -80,6 +80,42 @@ const PLATFORM_COPY: Record<ImPlatform, PlatformCopy> = {
   },
 };
 
+/**
+ * Run `task` every `delayMs`, but only schedule the next run after the
+ * previous one settles — so a slow poll never overlaps the next request.
+ */
+export function startSerialPolling(
+  task: () => Promise<unknown>,
+  delayMs: number,
+  onError?: (error: unknown) => void,
+): () => void {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const schedule = () => {
+    timer = globalThis.setTimeout(() => {
+      timer = null;
+      void run();
+    }, delayMs);
+  };
+  const run = async () => {
+    try {
+      await task();
+    } catch (error) {
+      onError?.(error);
+    } finally {
+      if (!stopped) schedule();
+    }
+  };
+
+  schedule();
+  return () => {
+    stopped = true;
+    if (timer !== null) globalThis.clearTimeout(timer);
+    timer = null;
+  };
+}
+
 export function sectionFromPath(pathname: string): ImSection | null {
   if (["/assistant", "/assistant/", "/im", "/im/"].includes(pathname)) return "overview";
   if (pathname === "/assistant/feishu" || pathname === "/im/feishu") return "feishu";
@@ -170,7 +206,7 @@ function PlatformOverviewCard({ platform }: { platform: ImPlatform }) {
 
   return (
     <Link className={s.platformCard} to={`/assistant/${platform}`}>
-      <span className={s.platformIcon}><Icon size={22} /></span>
+      <span className={s.platformIcon}><Icon size={24} /></span>
       <span className={s.platformCardCopy}>
         <span className={s.eyebrow}>{copy.eyebrow}</span>
         <strong>{copy.name}</strong>
@@ -179,7 +215,7 @@ function PlatformOverviewCard({ platform }: { platform: ImPlatform }) {
       </span>
       <span className={s.platformCardEnd}>
         <ConnectionState connected={connected} configured={configured} />
-        <ArrowRight size={18} />
+        <ArrowRight size={20} />
       </span>
     </Link>
   );
@@ -199,7 +235,7 @@ function OverviewRoute() {
           <PlatformOverviewCard platform="weixin" />
         </div>
         <div className={s.privacyNote}>
-          <ShieldCheck size={17} />
+          <ShieldCheck size={16} />
           <div><b>接入信息保存在本机</b><span>切换档案时，各档案的接入状态彼此独立。</span></div>
         </div>
       </div>
@@ -213,7 +249,7 @@ function QrCode({ value, label }: { value?: string | null; label: string }) {
     let cancelled = false;
     setSrc(null);
     if (!value) return;
-    QRCode.toDataURL(value, { width: 224, margin: 1, errorCorrectionLevel: "M" })
+    QRCode.toDataURL(value, { width: 224, margin: 4, errorCorrectionLevel: "M" })
       .then((next) => { if (!cancelled) setSrc(next); })
       .catch(() => { if (!cancelled) setSrc(null); });
     return () => { cancelled = true; };
@@ -241,7 +277,7 @@ function ProgressSteps({ hasCredentials, saved, connected }: {
     <ol className={s.steps}>
       {steps.map((step, index) => (
         <li key={step.label} data-done={step.done ? "true" : undefined} data-active={index === activeIndex ? "true" : undefined}>
-          <span>{step.done ? <Check size={14} /> : index + 1}</span><b>{step.label}</b>
+          <span>{step.done ? <Check size={16} /> : index + 1}</span><b>{step.label}</b>
         </li>
       ))}
     </ol>
@@ -254,7 +290,7 @@ function FeishuFailureHelp({ result }: { result: MessagingPlatformTestResponse }
   return (
     <section className={s.failureHelp} aria-label="飞书连接处理提示">
       <div className={s.failureHeading}>
-        <CircleAlert size={19} />
+        <CircleAlert size={20} />
         <div><b>飞书还没有连接成功</b><span>{result.message}</span></div>
       </div>
       <p>扫码信息已经保存。请到飞书开放平台确认下面三项，然后回来重新检测：</p>
@@ -264,7 +300,7 @@ function FeishuFailureHelp({ result }: { result: MessagingPlatformTestResponse }
         <li><span>3</span><div><b>添加权限并发布</b><small>加入私聊消息与机器人发消息权限，创建版本并发布。</small></div></li>
       </ol>
       <div className={s.failureActions}>
-        <Button kind="primary" onClick={() => void openExternalUrl(FEISHU_DEVELOPER_URL)}><ExternalLink size={15} />打开飞书开放平台</Button>
+        <Button kind="primary" onClick={() => void openExternalUrl(FEISHU_DEVELOPER_URL)}><ExternalLink size={16} />打开飞书开放平台</Button>
         <Button onClick={copyScopes}>复制所需权限</Button>
       </div>
     </section>
@@ -282,11 +318,11 @@ function WeixinFailureHelp({ result, onRestart }: { result: MessagingPlatformTes
   return (
     <section className={s.failureHelp} aria-label="微信连接处理提示">
       <div className={s.failureHeading}>
-        <CircleAlert size={19} />
+        <CircleAlert size={20} />
         <div><b>微信还没有连接成功</b><span>{result.message}</span></div>
       </div>
       <p>先重新检测一次；如果仍然失败，请重新扫码更新接入信息。</p>
-      <Button onClick={onRestart}><ScanLine size={15} />重新扫码</Button>
+      <Button onClick={onRestart}><ScanLine size={16} />重新扫码</Button>
     </section>
   );
 }
@@ -345,12 +381,18 @@ function ConnectorRoute({
   };
 
   useEffect(() => {
-    if (!flow?.flowId || confirmed || terminalQrState) return;
+    const flowId = flow?.flowId;
+    if (!flowId || confirmed || terminalQrState) return;
     const delay = Math.max(2, flow.intervalSeconds || 5) * 1000;
-    const timer = window.setInterval(() => {
-      poll.mutate({ platform, flowId: flow.flowId }, { onSuccess: setPollResult });
+    let active = true;
+    const stop = startSerialPolling(async () => {
+      const next = await poll.mutateAsync({ platform, flowId });
+      if (active) setPollResult(next);
     }, delay);
-    return () => window.clearInterval(timer);
+    return () => {
+      active = false;
+      stop();
+    };
   }, [confirmed, flow?.flowId, flow?.intervalSeconds, platform, terminalQrState]);
 
   useEffect(() => {
@@ -375,7 +417,7 @@ function ConnectorRoute({
   return (
     <SectionShell title={`助理 · ${copy.name}`} sub="扫码接入">
       <div className={s.pageWrap}>
-        {showBackLink ? <Link className={s.backLink} to="/assistant"><ArrowLeft size={15} />全部平台</Link> : null}
+        {showBackLink ? <Link className={s.backLink} to="/assistant"><ArrowLeft size={16} />全部平台</Link> : null}
         <header className={s.connectorHeader}>
           <span className={s.platformIcon}><Icon size={24} /></span>
           <div><span className={s.eyebrow}>{copy.eyebrow}</span><h1>{copy.name}接入</h1><p>{copy.detail}</p></div>
@@ -392,8 +434,8 @@ function ConnectorRoute({
                 <p>{existingCredentials ? `可以直接检查${copy.name}连接，或重新扫码更新接入信息。` : copy.qrHint}</p>
               </div>
               <div className={s.actions}>
-                {existingCredentials ? <Button kind="primary" onClick={() => testPlatform.mutate()} disabled={busy}><RefreshCw size={15} />检查连接</Button> : null}
-                <Button kind={existingCredentials ? "secondary" : "primary"} onClick={start} disabled={busy}><ScanLine size={15} />{existingCredentials ? "重新扫码" : "生成二维码"}</Button>
+                {existingCredentials ? <Button kind="primary" onClick={() => testPlatform.mutate()} disabled={busy}><RefreshCw size={16} />检查连接</Button> : null}
+                <Button kind={existingCredentials ? "secondary" : "primary"} onClick={start} disabled={busy}><ScanLine size={16} />{existingCredentials ? "重新扫码" : "生成二维码"}</Button>
               </div>
             </div>
           ) : null}
@@ -406,12 +448,12 @@ function ConnectorRoute({
                 <h2>{copy.qrHint}</h2>
                 <p>{qrMessage || "确认后会自动保存，不需要填写其他设置。"}</p>
                 <span className={s.qrStatus} data-tone={terminalQrState ? "error" : "pending"}>
-                  {terminalQrState ? <CircleAlert size={15} /> : <LoaderCircle className={s.spin} size={15} />}
+                  {terminalQrState ? <CircleAlert size={16} /> : <LoaderCircle className={s.spin} size={16} />}
                   {statusText(status)}
                 </span>
                 <div className={s.actions}>
-                  <Button onClick={pollOnce} disabled={busy || terminalQrState}><RotateCw size={15} />立即检查</Button>
-                  {terminalQrState ? <Button kind="primary" onClick={start} disabled={busy}><RefreshCw size={15} />重新生成</Button> : null}
+                  <Button onClick={pollOnce} disabled={busy || terminalQrState}><RotateCw size={16} />立即检查</Button>
+                  {terminalQrState ? <Button kind="primary" onClick={start} disabled={busy}><RefreshCw size={16} />重新生成</Button> : null}
                 </div>
               </div>
             </div>
@@ -430,7 +472,7 @@ function ConnectorRoute({
               <div>
                 <h2>接入信息保存失败</h2>
                 <p>{errorText(apply.error)}</p>
-                <div className={s.actions}><Button kind="primary" onClick={start}><ScanLine size={15} />重新扫码</Button></div>
+                <div className={s.actions}><Button kind="primary" onClick={start}><ScanLine size={16} />重新扫码</Button></div>
               </div>
             </div>
           ) : null}
@@ -443,10 +485,10 @@ function ConnectorRoute({
                 <p>{applyResult.restart.ok ? `点击检查连接，确认 Hermes 已经连上${copy.name}。` : applyResult.restart.message}</p>
                 <div className={s.actions}>
                   <Button kind="primary" onClick={() => testPlatform.mutate()} disabled={busy}>
-                    {testPlatform.isPending ? <LoaderCircle className={s.spin} size={15} /> : <RefreshCw size={15} />}
+                    {testPlatform.isPending ? <LoaderCircle className={s.spin} size={16} /> : <RefreshCw size={16} />}
                     {testPlatform.isPending ? "正在检查" : "检查连接"}
                   </Button>
-                  <Button onClick={start} disabled={busy}><ScanLine size={15} />重新扫码</Button>
+                  <Button onClick={start} disabled={busy}><ScanLine size={16} />重新扫码</Button>
                 </div>
               </div>
             </div>
@@ -454,12 +496,12 @@ function ConnectorRoute({
         </section>
 
         {testPlatform.data?.ok ? (
-          <div className={s.successMessage} role="status"><CheckCircle2 size={18} /><div><b>{copy.name}已连接</b><span>现在可以打开{copy.name}，给 Hermes 发一条私聊消息。</span></div></div>
+          <div className={s.successMessage} role="status"><CheckCircle2 size={20} /><div><b>{copy.name}已连接</b><span>现在可以打开{copy.name}，给 Hermes 发一条私聊消息。</span></div></div>
         ) : null}
 
         {shouldShowFeishuRecovery(platform, checkedFailure) && checkedFailure ? <FeishuFailureHelp result={checkedFailure} /> : null}
         {checkedFailure && platform === "weixin" ? <WeixinFailureHelp result={checkedFailure} onRestart={start} /> : null}
-        {actionError ? <div className={s.errorMessage} role="alert"><CircleAlert size={17} /><span>{actionError}</span></div> : null}
+        {actionError ? <div className={s.errorMessage} role="alert"><CircleAlert size={16} /><span>{actionError}</span></div> : null}
       </div>
     </SectionShell>
   );

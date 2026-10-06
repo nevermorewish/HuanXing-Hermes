@@ -7,6 +7,8 @@ import {
   fetchMediaDataUrl,
   uploadAttachmentFile,
 } from "./transport";
+import { resetVersionCheck } from "./version-check";
+import { EXPECTED_BACKEND_VERSION } from "./build-info";
 
 type PushArg = Parameters<typeof debugBus.push>[0];
 
@@ -62,6 +64,29 @@ describe("transport · debug-bus integration", () => {
     });
   }
 
+  it("fetchJSON invokes the version guard in Tauri mode", async () => {
+    resetVersionCheck();
+    window.__HERMES_RUNTIME__ = { platform: "tauri" };
+    window.__TAURI_INTERNALS__ = {};
+    const request = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ version: EXPECTED_BACKEND_VERSION, name: "hermes-agent" }),
+    }));
+    window.hermesDesktop = { windowType: "tauri", request };
+    globalThis.fetch = vi.fn() as unknown as typeof globalThis.fetch;
+
+    await expect(fetchJSON("/api/x")).rejects.toThrow(/backend version check has not completed/);
+
+    // The version probe went through Rust IPC, but the actual /api/x request
+    // was not issued while compatibility was still unchecked.
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith({ path: "/api/version", method: "GET" });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
   it("fetchJSON pushes a REST entry on non-ok response", async () => {
     stubFetch(() => makeResponse(401, "unauthorized"));
 
@@ -96,6 +121,22 @@ describe("transport · debug-bus integration", () => {
       "/api/media?path=%2FUsers%2Fme%2FHermes%20images%2Fa%201.png",
       expect.objectContaining({ headers: { "Content-Type": "application/json" } }),
     );
+  });
+
+  it("fetchMediaDataUrl prefers the desktop file bridge for local images", async () => {
+    const readFileDataUrl = vi.fn(async () => "data:image/png;base64,REVT");
+    window.hermesDesktop = {
+      windowType: "tauri",
+      request: vi.fn(),
+      readFileDataUrl,
+    };
+    stubFetch(() => makeResponse(500, "should not fetch"));
+
+    await expect(fetchMediaDataUrl("/Users/me/Library/Application Support/Hermes/out.png"))
+      .resolves.toBe("data:image/png;base64,REVT");
+
+    expect(readFileDataUrl).toHaveBeenCalledWith("/Users/me/Library/Application Support/Hermes/out.png");
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it("fetchMediaDataUrl rejects a malformed media response", async () => {
@@ -159,6 +200,63 @@ describe("transport · debug-bus integration", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  it("fetchJSON uses Tauri IPC when backend is ready even if renderer missed apiBaseUrl", async () => {
+    const request = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      body: JSON.stringify({ version: "0.19.0" }),
+    }));
+    globalThis.fetch = vi.fn(async () => makeResponse(500, "should not fetch")) as unknown as typeof globalThis.fetch;
+    window.__HERMES_RUNTIME__ = { platform: "tauri", backendReady: true };
+    window.hermesDesktop = {
+      windowType: "tauri",
+      request,
+    };
+
+    const out = await fetchJSON<{ version: string }>("/api/status");
+
+    expect(out).toEqual({ version: "0.19.0" });
+    expect(request).toHaveBeenCalledWith({
+      path: "/api/status",
+      method: undefined,
+      headers: { "Content-Type": "application/json" },
+      body: null,
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("fetchJSON forces native IPC in embedded mode even without apiBaseUrl/backendReady", async () => {
+    const request = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      body: JSON.stringify({ version: "0.20.0", embedded: true }),
+    }));
+    globalThis.fetch = vi.fn(async () => makeResponse(500, "should not fetch")) as unknown as typeof globalThis.fetch;
+    // Embedded mode: backend lives inside the Rust process, apiBaseUrl is the
+    // embedded://local placeholder and there is no loopback HTTP — every
+    // request must go through hermesDesktop.request.
+    window.__HERMES_RUNTIME__ = { platform: "tauri", embedded: true };
+    window.hermesDesktop = {
+      windowType: "tauri",
+      request,
+    };
+
+    const out = await fetchJSON<{ embedded: boolean }>("/api/status");
+
+    expect(out).toEqual({ version: "0.20.0", embedded: true });
+    expect(request).toHaveBeenCalledWith({
+      path: "/api/status",
+      method: undefined,
+      headers: { "Content-Type": "application/json" },
+      body: null,
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
   it("fetchExternalJSON uses desktop externalRequest capability on Tauri", async () => {
     const externalRequest = vi.fn(async () => ({
       ok: true,
@@ -188,6 +286,41 @@ describe("transport · debug-bus integration", () => {
       body: '{"q":1}',
     });
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("fetchExternalJSON aborts a pending desktop externalRequest", async () => {
+    type ExternalResult = {
+      ok: boolean;
+      status: number;
+      statusText: string;
+      headers: Record<string, string>;
+      body: string;
+    };
+    let finish: ((value: ExternalResult) => void) | undefined;
+    const externalRequest = vi.fn((): Promise<ExternalResult> => new Promise((resolve) => {
+      finish = resolve;
+    }));
+    window.__HERMES_RUNTIME__ = { platform: "tauri" };
+    window.hermesDesktop = {
+      windowType: "tauri",
+      request: vi.fn(),
+      externalRequest,
+    };
+    const controller = new AbortController();
+
+    const request = fetchExternalJSON("http://127.0.0.1:18400/v1/health", {
+      signal: controller.signal,
+    });
+    controller.abort();
+    finish?.({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      body: "{}",
+    });
+
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("uploadAttachmentFile uses desktop uploadFile capability on Tauri", async () => {

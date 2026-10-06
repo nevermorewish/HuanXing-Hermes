@@ -3,6 +3,7 @@ import { fetchExternalJSON } from "./transport";
 import { BRAND } from "./brand.generated";
 import {
   BUILTIN_PROVIDER_CATALOG,
+  BUILTIN_PROVIDER_CATALOG_VERSION,
   buildCurrentModelConfigUpdate,
   buildCustomProviderDeleteUpdate,
   buildProviderConfigUpdate,
@@ -71,6 +72,45 @@ describe("ensureBrandProviderModelDeclared", () => {
       },
     };
     expect(ensureBrandProviderModelDeclared(config, "custom:other", "claude-opus-5")).toBe(config);
+  });
+});
+
+describe("builtin provider catalog", () => {
+  it("ships the current Kimi and SiliconFlow coding models", () => {
+    expect(BUILTIN_PROVIDER_CATALOG_VERSION).toBe("2026.07.26.1");
+
+    const kimi = BUILTIN_PROVIDER_CATALOG.providers.find((provider) => provider.id === "kimi-for-coding");
+    expect(kimi).toMatchObject({
+      defaultModel: "kimi-k3",
+      models: expect.arrayContaining([
+        expect.objectContaining({
+          id: "kimi-k3",
+          contextWindow: 1_000_000,
+          supportsTools: true,
+          supportsReasoning: true,
+          supportsVision: true,
+        }),
+        expect.objectContaining({
+          id: "kimi-k2.7-code-highspeed",
+          contextWindow: 262_144,
+          supportsTools: true,
+          supportsReasoning: true,
+          supportsVision: true,
+        }),
+      ]),
+    });
+
+    const siliconflow = BUILTIN_PROVIDER_CATALOG.providers.find((provider) => provider.id === "siliconflow");
+    expect(siliconflow?.models).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "deepseek-ai/DeepSeek-V4-Flash",
+          contextWindow: 1_049_000,
+          supportsTools: true,
+          supportsReasoning: true,
+        }),
+      ]),
+    );
   });
 });
 

@@ -12,6 +12,16 @@ import { resolveModelContextWindow } from "@/lib/model-context";
 import { ensureBrandProviderModelDeclared } from "@/lib/provider-catalog";
 import { readLastUsedModel, rememberLastUsedModel } from "@/lib/last-used-model";
 import { recordModelUsage } from "@/lib/model-usage-log";
+import {
+  composerDraftStorageKey,
+  forgetComposerDraftByKey,
+  readComposerDraftByKey,
+  writeComposerDraftByKey,
+} from "@/lib/composer-drafts";
+import {
+  reasoningEffortFromConfig,
+  type ReasoningEffort,
+} from "@/lib/reasoning-effort";
 import { composerSubmitShortcutHint } from "@/lib/composer-submit-shortcut";
 import { shouldPrewarmDraftSession } from "@/lib/draft-session-prewarm";
 import {
@@ -51,6 +61,8 @@ export function PanelComposer() {
   const [selectedModel, setSelectedModel] = useState<ComposerModelSelection | null>(
     () => readLastUsedModel(),
   );
+  const [reasoningEffortOverride, setReasoningEffortOverride] =
+    useState<ReasoningEffort | null>(null);
   const [prefilledDraft, setPrefilledDraft] = useState({ text: "", nonce: 0 });
   const [prefill, setPrefill] = useAtom(composerPrefillAtom);
   const composerSubmitShortcut = useAtomValue(composerSubmitShortcutAtom);
@@ -61,6 +73,15 @@ export function PanelComposer() {
   const draftRef = useRef<{ id: string; cwd: string } | null>(null);
   const initialWorkspacePath = normalizeWorkspacePath(searchParams.get("workspace"));
   const submitShortcutHint = composerSubmitShortcutHint(composerSubmitShortcut);
+  const newTaskDraftKey = useMemo(
+    () => composerDraftStorageKey({ kind: "new", profile: activeProfile }),
+    [activeProfile],
+  );
+  const storedDraft = useMemo(
+    () => readComposerDraftByKey(newTaskDraftKey),
+    [newTaskDraftKey],
+  );
+  const composerInitial = prefilledDraft.nonce > 0 ? prefilledDraft.text : storedDraft;
   const enabledSkills = useMemo(
     () => (skillsQuery.data ?? []).filter((skill) => skill.enabled),
     [skillsQuery.data],
@@ -161,6 +182,13 @@ export function PanelComposer() {
     navigate(`/models#provider-${providerId}`);
   }, [navigate]);
 
+  const configReasoningEffort = useMemo(() => reasoningEffortFromConfig(config), [config]);
+  const reasoningEffort = reasoningEffortOverride ?? configReasoningEffort;
+
+  const onReasoningEffortSelect = useCallback((effort: ReasoningEffort) => {
+    setReasoningEffortOverride(effort);
+  }, []);
+
   const onSelectAndSetDefault = useCallback(async (selection: ComposerModelSelection) => {
     await onModelSelect(selection);
     if (!config) return;
@@ -210,6 +238,7 @@ export function PanelComposer() {
         void closeSession(draft.id).catch(() => {});
       }
       await createAndSendSession(payload, controls, options);
+      forgetComposerDraftByKey(newTaskDraftKey);
     } catch (err) {
       console.error("Failed to create session:", err);
       throw err;
@@ -221,16 +250,22 @@ export function PanelComposer() {
     createAndSendSession,
     adoptCreatedSession,
     closeSession,
+    newTaskDraftKey,
   ]);
+
+  const onDraftChange = useCallback((text: string) => {
+    writeComposerDraftByKey(newTaskDraftKey, text);
+  }, [newTaskDraftKey]);
 
   return (
     <div ref={wrapperRef}>
       <GooseComposer
-        key={initialWorkspacePath || "default-workspace"}
+        key={`${initialWorkspacePath || "default-workspace"}:${newTaskDraftKey ?? "draft"}`}
         onSend={onSend}
-        initial={prefilledDraft.text}
+        initial={composerInitial}
         initialNonce={prefilledDraft.nonce}
         initialWorkspacePath={initialWorkspacePath}
+        onDraftChange={onDraftChange}
         placeholder={`描述你想完成的任务，${submitShortcutHint}…`}
         variant="big"
         headerLabel="新任务"
@@ -246,6 +281,11 @@ export function PanelComposer() {
           onSelect: onModelSelect,
           onSelectAndSetDefault,
           onConfigureProvider,
+          disabled: sending,
+        }}
+        reasoningPicker={{
+          value: reasoningEffort,
+          onSelect: onReasoningEffortSelect,
           disabled: sending,
         }}
         skillPicker={{

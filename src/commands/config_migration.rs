@@ -3,18 +3,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
 use tauri::State;
 
 use crate::commands::runtime_manager;
 use crate::error::{AppError, AppResult};
+use crate::profile_name::is_valid_profile_name;
 use crate::state::AppState;
-
-static PROFILE_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$").expect("valid profile name regex")
-});
 
 const PROFILE_DIRS: &[&str] = &[
     "memories",
@@ -135,10 +130,6 @@ struct SourceHint {
     source_kind: String,
     distro: Option<String>,
     profile_name: Option<String>,
-}
-
-fn is_valid_profile_name(name: &str) -> bool {
-    PROFILE_NAME_RE.is_match(name)
 }
 
 fn active_profile_sticky_path(base: &Path) -> PathBuf {
@@ -754,9 +745,10 @@ fn harden_secret_permissions(_target: &Path) {
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn decode_command_output(bytes: &[u8]) -> String {
     if bytes.len() >= 2 && bytes.iter().filter(|b| **b == 0).count() > bytes.len() / 4 {
-        let units: Vec<u16> = bytes
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+        let (chunks, _) = bytes.as_chunks::<2>();
+        let units: Vec<u16> = chunks
+            .iter()
+            .map(|chunk| u16::from_le_bytes(*chunk))
             .filter(|unit| *unit != 0)
             .collect();
         String::from_utf16_lossy(&units)

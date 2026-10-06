@@ -97,7 +97,7 @@ export function PanelRoute() {
             data-active={mode === "office" ? "true" : undefined}
             onClick={() => setMode("office")}
           >
-            <Rocket size={14} />
+            <Rocket size={16} />
             日常办公
           </button>
           <button
@@ -106,7 +106,7 @@ export function PanelRoute() {
             data-active={mode === "code" ? "true" : undefined}
             onClick={() => setMode("code")}
           >
-            <Code2 size={14} />
+            <Code2 size={16} />
             代码开发
           </button>
           <button
@@ -115,7 +115,7 @@ export function PanelRoute() {
             disabled
             title="依赖 Core 支持，预留"
           >
-            <Palette size={14} />
+            <Palette size={16} />
             设计创意
           </button>
         </div>
@@ -131,7 +131,7 @@ export function PanelRoute() {
                 title="点击填入输入框"
                 onClick={() => setPrefill({ text: chip.prompt, nonce: Date.now() })}
               >
-                <Icon size={13} />
+                <Icon size={12} />
                 {chip.label}
               </button>
             );

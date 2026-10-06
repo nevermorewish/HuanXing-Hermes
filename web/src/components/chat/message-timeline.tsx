@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, WheelEvent } from "react";
 import { useAtomValue } from "jotai";
-import { AlertTriangle, ChevronRight, Info, Loader2, Volume2, VolumeX } from "lucide-react";
+import { AlertTriangle, ChevronRight, Info, Volume2, VolumeX } from "lucide-react";
+import { LoadingIndicator } from "@hermes/shared-ui";
 import { assistantAvatarEffectiveAtom, assistantDisplayNameAtom, showReasoningAtom } from "@/stores/ui";
 import type { AssistantMessageStats, ChatMessage, ChatToolItem } from "./chat-types";
 import { AssistantProfileCard } from "./assistant-profile-card";
@@ -10,12 +11,14 @@ import { cliDelegationsByToolIdAtom } from "@/stores/cli-delegations";
 import { MessageImage } from "./message-image";
 import { MessageSkeleton } from "./message-skeleton";
 import { MessageText } from "./message-text";
+import { SkillInvocationMessage } from "./skill-invocation-message";
 import { CopyButton } from "@/components/ui/copy-button";
 import s from "./message-timeline.module.css";
 import { summarizeToolActivity } from "./tool-activity";
 import { groupConsecutiveTools, groupElapsedMs } from "./group-tools";
 import { truncateMiddle } from "@/lib/truncate-middle";
 import { sanitizeTextForSpeech, speakText, voiceErrorMessage } from "@/lib/voice";
+import { isSkillInvocationText } from "@/lib/skill-invocation";
 import {
   formatDurationMs,
   formatElapsedTimer,
@@ -95,6 +98,18 @@ export function shouldDetachOnScroll(
 ): boolean {
   if (programmaticScroll) return false;
   return scrollTop < lastScrollTop - 1;
+}
+
+export function shouldForceBottomOnMessageChange(
+  previousMessageCount: number,
+  nextMessageCount: number,
+  sessionChanged: boolean,
+  previousLastUserMessageId: string | undefined,
+  nextLastUserMessageId: string | undefined,
+): boolean {
+  if (nextMessageCount === 0) return false;
+  if (previousMessageCount === 0 || sessionChanged) return true;
+  return nextLastUserMessageId !== undefined && nextLastUserMessageId !== previousLastUserMessageId;
 }
 
 function formatDay(timestamp: number): string {
@@ -346,7 +361,7 @@ function ToolCard({ tool }: { tool: ChatToolItem }) {
         disabled={!hasBody}
         data-open={open}
       >
-        <span className={s.toolStatus} data-status={tool.status} />
+        <span className={s.toolStatusDot} data-status={tool.status} />
         <span className={s.toolName}>{tool.name}</span>
         {tool.context ? (
           <span className={s.toolContext} title={tool.context}>
@@ -390,7 +405,7 @@ function ToolGroupCard({ tools }: { tools: ChatToolItem[] }) {
         onClick={() => setOpen((value) => !value)}
         data-open={open}
       >
-        <span className={s.toolStatus} data-status="done" />
+        <span className={s.toolStatusDot} data-status="done" />
         <span className={s.toolName}>{head.name}</span>
         {head.context ? (
           <span className={s.toolContext} title={head.context}>
@@ -444,11 +459,11 @@ function ToolActivity({ tools }: { tools: ChatToolItem[] }) {
       >
         <ChevronRight
           className={s.toolActivityChevron}
-          size={14}
+          size={16}
           strokeWidth={2.25}
           aria-hidden="true"
         />
-        <span className={s.toolStatus} data-status={summary.status} />
+        <span className={s.toolStatusDot} data-status={summary.status} />
         <span className={s.toolActivityLabel}>{summary.label}</span>
         {summary.meta ? <span className={s.toolActivityMeta}>{summary.meta}</span> : null}
         {elapsedLabel ? <span className={s.toolElapsed}>{elapsedLabel}</span> : null}
@@ -781,7 +796,31 @@ function MessageBubble({ message, turnStartedAt, sessionUsage, progressModel, sp
   const speechStatus = speech?.state.messageId === message.id ? speech.state.status : "idle";
   const speechBusy = speechStatus === "preparing" || speechStatus === "speaking";
   const hasBlocks = !isUser && Boolean(message.blocks?.length);
+  const hasSkillInvocation = isSkillInvocationText(message.text);
   const messageStats = message.stats ?? sessionUsageFallbackStats(message, sessionUsage);
+
+  if (hasSkillInvocation) {
+    return (
+      <div className={s.messageRow} data-role="system" data-system-kind="skill-invocation">
+        <div
+          className={s.systemNotice}
+          data-kind="skill-invocation"
+          role="status"
+        >
+          <Info
+            className={s.systemNoticeIcon}
+            size={16}
+            strokeWidth={1.75}
+            aria-hidden="true"
+          />
+          <div className={s.systemNoticeBody}>
+            <div className={s.systemNoticeTitle}>Skill 指令已加载</div>
+            <SkillInvocationMessage text={message.text ?? ""} />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (isToolOnly) {
     return (
@@ -806,7 +845,7 @@ function MessageBubble({ message, turnStartedAt, sessionUsage, progressModel, sp
         >
           <AlertTriangle
             className={s.systemNoticeIcon}
-            size={15}
+            size={16}
             strokeWidth={1.75}
             aria-hidden="true"
           />
@@ -902,7 +941,7 @@ function MessageBubble({ message, turnStartedAt, sessionUsage, progressModel, sp
                 title={speechBusy ? "停止朗读" : "朗读回复"}
               >
                 {speechStatus === "preparing" ? (
-                  <Loader2 aria-hidden="true" />
+                  <LoadingIndicator size="xs" />
                 ) : speechStatus === "speaking" ? (
                   <VolumeX aria-hidden="true" />
                 ) : (
@@ -947,6 +986,7 @@ export function MessageTimeline({
   const programmaticTimerRef = useRef<number | null>(null);
   const messageCountRef = useRef(0);
   const firstMessageIdRef = useRef<string | undefined>(undefined);
+  const lastUserMessageIdRef = useRef<string | undefined>(undefined);
   const speechAudioRef = useRef<HTMLAudioElement | null>(null);
   const speechStopRef = useRef<(() => void) | null>(null);
   const speechSequenceRef = useRef(0);
@@ -973,7 +1013,7 @@ export function MessageTimeline({
   const turnAnchors = useMemo<TurnAnchor[]>(() => {
     const anchors: TurnAnchor[] = [];
     for (const message of visibleMessages) {
-      if (message.role !== "user") continue;
+      if (message.role !== "user" || isSkillInvocationText(message.text)) continue;
       const index = anchors.length;
       anchors.push({
         id: message.id,
@@ -1160,11 +1200,21 @@ export function MessageTimeline({
     setActiveTurnId(id);
   }, []);
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto", force = false) => {
     const container = containerRef.current;
     if (!container) return;
+    if (force) {
+      programmaticScrollRef.current = false;
+      if (programmaticTimerRef.current !== null) {
+        window.clearTimeout(programmaticTimerRef.current);
+        programmaticTimerRef.current = null;
+      }
+      nearBottomRef.current = true;
+      userDetachedFromBottomRef.current = false;
+    }
     if (userDetachedFromBottomRef.current) return;
     userDetachedFromBottomRef.current = false;
+    nearBottomRef.current = true;
     container.scrollTo({
       top: container.scrollHeight,
       behavior,
@@ -1225,14 +1275,24 @@ export function MessageTimeline({
   useIsomorphicLayoutEffect(() => {
     const previousMessageCount = messageCountRef.current;
     const previousFirstMessageId = firstMessageIdRef.current;
+    const previousLastUserMessageId = lastUserMessageIdRef.current;
     const nextFirstMessageId = visibleMessages[0]?.id;
+    const nextLastUserMessageId = turnAnchors[turnAnchors.length - 1]?.id;
     const sessionChanged =
       previousFirstMessageId !== undefined &&
       nextFirstMessageId !== undefined &&
       previousFirstMessageId !== nextFirstMessageId;
+    const forceBottom = shouldForceBottomOnMessageChange(
+      previousMessageCount,
+      visibleMessages.length,
+      sessionChanged,
+      previousLastUserMessageId,
+      nextLastUserMessageId,
+    );
 
     messageCountRef.current = visibleMessages.length;
     firstMessageIdRef.current = nextFirstMessageId;
+    lastUserMessageIdRef.current = nextLastUserMessageId;
 
     if (visibleMessages.length === 0) {
       nearBottomRef.current = true;
@@ -1248,13 +1308,13 @@ export function MessageTimeline({
     }
 
     const container = containerRef.current;
-    if (!container || !nearBottomRef.current) return;
+    if (!container || (!forceBottom && !nearBottomRef.current)) return;
     const initialHistoryRender = previousMessageCount === 0 || sessionChanged;
     // Bottom-follow must move synchronously. A smooth scroll targets the current
     // scrollHeight, but streaming can grow the message again before the animation
     // arrives; the intermediate scroll event then looks far from the bottom and
     // disables its own ResizeObserver follow-up even though the user never scrolled.
-    scrollToBottom("auto");
+    scrollToBottom("auto", forceBottom);
 
     // 长会话里 Markdown、表格、代码块等内容会在本次提交后继续改变实际高度。
     // 初次进入历史会话时不要依赖一次平滑滚动，否则 WebKit/Tauri 里可能先滚到
@@ -1279,7 +1339,7 @@ export function MessageTimeline({
         autoAnchorTimerRef.current = null;
       }, 650);
     }
-  }, [clearAutoAnchor, pendingApproval, scrollToBottom, statusMessage, visibleMessages]);
+  }, [clearAutoAnchor, pendingApproval, scrollToBottom, statusMessage, turnAnchors, visibleMessages]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -1410,11 +1470,12 @@ export function MessageTimeline({
           const previous = visibleMessages[index - 1];
           const showDate = !previous || formatDay(previous.createdAt) !== formatDay(message.createdAt);
           const isLast = index === visibleMessages.length - 1;
+          const isUserTurn = message.role === "user" && !isSkillInvocationText(message.text);
           return (
             <div
               key={message.id}
-              ref={message.role === "user" ? (node) => setTurnAnchorNode(message.id, node) : undefined}
-              data-turn-anchor={message.role === "user" ? "true" : undefined}
+              ref={isUserTurn ? (node) => setTurnAnchorNode(message.id, node) : undefined}
+              data-turn-anchor={isUserTurn ? "true" : undefined}
             >
               {showDate ? <div className={s.dateSeparator}>{formatDay(message.createdAt)}</div> : null}
               <MessageBubble

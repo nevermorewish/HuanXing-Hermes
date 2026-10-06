@@ -9,6 +9,8 @@ import { checkDesktopUpdate, shouldShowDesktopUpdateNotice } from "@/lib/desktop
 import { detectHostOS, runtime } from "@/lib/runtime";
 import { versionLabel } from "@/lib/build-info";
 import { BRAND } from "@/lib/brand.generated";
+import { hasAppUpdateBridge, installAppUpdate } from "@/lib/app-update";
+import { openExternalUrl } from "@/lib/external-links";
 import s from "./desktop-update-notifier.module.css";
 
 const UPDATE_PROGRESS_EVENT = "desktop-update-progress";
@@ -68,6 +70,8 @@ export function DesktopUpdateNotifier() {
   const [installProgress, setInstallProgress] =
     useState<DesktopInstallUpdateProgress | null>(null);
   const restartingForInstall = detectHostOS() === "windows";
+  const hasDesktopInstaller = Boolean(window.hermesDesktop?.installDesktopUpdate);
+  const useUnifiedInstaller = !hasDesktopInstaller && hasAppUpdateBridge();
 
   useEffect(() => {
     if (runtime.platform === "web" || !window.hermesDesktop?.checkDesktopUpdate) return;
@@ -123,6 +127,24 @@ export function DesktopUpdateNotifier() {
   };
 
   const install = async () => {
+    if (!hasDesktopInstaller && !useUnifiedInstaller) {
+      await openExternalUrl(result?.downloadUrl || BRAND.updateDownloadUrl);
+      return;
+    }
+    if (useUnifiedInstaller) {
+      setInstalling(true);
+      setInstallError(null);
+      try {
+        const next = await installAppUpdate();
+        if (!next.ok) setInstallError(next.error || "更新安装失败");
+        else setOpen(false);
+      } catch (error) {
+        setInstallError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setInstalling(false);
+      }
+      return;
+    }
     if (!window.hermesDesktop?.installDesktopUpdate) {
       setInstallError("当前环境没有自动下载安装能力");
       return;
@@ -183,7 +205,7 @@ export function DesktopUpdateNotifier() {
         <Dialog.Overlay />
         <Dialog.Content className={s.dialog} aria-describedby="desktop-update-desc">
           <Dialog.Title className={s.title}>
-            <span className={s.titleIcon}><Sparkles size={17} aria-hidden="true" /></span>
+            <span className={s.titleIcon}><Sparkles size={16} aria-hidden="true" /></span>
             发现 {BRAND.appName} 新版本
           </Dialog.Title>
           <Dialog.Description id="desktop-update-desc" className={s.body}>
@@ -236,10 +258,12 @@ export function DesktopUpdateNotifier() {
               className={s.btnPrimary}
               type="button"
               onClick={() => void install()}
-              disabled={installing || !window.hermesDesktop?.installDesktopUpdate}
+              disabled={installing}
             >
-              <Download size={13} />
-              {installing ? "下载中…" : restartingForInstall ? "下载并重启安装" : "下载安装"}
+              <Download size={12} />
+              {installing ? "更新中…" : hasDesktopInstaller
+                ? restartingForInstall ? "下载并重启安装" : "下载安装"
+                : useUnifiedInstaller ? "立即更新" : "去官网下载"}
             </button>
           </div>
         </Dialog.Content>

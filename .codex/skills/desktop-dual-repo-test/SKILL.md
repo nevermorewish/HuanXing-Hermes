@@ -1,6 +1,6 @@
 ---
 name: desktop-dual-repo-test
-description: Use when starting or verifying Hermes Agent CN Desktop with the latest Hermes-CN-Desktop and Hermes-CN-Core branches — dev smoke test (pnpm tauri:dev), packaged beta/release install, runtime badge, WS relay, or regression after merging both repos. Covers syncing both repos, dev-runtime isolation, clean DMG install, and the report table for路线 A/B verification.
+description: Use when starting or verifying Hermes Agent CN Desktop with the latest Hermes-CN-Desktop and Hermes-CN-Core branches — dev smoke test (pnpm tauri:dev), packaged beta/release install, runtime badge, WS relay, or regression after merging both repos. Covers human-executed repo sync, dev-runtime isolation, clean DMG install, and the report table for路线 A/B verification.
 ---
 
 # Desktop Dual-Repo Test
@@ -27,28 +27,16 @@ Always sync **both** repos to the intended branch before testing. Never assume a
 
 ## Step 0 — Sync both repositories
 
-```bash
-# Desktop (this repo)
-cd /path/to/Hermes-CN-Desktop
-git fetch origin
-git checkout main && git pull --ff-only origin main
-# or: git checkout <integration-branch> && git pull --ff-only
+开始测试前确认两个仓库已同步到目标分支，并在任务专用 worktree 中工作。若状态异常，先核对差异与归属，禁止破坏性重置或覆盖其它工作区。
 
-# Core (sibling)
-cd /path/to/Hermes-CN-Core
-git fetch origin
-git checkout main && git pull --ff-only origin main
-# or: git checkout <feature-branch> && git pull --ff-only
-```
-
-Record SHAs for the report:
+记录 SHA 用于报告（只读，代理可执行）：
 
 ```bash
 cd /path/to/Hermes-CN-Desktop && git rev-parse --short HEAD
 cd /path/to/Hermes-CN-Core && git rev-parse --short HEAD
 ```
 
-Install deps once per repo after pulling:
+同步后每个仓库装一次依赖：
 
 ```bash
 cd /path/to/Hermes-CN-Desktop && pnpm install
@@ -67,7 +55,7 @@ After PR #211 lands, new dev sessions no longer write into production `runtime/`
 
 ## 路线 A — Dev verification (both repos, latest code)
 
-Use before pushing a desktop tag or when validating UI + gateway changes without a signed build.
+Use before creating/publishing a desktop tag or when validating UI + gateway changes without a signed build.
 
 ```bash
 cd /path/to/Hermes-CN-Desktop
@@ -167,4 +155,5 @@ Wait for kernel ready (dashboard **9120** returns 200), then:
 
 - **PR merged, considering tag** → 路线 A on both repos' latest `main` (or integration branch).
 - **Tag pushed, GHA green** → 路线 B on release asset; 路线 A results do not replace B for runtime badge or macOS relay.
-- **Formal public release** → also run `.codex/skills/desktop-release-sync-landing/SKILL.md` for landing / `latest.json`.
+- **Stable/formal public release** → also run `.codex/skills/desktop-release-sync-landing/SKILL.md` for landing / `latest.json`.
+- **RC / beta / alpha / canary prerelease** → do not modify the landing repository and do not point public `latest.json` at the prerelease; distribute and validate through GitHub Release or a dedicated internal channel.

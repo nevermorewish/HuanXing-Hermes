@@ -26,6 +26,7 @@ import {
   useSessions,
 } from "@/hooks/use-sessions";
 import { useGateway } from "@/hooks/use-gateway";
+import { useSessionBranch } from "@/hooks/use-session-branch";
 import {
   isSessionRunning,
   mergeLiveRuntimeSessions,
@@ -46,6 +47,8 @@ import {
 } from "@/lib/workspaces";
 import {
   SessionDeleteModal,
+  SessionBranchErrorModal,
+  SessionExportErrorModal,
   SessionRenameModal,
   SessionRowMenu,
   useSessionRowActions,
@@ -121,6 +124,7 @@ interface TaskRowProps {
   pinned: boolean;
   menuDisabled?: boolean;
   actions: ReturnType<typeof useSessionRowActions>;
+  onBranch: () => void;
   onClick: () => void;
   onHover?: () => void;
 }
@@ -133,6 +137,7 @@ function TaskRow({
   pinned,
   menuDisabled = false,
   actions,
+  onBranch,
   onClick,
   onHover,
 }: TaskRowProps) {
@@ -159,7 +164,7 @@ function TaskRow({
       <div className={s.taskTitle}>
         {status === "run" ? <span className={s.pulseDot} aria-hidden="true" /> : null}
         <span className={s.taskTitleText}>{title}</span>
-        {pinned ? <Pin size={11} className={s.pinIcon} aria-label="已置顶" /> : null}
+        {pinned ? <Pin size={12} className={s.pinIcon} aria-label="已置顶" /> : null}
         <span className={s.statusLabel} data-status={status}>
           {TASK_STATUS_LABEL[status]}
         </span>
@@ -179,7 +184,7 @@ function TaskRow({
               onClick={(event) => event.stopPropagation()}
               onKeyDown={(event) => event.stopPropagation()}
             >
-              <MoreHorizontal size={14} />
+              <MoreHorizontal size={16} />
             </button>
           </Popover.Trigger>
           <SessionRowMenu
@@ -187,6 +192,8 @@ function TaskRow({
             disabled={actionMenuDisabled}
             onTogglePin={() => actions.togglePin(session.id)}
             onRename={() => actions.startRename(session)}
+            onBranch={onBranch}
+            onExport={() => void actions.handleExport(session)}
             onArchive={() => actions.handleArchive(session)}
             onDelete={() => actions.openDeleteDialog([session])}
           />
@@ -198,6 +205,7 @@ function TaskRow({
 }
 
 export function TaskRail() {
+  const sessionBranch = useSessionBranch();
   const navigate = useNavigate();
   const location = useLocation();
   const setActiveId = useSetAtom(activeSessionIdAtom);
@@ -301,6 +309,7 @@ export function TaskRail() {
     setSessionTitle,
     resumeSession,
     archive: archiveSession.mutate,
+    profile,
     onDeleted: onSessionsDeleted,
   });
 
@@ -324,7 +333,7 @@ export function TaskRail() {
               if (searchOpen) setSearchQuery("");
             }}
           >
-            {searchOpen ? <X size={14} /> : <Search size={14} />}
+            {searchOpen ? <X size={16} /> : <Search size={16} />}
           </button>
         </span>
       </div>
@@ -341,7 +350,7 @@ export function TaskRail() {
               onClick={() => navigate(item.href)}
             >
               <span className={s.navIcon}>
-                <Icon size={15} />
+                <Icon size={16} />
               </span>
               {item.label}
             </button>
@@ -380,8 +389,12 @@ export function TaskRail() {
                 active={sessionIdMatches(sess.id, activeSessionId)}
                 meta={meta}
                 pinned={pinnedSessionIds.has(sess.id)}
-                menuDisabled={running}
+                menuDisabled={running || Boolean(sessionBranch.branchingSessionId)}
                 actions={rowActions}
+                onBranch={() => {
+                  rowActions.setOpenMenuId(null);
+                  void sessionBranch.branchSession(sess);
+                }}
                 onClick={() => goSession(sess)}
                 onHover={() => hoverSession(sess)}
               />
@@ -406,7 +419,7 @@ export function TaskRail() {
                 onClick={() => navigate(target)}
                 title={proj.path}
               >
-                <FolderOpen size={13} className={s.spaceIcon} />
+                <FolderOpen size={12} className={s.spaceIcon} />
                 <span className={s.spaceName}>{proj.name}</span>
               </button>
             );
@@ -415,6 +428,12 @@ export function TaskRail() {
       </div>
 
       <AccountPopup />
+      {sessionBranch.error ? (
+        <SessionBranchErrorModal error={sessionBranch.error} onClose={sessionBranch.clearError} />
+      ) : null}
+      {rowActions.exportError ? (
+        <SessionExportErrorModal error={rowActions.exportError} onClose={rowActions.clearExportError} />
+      ) : null}
 
       {rowActions.renamingSession ? (
         <SessionRenameModal

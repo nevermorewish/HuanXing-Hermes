@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, KeyRound, Loader2, Mic, Play, Save, Volume2 } from "lucide-react";
+import { CheckCircle2, KeyRound, Mic, Play, Save, Volume2 } from "lucide-react";
+import { LoadingIndicator, LoadingState } from "@hermes/shared-ui";
 import type { ConfigSchemaResponse, ElevenLabsVoicesResponse, EnvVarInfo } from "@hermes/protocol";
 import { useConfig, useConfigSchema, useSaveConfig } from "@/hooks/use-config";
 import { useEnvVars, useSetEnv } from "@/hooks/use-env";
@@ -58,10 +59,19 @@ function fieldValue(draft: VoiceSettingsDraft, key: string): string | boolean | 
   return draft.values[key] ?? "";
 }
 
-function fieldOptions(key: string, elevenLabsVoices?: ElevenLabsVoicesResponse | null): string[] | undefined {
+function fieldOptions(
+  key: string,
+  schema: ConfigSchemaResponse,
+  elevenLabsVoices?: ElevenLabsVoicesResponse | null,
+): string[] | undefined {
   if (key === "tts.elevenlabs.voice_id" && elevenLabsVoices?.available && elevenLabsVoices.voices.length > 0) {
     return elevenLabsVoices.voices.map((voice) => voice.voice_id);
   }
+  // Schema-first: the backend CONFIG_SCHEMA is the source of truth for
+  // select options. Fall back to the hardcoded snapshot only when the
+  // schema declares no options (older backends / free-form fields).
+  const schemaOptions = schema.fields[key]?.options;
+  if (schemaOptions && schemaOptions.length > 0) return schemaOptions;
   return VOICE_SELECT_OPTIONS[key];
 }
 
@@ -145,7 +155,7 @@ function ProviderFields({
       {provider.configKeys.map((key) => {
         const field = schema.fields[key];
         const value = fieldValue(draft, key);
-        const options = fieldOptions(key, elevenLabsVoices);
+        const options = fieldOptions(key, schema, elevenLabsVoices);
         const label = VOICE_FIELD_LABELS[key] ?? key;
         if (field?.type === "boolean") {
           return (
@@ -233,8 +243,8 @@ export function VoiceSettingsView({
         </div>
         <div className={s.heroActions}>
           <button type="button" className={s.primaryButton} onClick={onSave} disabled={saving}>
-            {saving ? <Loader2 size={14} /> : <Save size={14} />}
-            {saving ? "保存中…" : "保存配置"}
+            {saving ? <LoadingIndicator size="sm" /> : <Save size={16} />}
+            保存配置
           </button>
         </div>
       </section>
@@ -284,7 +294,7 @@ export function VoiceSettingsView({
 
           <div className={s.cardActions}>
             <button type="button" className={s.button} onClick={onTestStt} disabled={sttTesting || !draft.sttEnabled}>
-              {sttTesting ? <Loader2 size={14} /> : <Mic size={14} />}
+              {sttTesting ? <LoadingIndicator size="sm" /> : <Mic size={16} />}
               {sttTesting ? "录音测试中…" : "测试识别"}
             </button>
           </div>
@@ -348,7 +358,7 @@ export function VoiceSettingsView({
           </div>
           <div className={s.cardActions}>
             <button type="button" className={s.button} onClick={onTestTts} disabled={ttsTesting}>
-              {ttsTesting ? <Loader2 size={14} /> : <Play size={14} />}
+              {ttsTesting ? <LoadingIndicator size="sm" /> : <Play size={16} />}
               {ttsTesting ? "朗读测试中…" : "测试朗读"}
             </button>
           </div>
@@ -517,7 +527,7 @@ export function VoiceRoute() {
   if (configLoading || schemaLoading || !config || !schema || !draft) {
     return (
       <SectionShell title="语音" sub="配置语音转文字和回复朗读。">
-        <div className={s.feedback}>正在加载语音配置…</div>
+        <LoadingState variant="page" label="正在加载语音配置…" />
       </SectionShell>
     );
   }

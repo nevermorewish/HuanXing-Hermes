@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { reattachAfterReconnect, type ReattachAfterReconnectDeps } from "./gateway-reconnect";
+import {
+  isDefinitiveMissingSessionError,
+  reattachAfterReconnect,
+  type ReattachAfterReconnectDeps,
+} from "./gateway-reconnect";
 
 function makeDeps(overrides: Partial<ReattachAfterReconnectDeps> = {}): {
   deps: ReattachAfterReconnectDeps;
@@ -66,5 +70,44 @@ describe("reattachAfterReconnect", () => {
     await reattachAfterReconnect(deps);
     expect(onResumed).not.toHaveBeenCalled();
     expect(onResumeFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])("does not overwrite a newly activated session when the old resume settles (failure=%s)", async (fails) => {
+    let activeSessionId = "gw-old";
+    let finish!: () => void;
+    const waiting = new Promise<void>((resolve) => { finish = resolve; });
+    const { deps, onResumed, onResumeFailed } = makeDeps({
+      getActiveSessionId: () => activeSessionId,
+      resume: async () => {
+        await waiting;
+        if (fails) throw new Error("Session not found");
+        return { session_id: "gw-resumed" };
+      },
+    });
+    const reattaching = reattachAfterReconnect(deps);
+    activeSessionId = "gw-new-conversation";
+    finish();
+    await reattaching;
+
+    expect(onResumed).not.toHaveBeenCalled();
+    expect(onResumeFailed).not.toHaveBeenCalled();
+  });
+});
+
+describe("isDefinitiveMissingSessionError", () => {
+  it.each([
+    new Error("Session not found"),
+    new Error("unknown conversation id"),
+    "conversation was reaped",
+  ])("accepts explicit missing-session failures", (error) => {
+    expect(isDefinitiveMissingSessionError(error)).toBe(true);
+  });
+
+  it.each([
+    new Error("Request timed out after 300000ms"),
+    new Error("WebSocket disconnected"),
+    new Error("HTTP 503 Service Unavailable"),
+  ])("keeps transient resume failures recoverable", (error) => {
+    expect(isDefinitiveMissingSessionError(error)).toBe(false);
   });
 });

@@ -23,6 +23,8 @@ import type {
   EnvironmentCheckResult,
   ExportLogSnapshotInput,
   ExportLogSnapshotResult,
+  ExportSessionJsonInput,
+  ExportSessionJsonResult,
   FilePickerResult,
   FileUploadInput,
   ImOnboardingApplyInput,
@@ -45,6 +47,16 @@ import type {
   SwitchProfileInput,
   SwitchProfileResult,
   TestConnectionResult,
+  UpdateConfig,
+  UpdateConfigSnapshot,
+  AppUpdateCheckResult,
+  AppUpdateInstallResult,
+  AppUpdateProgressPayload,
+  HotUpdateBackendResult,
+  HotUpdateProgressPayload,
+  UiInstallUpdateResult,
+  UiUpdateCheckResult,
+  UiUpdateReadyPayload,
   YoloModeStatus,
 } from "@hermes/protocol";
 import type {
@@ -82,7 +94,15 @@ import type {
   HermesGitBridge,
 } from "./runtime";
 import { BUILD_COMMIT, DESKTOP_VERSION, versionLabel } from "./build-info";
-import hermesLogoSvg from "../../../icons/icon.svg?raw";
+import {
+  assertCompatible,
+  deferBackendVersionCheckForOfflineRuntime,
+  recordRuntimeKernelVersion,
+  resetVersionCheck,
+  verifyBackendVersion,
+  type BackendRecoveryReason,
+} from "./version-check";
+import hermesLogo from "@/assets/hermes-default-avatar.png";
 
 let invoke: typeof import("@tauri-apps/api/core").invoke;
 
@@ -91,8 +111,6 @@ export function isTauriDevMode(envDev = import.meta.env.DEV): boolean {
 }
 
 const BASE64_CHUNK_SIZE = 0x8000;
-const BOOTSTRAP_LOGO_BLUE_RGB = "0,95,249";
-
 type TauriFileDropPosition = {
   x: number;
   y: number;
@@ -280,6 +298,10 @@ const tauriBridge = {
     return invokeCommand("quit_app");
   },
 
+  async fatalErrorAndExit(input: { title: string; message: string }): Promise<never> {
+    return invokeCommand("fatal_error_and_exit", { input });
+  },
+
   async request(input: ApiRequestInput): Promise<ApiRequestResult> {
     return invokeCommand("api_request", { input });
   },
@@ -393,12 +415,20 @@ const tauriBridge = {
     return invokeCommand("open_external_url", { input });
   },
 
+  async openBrowserCompanion(): Promise<{ ok: boolean; url: string; port: number }> {
+    return invokeCommand("open_browser_companion");
+  },
+
   async toggleDevtools(): Promise<void> {
     return invokeCommand("toggle_devtools");
   },
 
   async exportLogSnapshot(input: ExportLogSnapshotInput): Promise<ExportLogSnapshotResult> {
     return invokeCommand("export_log_snapshot", { input });
+  },
+
+  async exportSessionJson(input: ExportSessionJsonInput): Promise<ExportSessionJsonResult> {
+    return invokeCommand("export_session_json", { input });
   },
 
   async exportDebugBundle(input?: ExportDebugBundleInput): Promise<ExportDebugBundleResult> {
@@ -422,12 +452,111 @@ const tauriBridge = {
     return invokeCommand("desktop_install_update");
   },
 
+  async getUpdateConfig(): Promise<UpdateConfigSnapshot> {
+    return invokeCommand("get_update_config");
+  },
+
+  async setUpdateConfig(config: UpdateConfig): Promise<UpdateConfigSnapshot> {
+    return invokeCommand("set_update_config", { input: { config } });
+  },
+
+  async appUpdateCheck(): Promise<AppUpdateCheckResult> {
+    return invokeCommand("app_update_check");
+  },
+
+  async appUpdateInstall(): Promise<AppUpdateInstallResult> {
+    return invokeCommand("app_update_install");
+  },
+
+  async hotUpdateBackend(input: {
+    sourceRoot?: string;
+    skipGit?: boolean;
+  }): Promise<HotUpdateBackendResult> {
+    return invokeCommand("hot_update_backend", { input });
+  },
+
+  // Track B UI hot update (custom `hermesui:` scheme). The kernel is never
+  // restarted — after a successful install/rollback the Rust side emits
+  // `ui-update-ready` and reloads the main window itself.
+  async uiCheckUpdate(): Promise<UiUpdateCheckResult> {
+    return invokeCommand("ui_check_update");
+  },
+
+  async uiInstallUpdate(): Promise<UiInstallUpdateResult> {
+    return invokeCommand("ui_install_update");
+  },
+
+  async uiRollback(): Promise<UiInstallUpdateResult> {
+    return invokeCommand("ui_rollback");
+  },
+
+  onUiUpdateReady(handler: (payload: UiUpdateReadyPayload) => void): () => void {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen<UiUpdateReadyPayload>("ui-update-ready", (event) => {
+          handler(event.payload);
+        }))
+      .then((fn) => {
+        if (disposed) safeUnlisten(fn);
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      safeUnlisten(unlisten);
+    };
+  },
+
+  onHotUpdateProgress(handler: (payload: HotUpdateProgressPayload) => void): () => void {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen<HotUpdateProgressPayload>("hot-update-progress", (event) => {
+          handler(event.payload);
+        }))
+      .then((fn) => {
+        if (disposed) safeUnlisten(fn);
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      safeUnlisten(unlisten);
+    };
+  },
+
+  onAppUpdateProgress(handler: (payload: AppUpdateProgressPayload) => void): () => void {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen<AppUpdateProgressPayload>("app-update-progress", (event) => {
+          handler(event.payload);
+        }))
+      .then((fn) => {
+        if (disposed) safeUnlisten(fn);
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      safeUnlisten(unlisten);
+    };
+  },
+
   getRuntimeConfig() {
     return window.__HERMES_RUNTIME__;
   },
 
   async refreshGatewayUrl(): Promise<{ gatewayUrl: string; sessionToken?: string }> {
     return invokeCommand("refresh_gateway_url");
+  },
+
+  async getBackendVersion(): Promise<{ version: string }> {
+    return invokeCommand("get_backend_version");
   },
 
   async getRuntimeInfo(): Promise<RuntimeInfo> {
@@ -657,6 +786,10 @@ const tauriBridge = {
     return invokeCommand("read_workspace_file", { input });
   },
 
+  async readFileDataUrl(path: string): Promise<string> {
+    return invokeCommand("read_file_data_url", { input: { path } });
+  },
+
   async writeWorkspaceFile(input: WriteWorkspaceFileInput): Promise<WriteWorkspaceFileResult> {
     return invokeCommand("write_workspace_file", { input });
   },
@@ -764,10 +897,9 @@ function showBootstrapOverlay(initialMessage: string): {
   root.id = "hermes-bootstrap-overlay";
   root.setAttribute(
     "style",
-    "position:fixed;inset:0;background:" +
-      `radial-gradient(circle at 50% 40%,rgba(${BOOTSTRAP_LOGO_BLUE_RGB},0.30) 0%,rgba(${BOOTSTRAP_LOGO_BLUE_RGB},0.18) 22%,rgba(${BOOTSTRAP_LOGO_BLUE_RGB},0.08) 42%,transparent 62%),#0a0a0a;` +
+    "position:fixed;inset:0;background:#111111;" +
       "color:#fbfaf6;display:flex;align-items:center;justify-content:center;" +
-      "font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;" +
+      "font-family:'HarmonyOS Sans SC','HarmonyOS Sans','PingFang SC','Segoe UI',sans-serif;" +
       "z-index:2147483647;padding:48px;box-sizing:border-box;overflow:auto;",
   );
 
@@ -776,16 +908,15 @@ function showBootstrapOverlay(initialMessage: string): {
   panel.setAttribute(
     "style",
     "width:min(760px,calc(100vw - 64px));display:flex;flex-direction:column;" +
-      "align-items:center;gap:18px;text-align:center;",
+      "align-items:center;gap:20px;text-align:center;",
   );
 
   const mark = document.createElement("img");
-  mark.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(hermesLogoSvg)}`;
+  mark.src = hermesLogo;
   mark.alt = "Hermes Agent Logo";
   mark.setAttribute(
     "style",
-    "width:104px;height:104px;border-radius:24px;display:block;" +
-      `box-shadow:0 24px 60px rgba(0,0,0,0.45),0 0 80px rgba(${BOOTSTRAP_LOGO_BLUE_RGB},0.42),0 0 0 1px rgba(255,255,255,0.08);`,
+    "width:104px;height:104px;border:1px solid rgba(251,250,246,0.14);border-radius: 0;display:block;",
   );
   panel.appendChild(mark);
 
@@ -800,7 +931,7 @@ function showBootstrapOverlay(initialMessage: string): {
   const brand = document.createElement("div");
   brand.setAttribute(
     "style",
-    "margin-top:-10px;font-size:12px;font-weight:600;color:rgba(251,250,246,0.54);" +
+    "margin-top:-12px;font-size:12px;font-weight:600;color:rgba(251,250,246,0.54);" +
       "letter-spacing:0.08em;text-transform:uppercase;",
   );
   brand.textContent = "Hermes Agent 中文社区 · hermesagent.org.cn";
@@ -820,13 +951,13 @@ function showBootstrapOverlay(initialMessage: string): {
   detail.setAttribute(
     "style",
     "display:none;width:100%;box-sizing:border-box;margin-top:4px;border:1px solid rgba(251,250,246,0.14);" +
-      "border-radius:18px;background:rgba(18,18,18,0.86);box-shadow:0 18px 48px rgba(0,0,0,0.28);overflow:hidden;",
+      "border-radius: 0;background:#181818;overflow:hidden;",
   );
 
   const detailHeader = document.createElement("div");
   detailHeader.setAttribute(
     "style",
-    "display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;" +
+    "display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;" +
       "border-bottom:1px solid rgba(251,250,246,0.1);",
   );
 
@@ -844,7 +975,7 @@ function showBootstrapOverlay(initialMessage: string): {
   copyButton.setAttribute(
     "style",
     "appearance:none;border:1px solid rgba(251,250,246,0.18);background:rgba(251,250,246,0.08);" +
-      "color:#fbfaf6;border-radius:999px;padding:7px 12px;font-size:12px;font-weight:700;" +
+      "color:#fbfaf6;border-radius: 0;padding:8px 12px;font-size:12px;font-weight:700;" +
       "font-family:inherit;cursor:pointer;",
   );
   copyButton.textContent = "复制错误信息";
@@ -856,7 +987,7 @@ function showBootstrapOverlay(initialMessage: string): {
   errorText.tabIndex = 0;
   errorText.setAttribute(
     "style",
-    "margin:0;max-height:min(300px,38vh);overflow:auto;padding:14px;text-align:left;" +
+    "margin:0;max-height:min(300px,38vh);overflow:auto;padding:16px;text-align:left;" +
       "white-space:pre-wrap;word-break:break-word;user-select:text;" +
       "font-family:'JetBrains Mono','SFMono-Regular',Consolas,ui-monospace,monospace;" +
       "font-size:12px;line-height:1.6;color:rgba(251,250,246,0.88);",
@@ -867,7 +998,7 @@ function showBootstrapOverlay(initialMessage: string): {
   const versionPanel = document.createElement("div");
   versionPanel.setAttribute(
     "style",
-    "display:flex;flex-direction:column;align-items:center;gap:2px;margin-top:2px;" +
+    "display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:4px;" +
       "font-family:'JetBrains Mono','SFMono-Regular',Consolas,ui-monospace,monospace;" +
       "font-size:10px;line-height:1.45;letter-spacing:0.06em;color:rgba(133,126,111,0.76);",
   );
@@ -1058,6 +1189,20 @@ function registerDevtoolsShortcut(): void {
   );
 }
 
+export function shouldWaitForManagedRuntimeConfig(config: {
+  apiBaseUrl?: string;
+  backendReady?: boolean;
+  connectionMode?: "managed" | "local" | "remote";
+  managedRuntimeDesiredState?: import("@hermes/protocol").ManagedRuntimeDesiredState;
+}): boolean {
+  if (config.apiBaseUrl) return false;
+  const connectionMode = config.connectionMode ?? "managed";
+  const managedRuntimeShouldRun =
+    connectionMode === "managed" &&
+    (config.managedRuntimeDesiredState ?? "running") === "running";
+  return config.backendReady !== false || managedRuntimeShouldRun;
+}
+
 export async function installTauriBridge(): Promise<void> {
   // Install before any React component mounts a Tauri event listener, so the
   // StrictMode mount→unmount teardown race can't leak an unhandled rejection.
@@ -1067,9 +1212,11 @@ export async function installTauriBridge(): Promise<void> {
     apiBaseUrl: string;
     gatewayUrl: string;
     sessionToken?: string;
+    kernelVersion?: string;
     currentProfile: string;
     connectionMode?: "managed" | "local" | "remote";
     portable?: boolean;
+    embedded?: boolean;
     backendReady?: boolean;
     guideState?: GuideState;
     managedRuntimeDesiredState?: import("@hermes/protocol").ManagedRuntimeDesiredState;
@@ -1111,11 +1258,42 @@ export async function installTauriBridge(): Promise<void> {
     config = await invokeCommand("get_runtime_config");
   }
 
+  // Mount the bridge before the version gate so that a mismatch can use the
+  // native fatal-error dialog via hermesDesktop.fatalErrorAndExit. The bridge
+  // is fully functional through Tauri invoke; window.__HERMES_RUNTIME__ is set
+  // after the version check so the platform guard still sees the Tauri context.
+  (window as any).hermesDesktop = tauriBridge;
+
+  // Reset any stale version check state, then verify before we let the React
+  // app run against this backend. A mismatch or unreachable /api/version
+  // triggers a fatal dialog and force-quits. We pass the config's apiBaseUrl
+  // explicitly because window.__HERMES_RUNTIME__ is not populated yet.
+  resetVersionCheck();
+  recordRuntimeKernelVersion(config.kernelVersion);
+  const connectionMode = config.connectionMode ?? "managed";
+  const managedRuntimeIntentionallyOffline =
+    connectionMode === "managed" &&
+    config.backendReady === false &&
+    !config.apiBaseUrl &&
+    (config.managedRuntimeDesiredState ?? "running") !== "running";
+  let backendRecoveryReason: BackendRecoveryReason | undefined;
+  if (managedRuntimeIntentionallyOffline) {
+    deferBackendVersionCheckForOfflineRuntime();
+    backendRecoveryReason = "managed-runtime-offline";
+  } else {
+    const versionState = await verifyBackendVersion(config.apiBaseUrl, { connectionMode });
+    if (versionState.kind === "deferred") {
+      backendRecoveryReason = versionState.reason;
+    } else if (versionState.kind !== "ok") {
+      assertCompatible();
+      throw new Error("version check failed during bridge installation");
+    }
+  }
+
   // Attached local/remote mode must keep the real URLs even in Vite dev: the
   // Vite proxy targets the managed dashboard port (9120), so relative URLs
   // would route traffic to the wrong backend. Managed dev still hides URLs and
   // uses the proxy as before.
-  const connectionMode = config.connectionMode ?? "managed";
   const hideUrlsForViteProxy = isDevMode && connectionMode === "managed";
 
   window.__HERMES_RUNTIME__ = {
@@ -1124,16 +1302,19 @@ export async function installTauriBridge(): Promise<void> {
     dashboardApiBaseUrl: config.apiBaseUrl,
     gatewayUrl: hideUrlsForViteProxy ? undefined : config.gatewayUrl,
     sessionToken: config.sessionToken,
+    kernelVersion: config.kernelVersion,
     currentProfile: config.currentProfile,
     connectionMode,
     portable: config.portable ?? false,
-    backendReady: config.backendReady ?? Boolean(config.apiBaseUrl),
+    embedded: config.embedded ?? false,
+    backendReady: backendRecoveryReason
+      ? false
+      : config.backendReady ?? Boolean(config.apiBaseUrl),
+    backendRecoveryReason,
     guideState: config.guideState ?? "completed",
     managedRuntimeDesiredState: config.managedRuntimeDesiredState ?? "running",
     managedRuntimeLifecycleState: config.managedRuntimeLifecycleState ?? "running",
   };
-
-  (window as any).hermesDesktop = tauriBridge;
 
   registerDevtoolsShortcut();
 }

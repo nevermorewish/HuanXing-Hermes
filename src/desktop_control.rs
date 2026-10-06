@@ -110,9 +110,9 @@ fn write_to(path: &Path, state: &DesktopControlState) -> AppResult<()> {
     Ok(())
 }
 
-/// Initialize the v1 control file without interrupting existing users. A
-/// pre-existing runtime, saved connection config, or remote env override is an
-/// established installation and therefore skips the first-install guide.
+/// Initialize the v1 control file without interrupting existing users. Clean
+/// installs keep pending onboarding with a running managed backend; an existing
+/// explicit stop/uninstall/deferred choice is preserved below.
 pub fn initialize() -> AppResult<DesktopControlState> {
     let path = control_path();
     if let Some(mut state) = read_from(&path) {
@@ -173,9 +173,10 @@ pub fn set_managed_runtime_desired_state(
     Ok(state)
 }
 
-/// Decide whether bootstrap may install/start the managed runtime. Dev mode's
-/// explicit external-dashboard escape hatch keeps its existing behavior; a
-/// real first install stays offline until the guide records `running` intent.
+/// Decide whether bootstrap may install/start the managed runtime. Clean
+/// installs default to running; explicit stop/uninstall intent still keeps the
+/// recovery shell offline, while dev's external-dashboard escape hatch keeps
+/// its existing behavior.
 pub fn should_start_managed_runtime(
     state: &DesktopControlState,
     external_dev_dashboard: bool,

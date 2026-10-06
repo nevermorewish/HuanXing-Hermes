@@ -126,12 +126,12 @@ export function DeviceTokenDialog({
               aria-label="关闭"
               onClick={() => setOpen(false)}
             >
-              <X size={15} />
+              <X size={16} />
             </button>
           ) : null}
 
           <div className={s.tokenIcon} aria-hidden="true">
-            <KeyRound size={18} />
+            <KeyRound size={20} />
           </div>
           <h3 className={s.title}>{isStartup ? "连接企业设备" : "企业设备令牌"}</h3>
           <div className={s.sub}>
@@ -162,7 +162,7 @@ export function DeviceTokenDialog({
                   disabled={busy}
                   onClick={() => void openExternalUrl(managementUrl)}
                 >
-                  <ExternalLink size={14} aria-hidden="true" />
+                  <ExternalLink size={16} aria-hidden="true" />
                   访问
                 </button>
               </div>
@@ -190,7 +190,7 @@ export function DeviceTokenDialog({
                   aria-label={showToken ? "隐藏设备令牌" : "显示设备令牌"}
                   onClick={() => setShowToken((value) => !value)}
                 >
-                  {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
+                  {showToken ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </span>
             </label>
@@ -229,7 +229,7 @@ export function DeviceTokenDialog({
                   : status?.configured
                     ? "更新设备令牌并同步"
                     : "绑定设备并同步"}
-              {!busy && isStartup ? <ArrowRight size={14} aria-hidden="true" /> : null}
+              {!busy && isStartup ? <ArrowRight size={16} aria-hidden="true" /> : null}
             </button>
             {isStartup ? (
               <button type="button" className={s.skip} disabled={busy} onClick={onSkip}>
@@ -242,7 +242,7 @@ export function DeviceTokenDialog({
               disabled={busy}
               onClick={() => void handleClear()}
             >
-              <Trash2 size={13} aria-hidden="true" />
+              <Trash2 size={12} aria-hidden="true" />
               清除令牌
             </button>
           </form>

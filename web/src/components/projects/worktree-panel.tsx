@@ -9,7 +9,9 @@ import {
   X,
 } from "lucide-react";
 import type { GitBranch, Worktree } from "@/lib/runtime";
+import { LoadingIndicator } from "@hermes/shared-ui";
 import { useWorktrees } from "@/hooks/use-worktrees";
+import { useConfirm } from "@/lib/use-confirm";
 import { shortenPath } from "@/lib/paths";
 import s from "./worktree-panel.module.css";
 
@@ -32,6 +34,7 @@ function openInFinder(path: string): void {
 export function WorktreePanel({ repoPath }: WorktreePanelProps) {
   const wt = useWorktrees(repoPath);
   const [newName, setNewName] = useState("");
+  const { confirm } = useConfirm();
 
   // The git bridge only exists in the desktop shell; hide the panel in the browser.
   if (typeof window === "undefined" || !window.hermesDesktop?.git) {
@@ -46,11 +49,14 @@ export function WorktreePanel({ repoPath }: WorktreePanelProps) {
     });
   };
 
-  const onRemove = (tree: Worktree) => {
+  const onRemove = async (tree: Worktree) => {
     if (tree.isMain) return;
-    const confirmed = window.confirm(
-      `确认删除工作树「${basename(tree.path)}」？这会移除该 worktree 目录，但不删除其分支。`,
-    );
+    const confirmed = await confirm({
+      title: "删除工作树",
+      body: `确认删除工作树「${basename(tree.path)}」？这会移除该 worktree 目录，但不删除其分支。`,
+      confirmLabel: "删除",
+      danger: true,
+    });
     if (confirmed) void wt.removeWorktree(tree.path);
   };
 
@@ -61,7 +67,7 @@ export function WorktreePanel({ repoPath }: WorktreePanelProps) {
     <section className={s.panel}>
       <div className={s.head}>
         <h2 className={s.title}>
-          <GitBranchIcon size={15} aria-hidden /> Git 工作树
+          <GitBranchIcon size={16} aria-hidden /> Git 工作树
         </h2>
         {wt.status?.branch ? (
           <span className={s.branchChip} title="当前分支">
@@ -80,7 +86,7 @@ export function WorktreePanel({ repoPath }: WorktreePanelProps) {
           title="刷新"
           aria-label="刷新工作树"
         >
-          <RefreshCw size={13} aria-hidden className={wt.loading ? s.spin : undefined} />
+          {wt.loading ? <LoadingIndicator size="xs" /> : <RefreshCw size={12} aria-hidden />}
         </button>
       </div>
 
@@ -109,7 +115,7 @@ export function WorktreePanel({ repoPath }: WorktreePanelProps) {
                   {tree.isMain ? <span className={s.badge}>主</span> : null}
                   {tree.locked ? (
                     <span className={s.badge} data-tone="muted" title="已锁定">
-                      <Lock size={10} aria-hidden />
+                      <Lock size={12} aria-hidden />
                     </span>
                   ) : null}
                 </span>
@@ -125,7 +131,7 @@ export function WorktreePanel({ repoPath }: WorktreePanelProps) {
                   title="在文件管理器打开"
                   aria-label="在文件管理器打开"
                 >
-                  <ExternalLink size={13} aria-hidden />
+                  <ExternalLink size={12} aria-hidden />
                 </button>
                 <button
                   type="button"
@@ -136,7 +142,7 @@ export function WorktreePanel({ repoPath }: WorktreePanelProps) {
                   aria-label="删除工作树"
                   data-tone="danger"
                 >
-                  <Trash2 size={13} aria-hidden />
+                  <Trash2 size={12} aria-hidden />
                 </button>
               </span>
             </li>
@@ -164,7 +170,7 @@ export function WorktreePanel({ repoPath }: WorktreePanelProps) {
           onClick={submitCreate}
           disabled={!newName.trim() || wt.busy}
         >
-          <Plus size={13} aria-hidden /> 新建
+          <Plus size={12} aria-hidden /> 新建
         </button>
       </div>
 

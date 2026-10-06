@@ -183,7 +183,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22.22.0"
 
       - uses: pnpm/action-setup@v3
         with:
@@ -246,7 +246,8 @@ jobs:
               : `${feedBaseUrl}/stable`;
             const platform = process.env.RUNTIME_PLATFORM;
             const arch = process.env.RUNTIME_ARCH;
-            const response = await fetch(`${baseUrl}/stable-${platform}-${arch}.json`, {
+            const channel = process.env.BUNDLED_RUNTIME_CHANNEL;
+            const response = await fetch(`${baseUrl}/${channel}-${platform}-${arch}.json`, {
               headers: { "User-Agent": "hermes-agent-cn-desktop-release-workflow" },
             });
             if (!response.ok) {
@@ -293,6 +294,11 @@ jobs:
 
       - name: Stage bundled skills
         run: node scripts/stage-bundled-skills.mjs --source hermes-agent-cn-source
+      - name: Verify bundled runtime with desktop extractor
+        shell: bash
+        env:
+          HERMES_RELEASE_RUNTIME_ZIP: ${{ github.workspace }}/static/bundled-runtime/hermes-agent-cn-runtime-${{ matrix.runtime_platform }}-${{ matrix.runtime_arch }}.zip
+        run: cargo test --locked --lib release_runtime_zip_extracts_with_installer -- --ignored --nocapture
 
       - name: Prepare macOS signing credentials
         id: macos_signing
@@ -498,6 +504,11 @@ jobs:
             Windows 系统安装名称、安装目录和卸载注册表项使用英文名
             Hermes Agent CN Desktop，避免中文路径造成兼容性问题。
 
+            覆盖安装前，请先完全退出正在运行的 Hermes Agent CN Desktop。
+
+            Windows 安装包暂未做 Authenticode 签名。如遇 SmartScreen 拦截，请选择
+            “更多信息” → “仍要运行”。
+
             安装包已内置来自 ${{ steps.runtime_manifest.outputs.source_repo }}
             ${{ steps.runtime_manifest.outputs.source_commit }} 的 Dashboard 前端、内置技能和内置插件。
 
@@ -515,7 +526,7 @@ jobs:
             如需覆盖 runtime 更新源，可设置 HERMES_RUNTIME_UPDATE_* 环境变量。
           releaseDraft: false
           # Mark SemVer prerelease tags as prerelease on GitHub Releases.
-          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
+          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-alpha') || contains(github.event.inputs.tag || github.ref_name, '-beta') || contains(github.event.inputs.tag || github.ref_name, '-rc') }}
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
       - name: Rename branded Windows installer

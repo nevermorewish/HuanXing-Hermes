@@ -151,7 +151,7 @@ function CustomModelEditDialog({ title, initial, saving, error, onClose, onSave 
           </Dialog.Title>
           <span className={s.editBadge}>仅支持 OpenAI 兼容协议 API</span>
           <button type="button" className={s.editClose} aria-label="关闭" onClick={onClose}>
-            <X size={15} />
+            <X size={16} />
           </button>
 
           <div className={s.editBody}>
@@ -186,7 +186,7 @@ function CustomModelEditDialog({ title, initial, saving, error, onClose, onSave 
                   aria-label={showKey ? "隐藏 API Key" : "显示 API Key"}
                   onClick={() => setShowKey((v) => !v)}
                 >
-                  {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                  {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </span>
             </label>
@@ -377,7 +377,7 @@ function EnterpriseSection() {
               aria-label={showToken ? "隐藏令牌" : "显示令牌"}
               onClick={() => setShowToken((v) => !v)}
             >
-              {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
+              {showToken ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </span>
           <button
@@ -387,7 +387,7 @@ function EnterpriseSection() {
             onClick={() => void handleSync()}
             disabled={busy}
           >
-            <RefreshCw size={13} />
+            <RefreshCw size={12} />
             {busy ? "同步中…" : binding ? "重新同步" : "绑定并同步"}
           </button>
           <button
@@ -397,7 +397,7 @@ function EnterpriseSection() {
             onClick={() => void handleClearToken()}
             disabled={busy}
           >
-            <Trash2 size={13} />
+            <Trash2 size={12} />
             清除令牌
           </button>
         </div>
@@ -418,7 +418,7 @@ function EnterpriseSection() {
           {enterprisePresets.map((preset) => (
             <div className={s.modelRow} key={preset.id}>
               <span className={s.modelIcon} data-tone="enterprise">
-                <PlusCircle size={15} />
+                <PlusCircle size={16} />
               </span>
               <div className={s.modelText}>
                 <div className={s.modelName}>{preset.name || preset.defaultModel}</div>
@@ -592,7 +592,7 @@ export function CustomModelsPane() {
             {customPresets.map((preset) => (
               <div className={s.modelRow} key={preset.id}>
                 <span className={s.modelIcon}>
-                  <PlusCircle size={15} />
+                  <PlusCircle size={16} />
                 </span>
                 <div className={s.modelText}>
                   <div className={s.modelName}>{preset.defaultModel}</div>
@@ -607,7 +607,7 @@ export function CustomModelsPane() {
                     setEditor({ mode: "edit", providerId: preset.id });
                   }}
                 >
-                  <Pencil size={14} />
+                  <Pencil size={16} />
                 </button>
                 <button
                   type="button"
@@ -615,7 +615,7 @@ export function CustomModelsPane() {
                   title="删除"
                   onClick={() => void handleDelete(preset.id)}
                 >
-                  <Trash2 size={14} />
+                  <Trash2 size={16} />
                 </button>
               </div>
             ))}

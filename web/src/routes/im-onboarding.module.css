@@ -2,12 +2,12 @@
   width: min(880px, 100%);
   margin: 0 auto;
   display: grid;
-  gap: 18px;
+  gap: 20px;
   align-content: start;
 }
 
 .intro {
-  padding: 18px 0 10px;
+  padding: 20px 0 12px;
 }
 
 .eyebrow {
@@ -20,7 +20,7 @@
 
 .intro h1,
 .connectorHeader h1 {
-  margin: 8px 0 7px;
+  margin: 8px 0 8px;
   color: var(--h-text);
   font-size: 28px;
   line-height: 1.25;
@@ -42,14 +42,14 @@
 }
 
 .platformCard {
-  min-height: 190px;
+  min-height: 192px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 14px;
+  gap: 16px;
   align-items: start;
-  padding: 18px;
+  padding: 20px;
   border: 1px solid var(--h-line);
-  border-radius: var(--h-r-md);
+  border-radius: var(--h-radius-sm);
   color: inherit;
   background: var(--h-bg-pane);
   text-decoration: none;
@@ -70,13 +70,13 @@
 }
 
 .platformIcon {
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
   flex: none;
   border: 1px solid var(--h-accent-border);
-  border-radius: var(--h-r-md);
+  border-radius: var(--h-radius-sm);
   color: var(--h-accent);
   background: var(--h-accent-soft);
 }
@@ -84,7 +84,7 @@
 .platformCardCopy {
   min-width: 0;
   display: grid;
-  gap: 7px;
+  gap: 8px;
 }
 
 .platformCardCopy strong {
@@ -116,10 +116,10 @@
   min-height: 24px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 0 8px;
   border: 1px solid var(--h-line);
-  border-radius: var(--h-r-pill);
+  border-radius: var(--h-radius-sm);
   color: var(--h-text-2);
   background: var(--h-bg-soft);
   font-size: 11px;
@@ -127,9 +127,9 @@
 }
 
 .connectionState > span {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--h-r-pill);
+  width: 8px;
+  height: 8px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-text-3);
 }
 
@@ -146,11 +146,11 @@
 .successMessage,
 .errorMessage {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: flex-start;
-  padding: 12px 14px;
+  padding: 12px 16px;
   border: 1px solid var(--h-line-soft);
-  border-radius: var(--h-r-md);
+  border-radius: var(--h-radius-sm);
   color: var(--h-text-2);
   background: var(--h-bg-soft);
 }
@@ -159,7 +159,7 @@
 .successMessage svg {
   flex: none;
   color: var(--h-ok);
-  margin-top: 1px;
+  margin-top: 4px;
 }
 
 .privacyNote b,
@@ -172,13 +172,13 @@
 .privacyNote b,
 .successMessage b { color: var(--h-text); font-size: 12px; }
 .privacyNote span,
-.successMessage span { margin-top: 3px; font-size: 12px; line-height: 1.55; }
+.successMessage span { margin-top: 4px; font-size: 12px; line-height: 1.55; }
 
 .backLink {
   width: max-content;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   color: var(--h-text-2);
   font-size: 12px;
   text-decoration: none;
@@ -189,9 +189,9 @@
 .connectorHeader {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 14px;
+  gap: 16px;
   align-items: center;
-  padding: 6px 0 2px;
+  padding: 8px 0 4px;
 }
 
 .steps {
@@ -204,24 +204,24 @@
 }
 
 .steps li {
-  min-height: 42px;
+  min-height: 44px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 8px 12px;
   border: 1px solid var(--h-line-soft);
-  border-radius: var(--h-r-sm);
+  border-radius: var(--h-radius-sm);
   color: var(--h-text-3);
   background: var(--h-bg-soft);
 }
 
 .steps li > span {
-  width: 23px;
-  height: 23px;
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
   flex: none;
-  border-radius: var(--h-r-pill);
+  border-radius: var(--h-radius-sm);
   color: var(--h-text-3);
   background: var(--h-bg-pane);
   font-family: var(--h-font-mono);
@@ -234,12 +234,12 @@
 .steps li[data-done="true"] > span { color: var(--h-ok); background: var(--h-ok-soft); }
 
 .setupPanel {
-  min-height: 282px;
+  min-height: 284px;
   display: grid;
   align-items: center;
-  padding: 22px;
+  padding: 24px;
   border: 1px solid var(--h-line);
-  border-radius: var(--h-r-md);
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
   box-shadow: var(--h-shadow);
 }
@@ -257,7 +257,7 @@
 .savingState h2,
 .completeState h2,
 .qrCopy h2 {
-  margin: 0 0 7px;
+  margin: 0 0 8px;
   color: var(--h-text);
   font-size: 18px;
   line-height: 1.35;
@@ -284,14 +284,14 @@
 .startState > .actions { justify-content: flex-end; }
 
 .button {
-  min-height: 34px;
+  min-height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 7px 12px;
+  gap: 8px;
+  padding: 8px 12px;
   border: 1px solid var(--h-line);
-  border-radius: var(--h-r-sm);
+  border-radius: var(--h-radius-sm);
   color: var(--h-text);
   background: var(--h-bg-pane);
   font: 600 12px var(--h-font-ui);
@@ -307,7 +307,7 @@
 .qrState {
   display: grid;
   grid-template-columns: 228px minmax(0, 1fr);
-  gap: 26px;
+  gap: 28px;
   align-items: center;
 }
 
@@ -317,7 +317,7 @@
   display: grid;
   place-items: center;
   border: 1px solid var(--h-line);
-  border-radius: var(--h-r-md);
+  border-radius: var(--h-radius-sm);
   color: var(--h-accent);
   background: var(--bone-100);
   overflow: hidden;
@@ -328,7 +328,7 @@
 .qrCopy {
   min-width: 0;
   display: grid;
-  gap: 11px;
+  gap: 12px;
   align-content: center;
 }
 
@@ -337,10 +337,10 @@
   min-height: 28px;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 0 9px;
+  gap: 8px;
+  padding: 0 8px;
   border: 1px solid var(--h-accent-border);
-  border-radius: var(--h-r-pill);
+  border-radius: var(--h-radius-sm);
   color: var(--h-accent);
   background: var(--h-accent-soft);
   font-size: 11px;
@@ -359,7 +359,7 @@
 .savingState > svg { flex: none; color: var(--h-accent); }
 .completeState > svg { flex: none; color: var(--h-warn); }
 .completeState[data-ok="true"] > svg { color: var(--h-ok); }
-.completeState .actions { margin-top: 14px; }
+.completeState .actions { margin-top: 16px; }
 
 .spin { animation: spin 900ms linear infinite; }
 
@@ -372,16 +372,16 @@
 
 .failureHelp {
   display: grid;
-  gap: 14px;
+  gap: 16px;
   padding: 16px;
   border: 1px solid color-mix(in srgb, var(--h-warn) 36%, var(--h-line));
-  border-radius: var(--h-r-md);
+  border-radius: var(--h-radius-sm);
   background: color-mix(in srgb, var(--h-warn-soft) 42%, var(--h-bg-pane));
 }
 
 .failureHeading {
   display: flex;
-  gap: 9px;
+  gap: 8px;
   align-items: flex-start;
 }
 
@@ -389,7 +389,7 @@
 .failureHeading b,
 .failureHeading span { display: block; }
 .failureHeading b { color: var(--h-text); font-size: 13px; }
-.failureHeading span { margin-top: 3px; color: var(--h-text-2); font-size: 12px; line-height: 1.55; }
+.failureHeading span { margin-top: 4px; color: var(--h-text-2); font-size: 12px; line-height: 1.55; }
 .failureHelp > p { margin: 0; color: var(--h-text-2); font-size: 12px; line-height: 1.65; }
 
 .failureHelp ol {
@@ -403,20 +403,20 @@
 
 .failureHelp li {
   display: flex;
-  gap: 9px;
-  padding: 10px;
+  gap: 8px;
+  padding: 12px;
   border: 1px solid var(--h-line-soft);
-  border-radius: var(--h-r-sm);
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
 }
 
 .failureHelp li > span {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
   flex: none;
-  border-radius: var(--h-r-pill);
+  border-radius: var(--h-radius-sm);
   color: var(--h-warn);
   background: var(--h-warn-soft);
   font-family: var(--h-font-mono);

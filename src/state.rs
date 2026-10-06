@@ -29,6 +29,14 @@ pub struct GatewayWsHandle {
     pub notify: Arc<Notify>,
 }
 
+/// Process-lifetime browser companion endpoint. The bearer token is distinct
+/// from the dashboard credential and is accepted only by the loopback server.
+#[derive(Clone)]
+pub struct BrowserCompanionHandle {
+    pub port: u16,
+    pub token: String,
+}
+
 /// Windows Job Object handle used to bind the dashboard process tree to the
 /// desktop lifecycle. On non-Windows this is a zero-sized placeholder so the
 /// DashboardHandle shape stays uniform across platforms.
@@ -116,6 +124,21 @@ impl DashboardHandle {
     /// desktop attaches to but does not own.
     pub fn local(api_base_url: String, session_token: Option<String>) -> Self {
         Self::attached(api_base_url, session_token, "local")
+    }
+
+    /// Build a handle for the in-process embedded Python runtime
+    /// (see `docs/embedded-python.md`). There is no child process, no port lock
+    /// and no ownership marker; `owns_process` stays false so shutdown paths
+    /// never try to terminate a process — the interpreter is finalized via
+    /// `crate::embedded::shutdown()` instead.
+    pub fn embedded() -> Self {
+        let mut handle = Self::attached(
+            crate::embedded::EMBEDDED_API_BASE_URL.to_string(),
+            Some(crate::embedded::embedded_session_token()),
+            "embedded",
+        );
+        handle.command_program = Some("embedded-python".to_string());
+        handle
     }
 
     fn attached(
@@ -206,6 +229,18 @@ pub struct AppStateInner {
     /// on the relay socket path. `None` on webview-direct WS or before the
     /// first relay connect.
     pub gateway_ws: Option<GatewayWsHandle>,
+    /// The live embedded gateway session, when the managed runtime is running
+    /// in-process (see `docs/embedded-python.md`). Replaces `gateway_ws` in
+    /// embedded mode; `gateway_ws_send/close` consult it first.
+    pub embedded_gateway: Option<crate::embedded::transport::EmbeddedGatewayHandle>,
+    /// True when the managed runtime is running in-process (embedded CPython)
+    /// instead of as a `hermes` subprocess. Drives api_proxy/ws_proxy/gateway
+    /// command behavior and the frontend `runtime.isEmbedded()` flag.
+    pub embedded: bool,
+    /// Resolved embedded payload root (validated), when `embedded` is true.
+    pub embedded_payload: Option<String>,
+    /// Lazily started when the user chooses “在浏览器中打开社区桌面版”.
+    pub browser_companion: Option<BrowserCompanionHandle>,
     /// Set while a managed-dashboard restart is in progress (profile switch or
     /// YOLO toggle). Guards against two restarts racing on `dashboard_handle`.
     pub dashboard_restart_in_flight: bool,
@@ -229,6 +264,13 @@ pub struct AppStateInner {
     /// Debounce marker for `connection-auth-expired` emits (a burst of 401s
     /// must not storm the UI with re-login banners).
     pub last_auth_expired_emit: Option<std::time::Instant>,
+    /// Set while the unified app update (backend + frontend, one version) is
+    /// in flight. Guards against two concurrent updates racing on the runtime
+    /// tree and the dashboard restart.
+    pub app_update_in_flight: bool,
+    /// Set while a Track B UI hot update (install/rollback) is in flight.
+    /// Guards against two threads extracting/activating UI packages at once.
+    pub ui_update_in_flight: bool,
 }
 
 /// A snapshot of how the currently-connected dashboard authenticates, taken
@@ -268,12 +310,18 @@ impl AppState {
                 current_profile: "default".to_string(),
                 dashboard_handle: None,
                 gateway_ws: None,
+                embedded_gateway: None,
+                embedded: false,
+                embedded_payload: None,
+                browser_companion: None,
                 dashboard_restart_in_flight: false,
                 last_runtime_error: None,
                 yolo_mode: false,
                 connection_mode: crate::connection::ConnectionMode::Managed,
                 oauth_session: None,
                 last_auth_expired_emit: None,
+                app_update_in_flight: false,
+                ui_update_in_flight: false,
             }),
         }
     }

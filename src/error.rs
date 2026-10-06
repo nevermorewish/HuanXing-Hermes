@@ -94,10 +94,14 @@ pub enum AppError {
     // --- State ---
     #[error("App state lock poisoned")]
     StateLockPoisoned,
-
     #[error("Desktop runtime not ready")]
     NotReady,
-
+    // --- Embedded Python (docs/embedded-python.md) ---
+    #[error("Embedded Python error: {msg}")]
+    EmbeddedPython {
+        msg: String,
+        traceback: Option<String>,
+    },
     // --- Generic (escape hatch for truly unexpected errors) ---
     #[error("{0}")]
     Internal(String),
@@ -142,6 +146,7 @@ impl AppError {
             AppError::Git(_) => "git",
             AppError::StateLockPoisoned => "state_lock_poisoned",
             AppError::NotReady => "not_ready",
+            AppError::EmbeddedPython { .. } => "embedded_python",
             AppError::Internal(_) => "internal",
         }
     }
@@ -173,6 +178,7 @@ impl AppError {
             AppError::FileError(_) => "file",
             AppError::Git(_) => "git",
             AppError::StateLockPoisoned | AppError::NotReady => "state",
+            AppError::EmbeddedPython { .. } => "embedded_python",
             AppError::Internal(_) => "internal",
         }
     }
@@ -233,6 +239,23 @@ impl From<std::io::Error> for AppError {
 impl From<url::ParseError> for AppError {
     fn from(e: url::ParseError) -> Self {
         AppError::InvalidRequest(e.to_string())
+    }
+}
+
+// Convenience: convert PyO3 errors into a stable AppError variant. The
+// Python traceback is extracted here (not at the call site) so every
+// src/embedded/call.rs failure path maps identically. Feature-gated: the
+// embedded architecture compiles without pyo3 (stub backend).
+#[cfg(feature = "embedded-python")]
+impl From<pyo3::PyErr> for AppError {
+    fn from(e: pyo3::PyErr) -> Self {
+        use pyo3::prelude::*;
+        let traceback =
+            Python::attach(|py| e.traceback(py).map(|tb| tb.format().unwrap_or_default()));
+        AppError::EmbeddedPython {
+            msg: e.to_string(),
+            traceback,
+        }
     }
 }
 

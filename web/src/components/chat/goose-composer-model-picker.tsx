@@ -86,6 +86,8 @@ export function modelButtonText(
 
 export interface Candidate {
   key: string;
+  catalogId: string;
+  iconUrl?: string;
   providerSlug: string;
   providerName: string;
   vendor: string;
@@ -123,7 +125,12 @@ const SLUG_ALIASES: Record<string, string> = {
 };
 
 function findCatalog(slug: string): ProviderPreset | undefined {
-  return CATALOG_BY_ID.get(slug) ?? CATALOG_BY_ID.get(SLUG_ALIASES[slug] ?? "");
+  const normalizedSlug = slug.trim().toLowerCase();
+  const catalogSlug = normalizedSlug.startsWith("custom:")
+    ? normalizedSlug.slice("custom:".length)
+    : normalizedSlug;
+  return CATALOG_BY_ID.get(catalogSlug)
+    ?? CATALOG_BY_ID.get(SLUG_ALIASES[catalogSlug] ?? "");
 }
 
 function mergeModelIds(...lists: Array<readonly string[] | undefined>): string[] {
@@ -143,22 +150,83 @@ function findModelCaps(preset: ProviderPreset | undefined, modelId: string): Pro
   return preset?.models.find((m) => m.id === modelId) ?? null;
 }
 
+function resolveModelCaps(
+  provider: GatewayModelProvider,
+  preset: ProviderPreset | undefined,
+  modelId: string,
+): ProviderCatalogModel | null {
+  const fallback = findModelCaps(preset, modelId);
+  const metadata = provider.capabilities?.[modelId];
+  if (!metadata) return fallback;
+
+  const hasModelsDevMetadata = metadata.supports_tools !== undefined
+    || metadata.supports_vision !== undefined
+    || metadata.supports_pdf !== undefined
+    || metadata.supports_audio !== undefined
+    || metadata.supports_video !== undefined
+    || metadata.supports_reasoning !== undefined
+    || metadata.supports_reasoning_control !== undefined
+    || metadata.open_weights !== undefined
+    || metadata.context_window !== undefined;
+  if (!hasModelsDevMetadata) return fallback;
+
+  return {
+    id: modelId,
+    label: fallback?.label,
+    contextWindow: metadata.context_window ?? fallback?.contextWindow,
+    supportsVision: metadata.supports_vision ?? fallback?.supportsVision,
+    supportsPdf: metadata.supports_pdf ?? fallback?.supportsPdf,
+    supportsAudio: metadata.supports_audio ?? fallback?.supportsAudio,
+    supportsVideo: metadata.supports_video ?? fallback?.supportsVideo,
+    supportsTools: metadata.supports_tools ?? fallback?.supportsTools,
+    supportsReasoning: metadata.supports_reasoning
+      ?? metadata.reasoning
+      ?? fallback?.supportsReasoning,
+    supportsReasoningControl: metadata.supports_reasoning_control
+      ?? fallback?.supportsReasoningControl,
+    openWeights: metadata.open_weights ?? fallback?.openWeights,
+  };
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
 }
 
+function featuredModelIds(
+  provider: GatewayModelProvider,
+  preset: ProviderPreset | undefined,
+  currentProvider: string | undefined,
+  currentModel: string | undefined,
+  limit: number,
+): string[] {
+  const catalogModels = preset?.models.map((model) => model.id) ?? [];
+  const candidates = preset
+    ? mergeModelIds(catalogModels, provider.models)
+    : mergeModelIds(provider.models);
+  const activeModel = provider.slug === currentProvider ? currentModel : undefined;
+
+  if (activeModel && !candidates.includes(activeModel)) candidates.unshift(activeModel);
+  const featured = candidates.slice(0, limit);
+  if (activeModel && !featured.includes(activeModel)) {
+    featured[featured.length - 1] = activeModel;
+  }
+  return featured;
+}
+
 export function buildCandidates(
   modelOptions: ModelOptionsResult | null,
   usageEntries: ModelUsageEntry[],
-): { all: Candidate[]; recent: Candidate[]; configured: Candidate[]; recommended: Candidate[]; moa: Candidate[]; more: Candidate[] } {
+  limit = 5,
+): { all: Candidate[]; recent: Candidate[]; configured: Candidate[]; moa: Candidate[] } {
   const all: Candidate[] = [];
   const moa: Candidate[] = [];
   const seenKeys = new Set<string>();
-  const gatewayProviderSlugs = new Set<string>();
 
-  // 1. From gateway model.options
+  // model.options 默认只返回已经完成鉴权的供应商。兼容旧版 Core 时，
+  // 没有 authenticated 字段但返回了模型的供应商仍视为可用；显式 false
+  // 则必须排除，不能再把内置目录补成「去配置」占位卡片。
   for (const provider of modelOptions?.providers ?? []) {
     // MoA 预设走独立分组，不进常规分桶（对齐官方桌面端把 moa 行从
     // pickerProviders 里拆出的做法）。
@@ -167,6 +235,7 @@ export function buildCandidates(
         if (!presetName) continue;
         moa.push({
           key: `${MOA_PROVIDER_SLUG}:${presetName}`,
+          catalogId: MOA_PROVIDER_SLUG,
           providerSlug: MOA_PROVIDER_SLUG,
           providerName: providerLabel(provider) || "Mixture of Agents",
           vendor: "MoA",
@@ -177,102 +246,52 @@ export function buildCandidates(
       }
       continue;
     }
-    gatewayProviderSlugs.add(provider.slug);
     const preset = findCatalog(provider.slug);
     const extras = asRecord(provider);
-    const authenticated = Boolean(extras.authenticated);
+    const advertisedModels = provider.models ?? [];
+    const authHint = extras.authenticated;
+    const authenticated = authHint === true || (
+      typeof authHint !== "boolean" && advertisedModels.length > 0
+    );
+    if (!authenticated) continue;
+
     const keyEnv = typeof extras.key_env === "string" ? extras.key_env : undefined;
     const warning = typeof extras.warning === "string" ? extras.warning : undefined;
     const apiUrl = typeof extras.api_url === "string"
       ? extras.api_url
-      : typeof extras.apiUrl === "string"
-        ? extras.apiUrl
-        : undefined;
+      : typeof extras.apiUrl === "string" ? extras.apiUrl : undefined;
     const enterprise = isTeamServiceProviderUrl(apiUrl);
-    const catalogModelIds = preset?.models.map((model) => model.id) ?? [];
-    const advertisedModels = provider.models ?? [];
-    if (advertisedModels.length === 0 && !authenticated) {
-      // Unconfigured provider with no advertised models — still emit catalog
-      // candidates so the default model can surface in 推荐预设 while newer
-      // non-default models remain searchable in 更多.
-      const placeholders = catalogModelIds.length > 0
-        ? catalogModelIds
-        : preset?.defaultModel
-          ? [preset.defaultModel]
-          : [];
-      for (const placeholder of placeholders) {
-        const key = `${provider.slug}:${placeholder}`;
-        if (!seenKeys.has(key)) {
-          seenKeys.add(key);
-          all.push({
-            key,
-            providerSlug: provider.slug,
-            providerName: preset?.name ?? providerLabel(provider),
-            vendor: preset?.vendor ?? "",
-            model: placeholder,
-            baseUrl: preset?.baseUrl,
-            apiKeyLabel: preset?.apiKeyLabel ?? keyEnv,
-            apiUrl,
-            enterprise,
-            configured: false,
-            caps: findModelCaps(preset, placeholder),
-            warning,
-          });
-        }
-      }
-      continue;
-    }
-    const models = mergeModelIds(catalogModelIds, advertisedModels);
+    const models = featuredModelIds(
+      provider,
+      preset,
+      modelOptions?.provider,
+      modelOptions?.model,
+      limit,
+    );
     for (const modelId of models) {
       const key = `${provider.slug}:${modelId}`;
       if (seenKeys.has(key)) continue;
       seenKeys.add(key);
       all.push({
         key,
+        catalogId: preset?.id ?? provider.slug,
         providerSlug: provider.slug,
         providerName: preset?.name ?? providerLabel(provider),
         vendor: preset?.vendor ?? "",
         model: modelId,
         baseUrl: preset?.baseUrl,
         apiKeyLabel: preset?.apiKeyLabel ?? keyEnv,
+        iconUrl: getProviderIconUrl(preset?.icon),
         apiUrl,
         enterprise,
         configured: authenticated,
-        caps: findModelCaps(preset, modelId),
+        caps: resolveModelCaps(provider, preset, modelId),
         warning,
       });
     }
   }
 
-  // 2. From catalog Top 5: ensure they have catalog candidates even if the
-  // gateway never returned them. This guarantees the 推荐预设 group is
-  // populated for users with zero configured providers, while non-default
-  // variants remain searchable in 更多.
-  for (const topId of TOP5_PROVIDER_IDS) {
-    if (gatewayProviderSlugs.has(topId)) continue;
-    const preset = CATALOG_BY_ID.get(topId);
-    if (!preset) continue;
-    for (const model of preset.models) {
-      const key = `${topId}:${model.id}`;
-      if (seenKeys.has(key)) continue;
-      seenKeys.add(key);
-      all.push({
-        key,
-        providerSlug: topId,
-        providerName: preset.name,
-        vendor: preset.vendor,
-        model: model.id,
-        baseUrl: preset.baseUrl,
-        apiKeyLabel: preset.apiKeyLabel,
-        configured: false,
-        caps: model,
-      });
-    }
-  }
-
-  // 3. Group buckets
   const usageRanked = rankRecentModels(usageEntries, { limit: 3 });
-  const usageKeySet = new Set(usageRanked.map((e) => e.key));
 
   const recent: Candidate[] = usageRanked
     .map((e) => all.find((c) => c.key === e.key))
@@ -280,37 +299,15 @@ export function buildCandidates(
 
   const topSet = new Set<string>(TOP5_PROVIDER_IDS);
   const configured: Candidate[] = all
-    .filter((c) => c.configured && !usageKeySet.has(c.key))
+    .filter((c) => c.configured)
     .sort((a, b) => {
-      const aTop = topSet.has(a.providerSlug) ? 0 : 1;
-      const bTop = topSet.has(b.providerSlug) ? 0 : 1;
+      const aTop = topSet.has(a.catalogId) ? 0 : 1;
+      const bTop = topSet.has(b.catalogId) ? 0 : 1;
       if (aTop !== bTop) return aTop - bTop;
       return a.providerName.localeCompare(b.providerName, "zh-Hans-CN");
     });
 
-  // 推荐: unconfigured + in Top 5 + showing only the provider's default model
-  // (don't dump every model variant into recommended — it'd look the same as
-  // 更多 and bury the actual choices).
-  const recommendedSeen = new Set<string>();
-  const recommended: Candidate[] = [];
-  for (const c of all) {
-    if (c.configured) continue;
-    if (!topSet.has(c.providerSlug)) continue;
-    if (recommendedSeen.has(c.providerSlug)) continue;
-    const preset = CATALOG_BY_ID.get(c.providerSlug);
-    if (preset && c.model !== preset.defaultModel) continue;
-    recommendedSeen.add(c.providerSlug);
-    recommended.push(c);
-  }
-
-  const placed = new Set<string>([
-    ...recent.map((c) => c.key),
-    ...configured.map((c) => c.key),
-    ...recommended.map((c) => c.key),
-  ]);
-  const more: Candidate[] = all.filter((c) => !placed.has(c.key));
-
-  return { all, recent, configured, recommended, moa, more };
+  return { all, recent, configured, moa };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -369,7 +366,7 @@ export function groupCandidates(
   options: ModelGroupingOptions = {},
 ): ModelGroups {
   const groups: ModelGroups = { enterprise: [], custom: [], builtin: [] };
-  const { all } = buildCandidates(modelOptions, []);
+  const { all } = buildCandidates(modelOptions, [], Number.MAX_SAFE_INTEGER);
   const otherBuiltinCandidates: Candidate[] = [];
   const seenBuiltinModels = new Set<string>();
   const showEnterprise = options.showEnterprise ?? true;
@@ -548,7 +545,7 @@ export function ModelPickerModal({
                   {candidate.subtitle || candidate.providerName}
                 </span>
               </span>
-              {isCurrent ? <Check size={14} className={s.modelMenuItemCheck} aria-hidden="true" /> : null}
+              {isCurrent ? <Check size={16} className={s.modelMenuItemCheck} aria-hidden="true" /> : null}
             </button>
           );
         })}
@@ -578,7 +575,7 @@ export function ModelPickerModal({
         <div className={s.modelMenuHead}>
           <span>选择模型</span>
           <button type="button" className={s.modelMenuClose} onClick={onClose} aria-label="关闭模型选择">
-            <X size={13} aria-hidden="true" />
+            <X size={12} aria-hidden="true" />
           </button>
         </div>
 

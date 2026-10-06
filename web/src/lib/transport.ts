@@ -3,6 +3,7 @@ import { runtime } from "./runtime";
 import { debugBus } from "./debug-bus";
 import { activeProfileAtom } from "@/stores/ui";
 import { AttachmentUploadResult } from "@hermes/protocol";
+import { assertCompatible } from "./version-check";
 import type { DownloadExternalImageInput, DownloadedImageResult } from "./runtime";
 
 interface Parser<T> {
@@ -84,8 +85,14 @@ function shouldUseNativeIpc(path: string): boolean {
     path.startsWith("/__hermes_session_log/") || path.startsWith("/__hermes_cron_runs/");
 
   if (runtime.platform === "tauri") {
-    if (isLocalDesktopRoute && window.hermesDesktop?.request) return true;
-    if (!window.__HERMES_RUNTIME__?.apiBaseUrl) return false;
+    if (!window.hermesDesktop?.request) return false;
+    // Embedded mode: the backend lives inside the Rust process — there is no
+    // loopback HTTP at all, so every request must go through native IPC.
+    if (runtime.isEmbedded()) return true;
+    if (isLocalDesktopRoute) return true;
+    if (!window.__HERMES_RUNTIME__?.apiBaseUrl && window.__HERMES_RUNTIME__?.backendReady !== true) {
+      return false;
+    }
     return true;
   }
   if (runtime.platform !== "electron") return false;
@@ -135,6 +142,7 @@ export async function fetchJSON<T>(
   init?: RequestInit,
   parser?: Parser<T>,
 ): Promise<T> {
+  assertCompatible();
   if (shouldUseNativeIpc(path)) {
     return fetchViaElectron(path, init, parser);
   }
@@ -161,6 +169,18 @@ export async function fetchJSON<T>(
  * confined `/api/media` endpoint.
  */
 export async function fetchMediaDataUrl(path: string): Promise<string> {
+  const readFileDataUrl = window.hermesDesktop?.readFileDataUrl;
+  if (readFileDataUrl) {
+    try {
+      const dataUrl = await readFileDataUrl(path);
+      if (typeof dataUrl === "string" && dataUrl.startsWith("data:image/")) {
+        return dataUrl;
+      }
+    } catch {
+      // Fall back to Core's media endpoint when the path is not on this machine.
+    }
+  }
+
   const result = await fetchJSON<{ data_url?: unknown }>(
     `/api/media?path=${encodeURIComponent(path)}`,
   );
@@ -168,6 +188,17 @@ export async function fetchMediaDataUrl(path: string): Promise<string> {
     throw new Error("Media response did not contain an image data URL");
   }
   return result.data_url;
+}
+
+export async function readFileDataUrl(path: string): Promise<string | null> {
+  const reader = window.hermesDesktop?.readFileDataUrl;
+  if (!reader) return null;
+  try {
+    const dataUrl = await reader(path);
+    return dataUrl || null;
+  } catch {
+    return null;
+  }
 }
 
 const EXTERNAL_FETCH_TIMEOUT_MS = 15_000;
@@ -189,12 +220,18 @@ export async function fetchExternalJSON<T>(
   const headers = (init?.headers as Record<string, string>) ?? {};
   const externalRequest = window.hermesDesktop?.externalRequest;
   if (externalRequest) {
-    const result = await externalRequest({
-      path: url,
-      method: init?.method,
-      headers,
-      body: typeof init?.body === "string" ? init.body : null,
-    });
+    const signal = init?.signal ?? null;
+    throwIfAborted(signal);
+    const result = await raceAbort(
+      externalRequest({
+        path: url,
+        method: init?.method,
+        headers,
+        body: typeof init?.body === "string" ? init.body : null,
+      }),
+      signal,
+    );
+    throwIfAborted(signal);
     if (!result.ok) {
       reportRestFailure(init?.method ?? "GET", url, result.status, result.body);
       throw new Error(`HTTP ${result.status}: ${result.body}`);
@@ -300,18 +337,22 @@ export async function downloadExternalImageFile(url: string): Promise<File> {
 }
 
 export async function putJSON<T>(path: string, body: unknown, parser?: Parser<T>): Promise<T> {
+  assertCompatible();
   return fetchJSON<T>(path, { method: "PUT", body: JSON.stringify(body) }, parser);
 }
 
 export async function postJSON<T>(path: string, body: unknown, parser?: Parser<T>): Promise<T> {
+  assertCompatible();
   return fetchJSON<T>(path, { method: "POST", body: JSON.stringify(body) }, parser);
 }
 
 export async function patchJSON<T>(path: string, body: unknown, parser?: Parser<T>): Promise<T> {
+  assertCompatible();
   return fetchJSON<T>(path, { method: "PATCH", body: JSON.stringify(body) }, parser);
 }
 
 export async function deleteJSON<T>(path: string, body?: unknown, parser?: Parser<T>): Promise<T> {
+  assertCompatible();
   return fetchJSON<T>(path, {
     method: "DELETE",
     ...(body !== undefined && { body: JSON.stringify(body) }),
@@ -323,6 +364,7 @@ export function uploadAttachmentFile(
   file: File,
   onProgress?: (percent: number) => void,
 ): Promise<AttachmentUploadResult> {
+  assertCompatible();
   const uploadFile = window.hermesDesktop?.uploadFile;
   if (uploadFile) {
     return file.arrayBuffer().then(async (data) => {
@@ -395,6 +437,15 @@ function attachmentFileName(path: string): string {
 export async function readImageBytesFromPath(
   path: string,
 ): Promise<{ contentBase64: string; filename: string } | null> {
+  const dataUrl = await readFileDataUrl(path);
+  if (dataUrl?.startsWith("data:image/")) {
+    const comma = dataUrl.indexOf(",");
+    const contentBase64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+    return contentBase64
+      ? { contentBase64, filename: attachmentFileName(path) }
+      : null;
+  }
+
   const read = window.hermesDesktop?.readWorkspaceFile;
   if (!read) return null;
   try {

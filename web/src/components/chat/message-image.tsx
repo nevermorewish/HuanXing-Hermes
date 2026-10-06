@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ImageOff } from "lucide-react";
-import { isLikelyLocalFilePath, safeImageSrc } from "@/lib/message-images";
+import { isLikelyLocalFilePath, normalizeLocalFilePath, safeImageSrc } from "@/lib/message-images";
 import { fetchMediaDataUrl } from "@/lib/transport";
 import type { ChatImageItem } from "./chat-types";
 import s from "./message-timeline.module.css";
@@ -31,7 +31,7 @@ function ImagePlaceholder({
 
   return (
     <div className={s.imageFallback} role={reason === "failed" ? "alert" : "status"}>
-      <ImageOff size={18} strokeWidth={1.8} aria-hidden="true" />
+      <ImageOff size={20} strokeWidth={1.8} aria-hidden="true" />
       <span className={s.imageFallbackBody}>
         <span className={s.imageFallbackTitle}>
           {reason === "loading"
@@ -65,7 +65,7 @@ export function MessageImage({ image }: MessageImageProps) {
   const directSrc = useMemo(() => safeImageSrc(image.url), [image.url]);
   const localPath = useMemo(() => {
     const source = image.url?.trim();
-    return !directSrc && source && isLikelyLocalFilePath(source) ? source : undefined;
+    return !directSrc && source && isLikelyLocalFilePath(source) ? normalizeLocalFilePath(source) : undefined;
   }, [directSrc, image.url]);
   const label = imageLabel(image);
 

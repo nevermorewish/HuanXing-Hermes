@@ -163,6 +163,10 @@ export type MessagingPlatformTestResponse = z.infer<typeof MessagingPlatformTest
 
 export const SessionSummary = z.object({
   id: z.string(),
+  // Core uses this lineage link for official desktop session branching. Keep
+  // it in the parsed summary so branch drafts and persisted children retain
+  // their relationship to the source conversation.
+  parent_session_id: z.string().nullable().optional(),
   source: z.string().optional(),
   user_id: z.string().nullable().optional(),
   model: NullableStringAsEmpty,
@@ -442,11 +446,155 @@ export const MutationOkResponse = z.object({
 }).passthrough();
 export type MutationOkResponse = z.infer<typeof MutationOkResponse>;
 
+// ── Memory providers (/api/memory/providers/*) ───────────────────────
+
+export const MemoryProviderSetupInfo = z.object({
+  pip_dependencies: z.array(z.string()).optional().default([]),
+  external_dependencies: z.array(z.object({
+    name: z.string().optional().default(""),
+    install: z.string().optional().default(""),
+    check: z.string().optional().default(""),
+  }).passthrough()).optional().default([]),
+  required_env: z.array(z.string()).optional().default([]),
+  dependencies_installed: z.boolean().optional().default(true),
+}).passthrough();
+export type MemoryProviderSetupInfo = z.infer<typeof MemoryProviderSetupInfo>;
+
+export const MemoryProviderListItem = z.object({
+  name: z.string(),
+  description: z.string().optional().default(""),
+  available: z.boolean().optional().default(false),
+  configured: z.boolean().optional().default(false),
+  status: z.string().optional().default(""),
+  missing: z.boolean().optional().default(false),
+  setup: MemoryProviderSetupInfo.optional(),
+}).passthrough();
+export type MemoryProviderListItem = z.infer<typeof MemoryProviderListItem>;
+
+export const MemoryProvidersResponse = z.object({
+  active: z.string().optional().default(""),
+  providers: z.array(MemoryProviderListItem).optional().default([]),
+  builtin_files: z.record(z.number()).optional().default({}),
+}).passthrough();
+export type MemoryProvidersResponse = z.infer<typeof MemoryProvidersResponse>;
+
+export const MemoryProviderConfigOption = z.object({
+  value: z.string(),
+  label: z.string().optional().default(""),
+  description: z.string().optional().default(""),
+}).passthrough();
+
+export const MemoryProviderConfigField = z.object({
+  key: z.string(),
+  label: z.string(),
+  kind: z.enum(["text", "secret", "select", "boolean", "integer", "number"]),
+  description: z.string().optional().default(""),
+  placeholder: z.string().optional().default(""),
+  required: z.boolean().optional().default(false),
+  value: z.union([z.string(), z.number(), z.boolean()]),
+  is_set: z.boolean().optional().default(false),
+  options: z.array(MemoryProviderConfigOption).optional().default([]),
+  url: z.string().optional().default(""),
+  when: z.record(z.unknown()).nullable().optional(),
+  minimum: NullishNumber,
+  maximum: NullishNumber,
+  step: NullishNumber,
+}).passthrough();
+export type MemoryProviderConfigField = z.infer<typeof MemoryProviderConfigField>;
+
+export const MemoryProviderConfigResponse = z.object({
+  name: z.string(),
+  label: z.string(),
+  fields: z.array(MemoryProviderConfigField).optional().default([]),
+  setup: MemoryProviderSetupInfo.optional(),
+}).passthrough();
+export type MemoryProviderConfigResponse = z.infer<typeof MemoryProviderConfigResponse>;
+
+const OpenVikingModelUsage = z.object({
+  kind: z.string(),
+  model: z.string(),
+  provider: z.string(),
+  calls: z.number(),
+  prompt_tokens: z.number(),
+  completion_tokens: z.number(),
+  total_tokens: z.number(),
+  last_updated: z.string(),
+}).passthrough();
+
+const OpenVikingQueueUsage = z.object({
+  queue: z.string(),
+  pending: z.number(),
+  in_progress: z.number(),
+  processed: z.number(),
+  requeued: z.number(),
+  errors: z.number(),
+  total: z.number(),
+}).passthrough();
+
+export const OpenVikingRuntimeDetails = z.object({
+  kind: z.literal("openviking"),
+  auth_mode: z.string().optional().default(""),
+  ready_checks: z.record(z.unknown()).optional().default({}),
+  system: z.record(z.unknown()).optional().default({}),
+  components: z.record(z.unknown()).optional().default({}),
+  summary: z.record(z.unknown()).optional().default({}),
+  memory_stats: z.record(z.unknown()).optional().default({}),
+  model_usage: z.array(OpenVikingModelUsage).optional().default([]),
+  queue_usage: z.array(OpenVikingQueueUsage).optional().default([]),
+  tasks: z.array(z.record(z.unknown())).optional().default([]),
+}).passthrough();
+export type OpenVikingRuntimeDetails = z.infer<typeof OpenVikingRuntimeDetails>;
+
+export const HindsightRuntimeDetails = z.object({
+  kind: z.literal("hindsight"),
+  mode: z.string().optional().default(""),
+  health: z.record(z.unknown()).optional().default({}),
+  bank_id: z.string().optional().default(""),
+  bank: z.record(z.unknown()).nullable().optional(),
+  banks_count: z.number().optional().default(0),
+  stats: z.record(z.unknown()).optional().default({}),
+  runtime_config: z.record(z.unknown()).nullable().optional(),
+}).passthrough();
+export type HindsightRuntimeDetails = z.infer<typeof HindsightRuntimeDetails>;
+
+export const MemoryProviderRuntimeStatusResponse = z.object({
+  provider: z.string(),
+  active: z.boolean(),
+  configured: z.boolean(),
+  reachable: z.boolean(),
+  healthy: z.boolean(),
+  endpoint: z.string(),
+  console_url: z.string(),
+  version: z.string(),
+  checked_at: z.string(),
+  error: z.string(),
+  details: z.discriminatedUnion("kind", [
+    OpenVikingRuntimeDetails,
+    HindsightRuntimeDetails,
+  ]).nullable(),
+}).passthrough();
+export type MemoryProviderRuntimeStatusResponse = z.infer<typeof MemoryProviderRuntimeStatusResponse>;
+
+export const MemoryProviderConfigMutationResponse = z.object({
+  ok: z.boolean(),
+  active: z.string().optional().default(""),
+}).passthrough();
+export type MemoryProviderConfigMutationResponse = z.infer<typeof MemoryProviderConfigMutationResponse>;
+
+export const MemoryProviderSetupResponse = z.object({
+  ok: z.boolean(),
+  provider: z.string(),
+  results: z.array(z.record(z.unknown())).optional().default([]),
+}).passthrough();
+export type MemoryProviderSetupResponse = z.infer<typeof MemoryProviderSetupResponse>;
+
 export const ConfigSchemaField = z.object({
   type: z.string(),
   description: z.string(),
   category: z.string(),
   options: z.array(z.string()).optional(),
+  minimum: z.number().optional(),
+  maximum: z.number().optional(),
 });
 export type ConfigSchemaField = z.infer<typeof ConfigSchemaField>;
 
@@ -555,6 +703,15 @@ export const SkillContentResponse = z.object({
   path: z.string(),
 });
 export type SkillContentResponse = z.infer<typeof SkillContentResponse>;
+
+export const SkillWriteResponse = z.object({
+  success: z.boolean(),
+  message: z.string().optional(),
+  path: z.string().optional(),
+  skill_md: z.string().optional(),
+  category: z.string().optional(),
+}).passthrough();
+export type SkillWriteResponse = z.infer<typeof SkillWriteResponse>;
 
 // 技能 hub 搜索（GET /api/skills/hub/search?q=&source=&limit=&profile=）。
 // profile builder 的「从 hub 添加」用它；identifier 是安装时的唯一键。
@@ -1141,6 +1298,8 @@ export type ProfileSetupCommandResponse = z.infer<typeof ProfileSetupCommandResp
 
 export const SessionCreateResult = z.object({
   session_id: z.string(),
+  stored_session_id: z.string().nullable().optional(),
+  message_count: z.number().optional(),
 }).passthrough();
 export type SessionCreateResult = z.infer<typeof SessionCreateResult>;
 
@@ -1231,6 +1390,23 @@ export const SessionCompressResult = z.object({
 }).passthrough();
 export type SessionCompressResult = z.infer<typeof SessionCompressResult>;
 
+export const GatewayModelCapabilities = z.object({
+  fast: z.boolean().optional(),
+  reasoning: z.boolean().optional(),
+  supports_tools: z.boolean().optional(),
+  supports_vision: z.boolean().optional(),
+  supports_pdf: z.boolean().optional(),
+  supports_audio: z.boolean().optional(),
+  supports_video: z.boolean().optional(),
+  supports_reasoning: z.boolean().optional(),
+  supports_reasoning_control: z.boolean().optional(),
+  open_weights: z.boolean().optional(),
+  context_window: z.number().int().nonnegative().optional(),
+  max_output_tokens: z.number().int().nonnegative().optional(),
+  model_family: z.string().optional(),
+}).passthrough();
+export type GatewayModelCapabilities = z.infer<typeof GatewayModelCapabilities>;
+
 export const GatewayModelProvider = z.object({
   slug: z.string(),
   name: z.string().optional(),
@@ -1240,6 +1416,7 @@ export const GatewayModelProvider = z.object({
   is_user_defined: z.boolean().optional(),
   source: z.string().optional(),
   warning: z.string().optional(),
+  capabilities: z.record(z.string(), GatewayModelCapabilities).optional(),
 }).passthrough();
 export type GatewayModelProvider = z.infer<typeof GatewayModelProvider>;
 
@@ -1300,6 +1477,16 @@ export const AttachmentUploadResult = z.object({
   mime_type: z.string().optional(),
 }).passthrough();
 export type AttachmentUploadResult = z.infer<typeof AttachmentUploadResult>;
+
+export const FileAttachResult = z.object({
+  attached: z.boolean().optional(),
+  name: z.string().optional(),
+  path: z.string().optional(),
+  ref_path: z.string().optional(),
+  ref_text: z.string().optional(),
+  uploaded: z.boolean().optional(),
+}).passthrough();
+export type FileAttachResult = z.infer<typeof FileAttachResult>;
 
 // `/api/fs/list` entry. Upstream's handler returns `isDirectory`; the fork's
 // original P-004 handler returned `is_dir`. Accept either off the wire and
@@ -1518,7 +1705,7 @@ export const GatewayKnownEvent = z.discriminatedUnion("type", [
       flags: z.record(z.unknown()).optional(),
     }).passthrough().optional(),
   }).passthrough(),
-  // 仅后台委派：≤2Hz 合并的实时输出（chunk 已脱敏/去 ANSI），events 是后端
+  // 前后台委派：≤2Hz 合并的实时输出（chunk 已脱敏/去 ANSI），events 是后端
   // 归一化出的子事件（init/text/tool_use/result，snake_case 字段）。
   z.object({
     type: z.literal("delegation.cli.output"),

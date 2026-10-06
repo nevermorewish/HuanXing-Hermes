@@ -41,12 +41,33 @@ const BUNDLED_PLUGINS_DIR: &str = "plugins";
 const RUNTIME_HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const RUNTIME_MANIFEST_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 const RUNTIME_ARTIFACT_HTTP_TIMEOUT: Duration = Duration::from_secs(15 * 60);
-// The release runtime is a PyInstaller-style onefile binary. On a cold macOS
-// launch it has to unpack its embedded Python payload before argparse can even
-// print `dashboard --help`; current arm64 artifacts routinely take ~18s on the
-// first run. Keep the smoke check long enough for the cold path and let normal
-// launches stay fast via the runtime's own cache.
-const SMOKE_TIMEOUT: Duration = Duration::from_secs(60);
+// The release runtime is a PyInstaller-built frozen binary. On a cold launch
+// (first exec after extraction) it has to boot the frozen interpreter and load
+// the whole bundled payload before argparse can even print `dashboard --help`;
+// the smaller macOS arm64 artifacts already routinely took ~18s on the first
+// run, and the runtime payload has since grown much heavier (Python 3.14 since
+// runtime-v0.19.0-cn.*, plus bundled Node 22 / TUI / more SDKs — a ~130MB zip
+// / ~57MB exe). On slower machines with real-time antivirus scanning the
+// freshly-extracted tree, the first `dashboard --help` can take well over 60s.
+// Keep the smoke check long enough for that cold path (install/update runs in
+// the background, so the longer cap only delays the error, not the user) and
+// let normal launches stay fast via the runtime's own cache. The cap can be
+// tuned per environment with HERMES_RUNTIME_SMOKE_TIMEOUT_SECS.
+const SMOKE_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// Effective smoke-check timeout: `HERMES_RUNTIME_SMOKE_TIMEOUT_SECS` env
+/// override when set to a sane value (>= 10s, clamped at 10min), otherwise
+/// [`SMOKE_TIMEOUT`]. Env override lets slow/AV-scanned first-run machines opt
+/// out of the default budget without a rebuild.
+fn smoke_timeout() -> Duration {
+    if let Ok(raw) = std::env::var("HERMES_RUNTIME_SMOKE_TIMEOUT_SECS") {
+        if let Ok(secs) = raw.trim().parse::<u64>() {
+            let clamped = secs.clamp(10, 10 * 60);
+            return Duration::from_secs(clamped);
+        }
+    }
+    SMOKE_TIMEOUT
+}
 // Spawning a just-written/just-extracted executable can transiently fail with
 // ETXTBSY ("Text file busy"): a concurrent fork in another thread may have
 // inherited a write fd to the file, so exec sees it as still open for writing.
@@ -109,7 +130,7 @@ struct LegacyRuntimeInstallRecord {
     pub previous_version: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeUpdateManifest {
     pub schema_version: u32,
@@ -239,7 +260,7 @@ pub struct RuntimeInstallUpdateResult {
     pub error: Option<String>,
 }
 
-fn current_platform() -> &'static str {
+pub(crate) fn current_platform() -> &'static str {
     if cfg!(target_os = "windows") {
         "win32"
     } else if cfg!(target_os = "macos") {
@@ -249,7 +270,7 @@ fn current_platform() -> &'static str {
     }
 }
 
-fn current_arch() -> &'static str {
+pub(crate) fn current_arch() -> &'static str {
     if cfg!(target_arch = "x86_64") {
         "x64"
     } else if cfg!(target_arch = "aarch64") {
@@ -521,7 +542,7 @@ fn versions_root() -> PathBuf {
     runtime_root().join("versions")
 }
 
-fn downloads_root() -> PathBuf {
+pub(crate) fn downloads_root() -> PathBuf {
     runtime_root().join("downloads")
 }
 
@@ -716,6 +737,52 @@ const FALLBACK_MANIFEST_BASE_URL: &str =
     "https://huanxing.ai/downloads/Hermes-CN-Core/runtime/stable";
 const FALLBACK_ARTIFACT_MIRROR_BASE_URL: &str =
     "https://huanxing.ai/downloads/Hermes-CN-Core/runtime/stable";
+// Ed25519 key for the signed UI hot-update manifest (`ui_update.rs`). The
+// kernel runtime feed above is verified by artifact SHA-256 only.
+const BAKED_PUBLIC_KEY_PEM: Option<&str> =
+    option_env!("HERMES_RUNTIME_UPDATE_PUBLIC_KEY_PEM_DEFAULT");
+const FALLBACK_PUBLIC_KEY_PEM: &str = concat!(
+    "-----BEGIN PUBLIC KEY-----\n",
+    "MCowBQYDK2VwAyEAqPkLQ4o67G2GMTgkQQQZXWwDBZM/4hqq5thSZSNhoC0=\n",
+    "-----END PUBLIC KEY-----\n"
+);
+
+/// Runtime manifest URL from the user-editable `update-config.json` layer.
+/// Two forms, highest first:
+///
+/// 1. `runtimeManifestUrl` — fully-formed URL, used verbatim.
+/// 2. `runtimeBaseUrl` + `channel` — constructed with the same
+///    `${base}/${channel}-${platform}-${arch}.json` pattern as the env path.
+///
+/// Returns `None` when the config file is absent/unparsable or resolves to
+/// neither URL — callers then fall through to the legacy env/baked cascade.
+fn configured_manifest_url_from_update_config() -> Option<String> {
+    let cfg = crate::update_config::load_optional()?;
+    let runtime_manifest_url = cfg.runtime_manifest_url.trim().to_string();
+    if !runtime_manifest_url.is_empty() {
+        return Some(runtime_manifest_url);
+    }
+    let base = cfg.runtime_base_url.trim().to_string();
+    if base.is_empty() {
+        return None;
+    }
+    let channel = cfg.channel.trim().to_string();
+    if channel.is_empty() {
+        return None;
+    }
+    let base = if base.ends_with('/') {
+        base.trim_end_matches('/').to_string()
+    } else {
+        base
+    };
+    Some(format!(
+        "{}/{}-{}-{}.json",
+        base,
+        channel,
+        current_platform(),
+        current_arch()
+    ))
+}
 
 fn configured_manifest_url() -> Option<String> {
     // 1. Fully-formed URL via runtime env (highest precedence)
@@ -724,6 +791,15 @@ fn configured_manifest_url() -> Option<String> {
         if !trimmed.is_empty() {
             return Some(trimmed);
         }
+    }
+
+    // 1b. User-editable `update-config.json` layer (new, unified flow):
+    //     `runtimeManifestUrl` verbatim, or `runtimeBaseUrl`+`channel`
+    //     constructed. Active only when the file exists and parses, so the
+    //     legacy env cascade below keeps working untouched until a user
+    //     actually writes a config.
+    if let Some(url) = configured_manifest_url_from_update_config() {
+        return Some(url);
     }
 
     // 2. Construct from base URL — runtime env wins, then compile-time
@@ -781,6 +857,40 @@ fn configured_artifact_mirror_base_url(manifest: &RuntimeUpdateManifest) -> Opti
                 .eq_ignore_ascii_case("nevermorewish/Hermes-CN-Core")
                 .then(|| FALLBACK_ARTIFACT_MIRROR_BASE_URL.to_string())
         })
+}
+
+pub(crate) fn configured_public_key() -> Option<String> {
+    // 0. User-editable `update-config.json` layer: `runtimePublicKeyPem`
+    //    overrides the baked/fallback key. Only active when the file exists
+    //    and parses, so the legacy cascade below is untouched otherwise.
+    if let Some(cfg) = crate::update_config::load_optional() {
+        let pem = cfg.runtime_public_key_pem.trim().replace("\\n", "\n");
+        if !pem.is_empty() {
+            return Some(pem);
+        }
+    }
+    // 1. PEM via runtime env (highest precedence)
+    if let Ok(direct) = std::env::var("HERMES_RUNTIME_UPDATE_PUBLIC_KEY_PEM") {
+        let pem = direct.trim().replace("\\n", "\n");
+        if !pem.is_empty() {
+            return Some(pem);
+        }
+    }
+    // 2. PEM from a file path via runtime env
+    if let Ok(file) = std::env::var("HERMES_RUNTIME_UPDATE_PUBLIC_KEY_FILE") {
+        if Path::new(&file).is_file() {
+            return fs::read_to_string(&file).ok();
+        }
+    }
+    // 3. Compile-time embedded PEM (baked into release builds via CI)
+    if let Some(baked) = BAKED_PUBLIC_KEY_PEM {
+        let pem = baked.trim().replace("\\n", "\n");
+        if !pem.is_empty() {
+            return Some(pem);
+        }
+    }
+    // 4. Hardcoded fallback.
+    Some(FALLBACK_PUBLIC_KEY_PEM.to_string())
 }
 
 fn artifact_download_url(
@@ -862,7 +972,7 @@ pub fn get_runtime_info(last_error: Option<String>) -> RuntimeInfo {
     }
 }
 
-fn file_sha256(path: &Path) -> Option<String> {
+pub(crate) fn file_sha256(path: &Path) -> Option<String> {
     let mut file = fs::File::open(path).ok()?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 64 * 1024];
@@ -962,7 +1072,29 @@ pub fn sync_runtime_resources_if_available(
         return Ok(RuntimeResourceSyncResult::default());
     };
 
+    // Bootstrap calls this again after bundled installation. Apply the same
+    // revision rule here so that second sync cannot mix older resources into
+    // the newer runtime we just preserved.
+    if current.source != "local-source" {
+        if let Some(manifest) = bundled_runtime_dir(resource_dir)
+            .and_then(|dir| read_json_file::<RuntimeUpdateManifest>(&bundled_manifest_path(&dir)))
+        {
+            if is_newer_compatible_runtime(&current, &manifest) {
+                return Ok(RuntimeResourceSyncResult::default());
+            }
+        }
+    }
+
     sync_available_runtime_resources_from_resource(resource_dir, Path::new(&current.path))
+}
+
+fn is_newer_compatible_runtime(
+    current: &RuntimeInstallRecord,
+    bundled: &RuntimeUpdateManifest,
+) -> bool {
+    current.kernel_version == bundled.kernel_version
+        && current.runtime_flavor == bundled.runtime_flavor
+        && current.runtime_revision > bundled.runtime_revision
 }
 
 pub fn current_bundled_skills_dir() -> Option<PathBuf> {
@@ -1030,17 +1162,33 @@ fn tui_dir_if_present(runtime_dir: &Path) -> Option<PathBuf> {
     tui.join("dist").join("entry.js").is_file().then_some(tui)
 }
 
+fn node_override_if_present(raw: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    let node = PathBuf::from(raw?);
+    node.is_file().then_some(node)
+}
+
+fn tui_override_if_present(raw: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    let tui = PathBuf::from(raw?);
+    tui.join("dist").join("entry.js").is_file().then_some(tui)
+}
+
 /// Directory holding the bundled `node`/`npm`/`npx`, when the current managed
 /// runtime ships one. Prepend to a spawned child's PATH so `shutil.which`
 /// (TUI launch, node-based MCP servers, playwright, `npx tsc`) resolves them
 /// without a host Node install. See FORK_NOTES P-032.
 pub fn current_node_bin_dir() -> Option<PathBuf> {
+    if let Some(node) = node_override_if_present(std::env::var_os("HERMES_DESKTOP_NODE_BINARY")) {
+        return node.parent().map(Path::to_path_buf);
+    }
     node_bin_dir_if_present(Path::new(&read_current_record()?.path))
 }
 
 /// Absolute path to the bundled `node` executable, for the `HERMES_NODE` env
 /// var the frozen runtime prefers when launching the Ink TUI (P-032).
 pub fn current_node_binary() -> Option<PathBuf> {
+    if let Some(node) = node_override_if_present(std::env::var_os("HERMES_DESKTOP_NODE_BINARY")) {
+        return Some(node);
+    }
     node_binary_if_present(Path::new(&read_current_record()?.path))
 }
 
@@ -1048,6 +1196,9 @@ pub fn current_node_binary() -> Option<PathBuf> {
 /// `HERMES_TUI_DIR` so the frozen runtime launches /chat without a ui-tui/
 /// source checkout (P-032).
 pub fn current_tui_dir() -> Option<PathBuf> {
+    if let Some(tui) = tui_override_if_present(std::env::var_os("HERMES_DESKTOP_TUI_DIR")) {
+        return Some(tui);
+    }
     tui_dir_if_present(Path::new(&read_current_record()?.path))
 }
 
@@ -1377,7 +1528,33 @@ fn sha256_hex(data: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn safe_version_segment(version: &str) -> Result<String, String> {
+/// Verify an Ed25519 signature over an arbitrary payload with a PEM-encoded
+/// public key. Used by the UI hot-update manifest; the kernel runtime feed is
+/// verified by artifact SHA-256 only in this distribution.
+pub(crate) fn verify_payload_signature(
+    payload: &[u8],
+    signature_b64: &str,
+    public_key_pem: &str,
+) -> Result<(), String> {
+    use base64::Engine;
+    use ed25519_dalek::pkcs8::DecodePublicKey;
+    use ed25519_dalek::{Signature, VerifyingKey};
+
+    let key = VerifyingKey::from_public_key_pem(public_key_pem.trim())
+        .map_err(|e| format!("Invalid public key PEM: {}", e))?;
+
+    let sig_bytes = base64::engine::general_purpose::STANDARD
+        .decode(signature_b64)
+        .map_err(|e| format!("Invalid signature base64: {}", e))?;
+
+    let signature =
+        Signature::from_slice(&sig_bytes).map_err(|e| format!("Invalid signature: {}", e))?;
+
+    key.verify_strict(payload, &signature)
+        .map_err(|_| "Signature verification failed".to_string())
+}
+
+pub(crate) fn safe_version_segment(version: &str) -> Result<String, String> {
     const MAX_VERSION_SEGMENT_LEN: usize = 120;
 
     if version.is_empty() {
@@ -1566,7 +1743,7 @@ async fn smoke_check_runtime(executable_path: &Path) -> Result<(), String> {
         }
     };
 
-    wait_for_smoke_child(child, SMOKE_TIMEOUT).await
+    wait_for_smoke_child(child, smoke_timeout()).await
 }
 
 /// True when the spawn error is ETXTBSY ("Text file busy"), which can briefly
@@ -2005,6 +2182,21 @@ pub async fn install_bundled_runtime_if_needed(
                     error: Some(format!("failed to clear local-source current.json: {}", e)),
                 };
             }
+        } else if is_newer_compatible_runtime(&current, &manifest) {
+            // The dashboard contract is tied to the kernel version. Keep a
+            // newer revision of that same kernel/flavor, including its own
+            // resources; copying older bundled plugins would mix releases.
+            log::info!(
+                "Keeping installed runtime {} over older bundled {}",
+                current.runtime_version,
+                manifest.runtime_version
+            );
+            return RuntimeInstallUpdateResult {
+                ok: true,
+                installed: None,
+                previous: Some(current),
+                error: None,
+            };
         } else if current.runtime_version == manifest.runtime_version {
             // The bootstrap pipeline calls `sync_runtime_resources_if_available`
             // immediately after this install check. Refreshing the same dashboard,
@@ -2249,8 +2441,42 @@ pub fn rollback_runtime() -> RuntimeInstallUpdateResult {
     }
 }
 
+const MAX_ZIP_ENTRIES: usize = 10_000;
 const MAX_ZIP_FILES: usize = 5_000;
 const MAX_ZIP_TOTAL_BYTES: u64 = 500 * 1024 * 1024; // 500 MB
+
+fn validate_zip_entry_counts(
+    archive: &mut zip::ZipArchive<fs::File>,
+) -> Result<(usize, usize), String> {
+    let entry_count = archive.len();
+    if entry_count > MAX_ZIP_ENTRIES {
+        return Err(format!(
+            "Zip contains {} entries (limit {})",
+            entry_count, MAX_ZIP_ENTRIES
+        ));
+    }
+
+    // ZipArchive::len() includes explicit directory records. The file limit
+    // protects payload-bearing files and symlinks; directories remain bounded
+    // separately by MAX_ZIP_ENTRIES. Counting both as files rejected the valid
+    // cn.7 runtime (4011 files + 996 directory records).
+    let mut file_count = 0usize;
+    for index in 0..entry_count {
+        let entry = archive.by_index(index).map_err(|e| e.to_string())?;
+        if !entry.is_dir() {
+            file_count += 1;
+        }
+    }
+
+    if file_count > MAX_ZIP_FILES {
+        return Err(format!(
+            "Zip contains {} files (limit {})",
+            file_count, MAX_ZIP_FILES
+        ));
+    }
+
+    Ok((entry_count, file_count))
+}
 
 /// Returns true when a symlink whose target is `target`, living in directory
 /// `link_parent`, resolves to a path that stays inside `dest`. The target is
@@ -2287,17 +2513,10 @@ fn symlink_target_within(dest: &Path, link_parent: &Path, target: &Path) -> bool
     resolved.starts_with(dest)
 }
 
-fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
+pub(crate) fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
     let file = fs::File::open(zip_path).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-
-    if archive.len() > MAX_ZIP_FILES {
-        return Err(format!(
-            "Zip contains {} files (limit {})",
-            archive.len(),
-            MAX_ZIP_FILES
-        ));
-    }
+    validate_zip_entry_counts(&mut archive)?;
 
     let dest = dest.canonicalize().unwrap_or_else(|_| dest.to_path_buf());
     let mut total_bytes: u64 = 0;
@@ -2516,7 +2735,7 @@ fn validate_bundled_plugins_tree(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
+pub(crate) fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
     fs::create_dir_all(dst).map_err(|e| e.to_string())?;
     for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
@@ -2633,6 +2852,33 @@ mod tests {
 
         std::fs::write(dist.join("entry.js"), b"//tui").unwrap();
         assert_eq!(tui_dir_if_present(root), Some(root.join("tui")));
+    }
+
+    #[test]
+    fn local_dev_resource_overrides_require_usable_paths() {
+        let dir = TempDir::new().unwrap();
+        let node = dir.path().join(if cfg!(target_os = "windows") {
+            "node.exe"
+        } else {
+            "node"
+        });
+        let tui = dir.path().join("ui-tui");
+
+        assert!(node_override_if_present(Some(node.clone().into_os_string())).is_none());
+        assert!(tui_override_if_present(Some(tui.clone().into_os_string())).is_none());
+
+        std::fs::write(&node, b"node").unwrap();
+        std::fs::create_dir_all(tui.join("dist")).unwrap();
+        std::fs::write(tui.join("dist").join("entry.js"), b"// tui").unwrap();
+
+        assert_eq!(
+            node_override_if_present(Some(node.clone().into_os_string())),
+            Some(node)
+        );
+        assert_eq!(
+            tui_override_if_present(Some(tui.clone().into_os_string())),
+            Some(tui)
+        );
     }
 
     #[test]
@@ -3154,6 +3400,34 @@ mod tests {
         assert!(err.contains("timed out"), "unexpected error: {err}");
     }
 
+    #[test]
+    #[serial]
+    fn smoke_timeout_defaults_to_180s_and_honors_env_override() {
+        std::env::remove_var("HERMES_RUNTIME_SMOKE_TIMEOUT_SECS");
+        assert_eq!(smoke_timeout(), Duration::from_secs(180));
+
+        std::env::set_var("HERMES_RUNTIME_SMOKE_TIMEOUT_SECS", "300");
+        assert_eq!(smoke_timeout(), Duration::from_secs(300));
+
+        // Garbage and out-of-range values fall back to sane bounds.
+        std::env::set_var("HERMES_RUNTIME_SMOKE_TIMEOUT_SECS", "not-a-number");
+        assert_eq!(smoke_timeout(), Duration::from_secs(180));
+        std::env::set_var("HERMES_RUNTIME_SMOKE_TIMEOUT_SECS", "5");
+        assert_eq!(
+            smoke_timeout(),
+            Duration::from_secs(10),
+            "clamped to minimum"
+        );
+        std::env::set_var("HERMES_RUNTIME_SMOKE_TIMEOUT_SECS", "99999");
+        assert_eq!(
+            smoke_timeout(),
+            Duration::from_secs(10 * 60),
+            "clamped to maximum"
+        );
+
+        std::env::remove_var("HERMES_RUNTIME_SMOKE_TIMEOUT_SECS");
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn smoke_check_runs_from_executable_directory() {
@@ -3249,14 +3523,84 @@ mod tests {
         let file = std::fs::File::create(&zip_path).unwrap();
         let mut writer = zip::ZipWriter::new(file);
         let opts = zip::write::SimpleFileOptions::default();
-        // MAX_ZIP_FILES = 5000 — push 5001 empty entries.
-        for i in 0..5001 {
+        // MAX_ZIP_FILES = 5000 — push 5001 real file entries.
+        for i in 0..=MAX_ZIP_FILES {
             writer.start_file(format!("f{}", i), opts).unwrap();
         }
         writer.finish().unwrap();
 
         let err = extract_zip(&zip_path, &dest).unwrap_err();
-        assert!(err.contains("Zip contains"), "unexpected error: {}", err);
+        assert_eq!(
+            err,
+            format!(
+                "Zip contains {} files (limit {})",
+                MAX_ZIP_FILES + 1,
+                MAX_ZIP_FILES
+            )
+        );
+    }
+
+    #[test]
+    fn zip_file_limit_does_not_count_directory_records() {
+        let dir = TempDir::new().unwrap();
+        let zip_path = dir.path().join("directories.zip");
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let opts = zip::write::SimpleFileOptions::default();
+
+        for i in 0..MAX_ZIP_FILES {
+            writer.start_file(format!("f{}", i), opts).unwrap();
+        }
+        writer.add_directory("metadata/", opts).unwrap();
+        writer.finish().unwrap();
+
+        let file = std::fs::File::open(&zip_path).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        assert_eq!(
+            validate_zip_entry_counts(&mut archive).unwrap(),
+            (MAX_ZIP_FILES + 1, MAX_ZIP_FILES)
+        );
+    }
+
+    #[test]
+    fn extract_zip_rejects_too_many_directory_entries() {
+        let dir = TempDir::new().unwrap();
+        let zip_path = dir.path().join("directory-bomb.zip");
+        let dest = dir.path().join("out");
+        std::fs::create_dir_all(&dest).unwrap();
+
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let opts = zip::write::SimpleFileOptions::default();
+        for i in 0..=MAX_ZIP_ENTRIES {
+            writer.add_directory(format!("d{}/", i), opts).unwrap();
+        }
+        writer.finish().unwrap();
+
+        let err = extract_zip(&zip_path, &dest).unwrap_err();
+        assert_eq!(
+            err,
+            format!(
+                "Zip contains {} entries (limit {})",
+                MAX_ZIP_ENTRIES + 1,
+                MAX_ZIP_ENTRIES
+            )
+        );
+    }
+
+    #[test]
+    #[ignore = "release workflow provides HERMES_RELEASE_RUNTIME_ZIP"]
+    fn release_runtime_zip_extracts_with_installer() {
+        let zip_path = std::env::var_os("HERMES_RELEASE_RUNTIME_ZIP")
+            .map(PathBuf::from)
+            .expect("HERMES_RELEASE_RUNTIME_ZIP must point to the staged runtime archive");
+        let dest = TempDir::new().unwrap();
+
+        extract_zip(&zip_path, dest.path()).unwrap();
+        assert!(
+            find_executable_in(dest.path(), 2).is_some(),
+            "runtime executable missing after extraction"
+        );
     }
 
     #[cfg(unix)]
@@ -3862,6 +4206,106 @@ mod tests {
             .is_file());
 
         std::env::remove_var("HERMES_DESKTOP_RUNTIME_ROOT");
+    }
+
+    #[tokio::test]
+    #[serial]
+    #[cfg(unix)]
+    async fn install_bundled_runtime_preserves_newer_compatible_revisions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        for (kernel, flavor, revision, executable_present, should_install) in [
+            ("0.20.0", "cn", 10, true, false),
+            ("0.20.0", "cn", 100, true, false),
+            ("0.20.0", "cn", 9, true, false),
+            ("0.20.0", "cn", 8, true, true),
+            ("0.19.0", "cn", 99, true, true),
+            ("0.21.0", "cn", 1, true, true),
+            ("0.20.0", "other", 10, true, true),
+            ("0.20.0", "cn", 10, false, true),
+        ] {
+            let dir = TempDir::new().unwrap();
+            let runtime_root = dir.path().join("runtime");
+            let resource = dir.path().join("resources");
+            let bundled = resource.join("bundled-runtime");
+            let expanded = bundled_expanded_runtime_dir(&bundled);
+            fs::create_dir_all(&expanded).unwrap();
+            let bundled_exe = expanded.join(primary_runtime_name());
+            fs::write(&bundled_exe, b"#!/bin/sh\nexit 0\n").unwrap();
+            fs::set_permissions(&bundled_exe, fs::Permissions::from_mode(0o755)).unwrap();
+
+            let mut bundled_manifest = fixture_manifest();
+            bundled_manifest.kernel_version = "0.20.0".into();
+            bundled_manifest.runtime_version = "0.20.0-cn.9".into();
+            bundled_manifest.runtime_revision = 9;
+            bundled_manifest.platform = current_platform().into();
+            bundled_manifest.arch = current_arch().into();
+            write_json_file(&bundled_manifest_path(&bundled), &bundled_manifest).unwrap();
+
+            let mut current_manifest = bundled_manifest.clone();
+            current_manifest.kernel_version = kernel.into();
+            current_manifest.runtime_flavor = flavor.into();
+            current_manifest.runtime_revision = revision;
+            current_manifest.runtime_version = format!("{kernel}-{flavor}.{revision}");
+            let current_dir = runtime_root
+                .join("versions")
+                .join(&current_manifest.runtime_version);
+            fs::create_dir_all(&current_dir).unwrap();
+            let current_exe = current_dir.join(primary_runtime_name());
+            if executable_present {
+                fs::write(&current_exe, b"installed executable").unwrap();
+            }
+            let current = install_record_from_manifest(
+                &current_manifest,
+                &current_dir,
+                &current_exe,
+                "update",
+                None,
+            );
+            let current_web = current_dir
+                .join("_internal/hermes_cli")
+                .join(DASHBOARD_WEB_DIST_DIR);
+            fs::create_dir_all(&current_web).unwrap();
+            fs::write(current_web.join("index.html"), b"installed dashboard").unwrap();
+            let bundled_web = resource
+                .join(DASHBOARD_RESOURCE_DIR)
+                .join(DASHBOARD_WEB_DIST_DIR);
+            fs::create_dir_all(&bundled_web).unwrap();
+            fs::write(bundled_web.join("index.html"), b"bundled dashboard").unwrap();
+            let bundled_skill = resource.join(BUNDLED_SKILLS_RESOURCE_DIR).join("demo");
+            fs::create_dir_all(&bundled_skill).unwrap();
+            fs::write(bundled_skill.join("SKILL.md"), b"---\nname: demo\n---\n").unwrap();
+
+            std::env::set_var("HERMES_DESKTOP_RUNTIME_ROOT", &runtime_root);
+            write_json_file(&current_record_path(), &current).unwrap();
+            let original_record = fs::read(current_record_path()).unwrap();
+            let result = install_bundled_runtime_if_needed(Some(&resource)).await;
+            let sync_result = sync_runtime_resources_if_available(Some(&resource));
+            let after = read_current_record();
+            let after_record = fs::read(current_record_path()).unwrap();
+            std::env::remove_var("HERMES_DESKTOP_RUNTIME_ROOT");
+
+            assert!(
+                result.ok,
+                "{kernel}-{flavor}.{revision}: {:?}",
+                result.error
+            );
+            assert!(sync_result.is_ok(), "{sync_result:?}");
+            assert_eq!(result.installed.is_some(), should_install);
+            let after = after.unwrap();
+            if should_install {
+                assert_eq!(after.runtime_version, bundled_manifest.runtime_version);
+            } else {
+                assert_eq!(after.runtime_version, current.runtime_version);
+                assert_eq!(after_record, original_record);
+                let expected: &[u8] = if revision > 9 {
+                    b"installed dashboard"
+                } else {
+                    b"bundled dashboard"
+                };
+                assert_eq!(fs::read(current_web.join("index.html")).unwrap(), expected);
+            }
+        }
     }
 
     #[tokio::test]

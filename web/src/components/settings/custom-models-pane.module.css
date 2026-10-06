@@ -1,13 +1,13 @@
 /* CustomModelsPane — 模型面板：企业模型下发 + 自定义模型（对齐 自定义模型1-3.png） */
 
 .section {
-  margin-bottom: 26px;
+  margin-bottom: 28px;
 }
 
 .sectionTitle {
   font-size: 15px;
   font-weight: 700;
-  margin: 0 0 6px;
+  margin: 0 0 8px;
 }
 
 .desc {
@@ -19,8 +19,8 @@
 .card {
   border: 1px solid var(--h-line-soft);
   border-radius: var(--h-radius-lg);
-  padding: 13px 16px;
-  margin: 10px 0;
+  padding: 12px 16px;
+  margin: 12px 0;
   background: var(--h-bg-app);
 }
 
@@ -33,7 +33,7 @@
 .cardHeadTitle {
   font-size: 13.5px;
   font-weight: 600;
-  margin-bottom: 2px;
+  margin-bottom: 4px;
 }
 
 .cardHead .btn {
@@ -56,7 +56,7 @@
 .syncMeta {
   font-size: 12px;
   color: var(--h-text-4);
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 .savedTitle {
@@ -68,7 +68,7 @@
 .empty {
   border: 1px dashed var(--h-line);
   border-radius: var(--h-radius-lg);
-  padding: 22px;
+  padding: 24px;
   text-align: center;
   color: var(--h-text-4);
   font-size: 12.5px;
@@ -95,8 +95,8 @@
 }
 
 .modelIcon {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--h-radius-md);
   background: var(--h-bg-soft);
   color: var(--h-text-3);
@@ -127,7 +127,7 @@
 .modelSub {
   font-size: 11.5px;
   color: var(--h-text-4);
-  margin-top: 1px;
+  margin-top: 4px;
 }
 
 .rowOp {
@@ -152,10 +152,10 @@
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   border: 1px solid var(--h-line);
   border-radius: var(--h-radius-sm);
-  padding: 5px 14px;
+  padding: 4px 16px;
   font-size: 12.5px;
   background: var(--h-bg-app);
   color: var(--h-text);
@@ -199,8 +199,8 @@
   background: var(--h-color-danger-bg);
   border: 1px solid var(--h-color-danger-border);
   border-radius: var(--h-radius-sm);
-  padding: 7px 10px;
-  margin-top: 10px;
+  padding: 8px 12px;
+  margin-top: 12px;
 }
 
 /* ── 表单控件 ─────────────────────────────────────────────────── */
@@ -208,7 +208,7 @@
 .field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -224,7 +224,7 @@
   background: var(--h-bg-input);
   color: var(--h-text);
   font-size: 13.5px;
-  padding: 0 11px;
+  padding: 0 12px;
   outline: none;
   width: 100%;
   font-family: var(--h-font-ui);
@@ -246,7 +246,7 @@
   background: var(--h-bg-input);
   color: var(--h-text);
   font-size: 13px;
-  padding: 0 9px;
+  padding: 0 8px;
   outline: none;
   width: 100%;
   font-family: var(--h-font-ui);
@@ -263,12 +263,12 @@
 }
 
 .keyWrap .input {
-  padding-right: 34px;
+  padding-right: 36px;
 }
 
 .eye {
   position: absolute;
-  right: 6px;
+  right: 8px;
   top: 50%;
   transform: translateY(-50%);
   width: 24px;
@@ -290,14 +290,14 @@
 
 .checkRow {
   display: flex;
-  gap: 18px;
+  gap: 20px;
   flex-wrap: wrap;
 }
 
 .check {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-size: 13px;
   color: var(--h-text);
   cursor: pointer;
@@ -331,7 +331,7 @@
 .editTitle {
   font-size: 16px;
   font-weight: 700;
-  padding: 18px 20px 0;
+  padding: 20px 20px 0;
   display: inline-block;
 }
 
@@ -342,13 +342,13 @@
   color: var(--h-text-3);
   background: var(--h-bg-soft);
   border-radius: var(--h-radius-pill);
-  padding: 3px 10px;
+  padding: 4px 12px;
   vertical-align: middle;
 }
 
 .editClose {
   position: absolute;
-  top: 14px;
+  top: 16px;
   right: 16px;
   width: 28px;
   height: 28px;
@@ -368,7 +368,7 @@
 }
 
 .editBody {
-  padding: 14px 20px 6px;
+  padding: 16px 20px 8px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -379,8 +379,8 @@
 .editFoot {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
-  padding: 12px 20px 18px;
+  gap: 12px;
+  padding: 12px 20px 20px;
   border-top: 1px solid var(--h-line-soft);
   margin-top: 8px;
 }

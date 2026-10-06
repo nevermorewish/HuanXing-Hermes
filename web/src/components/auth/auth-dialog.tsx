@@ -124,7 +124,7 @@ export function AuthDialog() {
             <span className={s.srOnly}>{tab === "login" ? "登录" : "注册"}</span>
           </Dialog.Title>
           <button type="button" className={s.close} aria-label="关闭" onClick={() => setOpen(false)}>
-            <X size={15} />
+            <X size={16} />
           </button>
 
           <h3 className={s.title}>企业账号</h3>
@@ -199,7 +199,7 @@ export function AuthDialog() {
                   aria-label={showPassword ? "隐藏密码" : "显示密码"}
                   onClick={() => setShowPassword((value) => !value)}
                 >
-                  {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </span>
             </label>

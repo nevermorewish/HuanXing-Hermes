@@ -172,7 +172,7 @@ export function AccountPopup() {
                     });
                   }}
                 >
-                  <LogOut size={13} />
+                  <LogOut size={12} />
                   退出登录
                 </button>
               </div>
@@ -186,7 +186,7 @@ export function AccountPopup() {
                 openAuthDialog(true);
               }}
             >
-              <LogIn size={14} className={s.itemIcon} />
+              <LogIn size={16} className={s.itemIcon} />
               <span className={s.grow}>登录 / 注册企业账号</span>
               <span className={s.tail}>账号登录</span>
             </button>
@@ -202,14 +202,14 @@ export function AccountPopup() {
                   </span>
                 </span>
                 <button type="button" className={s.enterpriseLogout} title="更换企业设备令牌" onClick={openDeviceDialog}>
-                  <KeyRound size={13} />
+                  <KeyRound size={12} />
                   更换令牌
                 </button>
               </div>
             </div>
           ) : (
             <button type="button" className={s.item} onClick={openDeviceDialog}>
-              <KeyRound size={14} className={s.itemIcon} />
+              <KeyRound size={16} className={s.itemIcon} />
               <span className={s.grow}>绑定企业设备令牌</span>
               <span className={s.tail}>同步模型下发</span>
             </button>
@@ -217,12 +217,12 @@ export function AccountPopup() {
 
           <div className={s.sep} />
           <button type="button" className={s.item} onClick={() => openSettings("system")}>
-            <Settings size={14} className={s.itemIcon} />
+            <Settings size={16} className={s.itemIcon} />
             <span className={s.grow}>设置</span>
           </button>
 
           <div className={s.item} role="group" aria-label="外观">
-            <Palette size={14} className={s.itemIcon} />
+            <Palette size={16} className={s.itemIcon} />
             <span className={s.grow}>外观</span>
             <span className={s.seg}>
               <button type="button" className={s.segItem} data-on={!dark ? "true" : undefined} onClick={() => updateTheme({ theme: "light-modern" })}>浅色</button>
@@ -231,9 +231,9 @@ export function AccountPopup() {
           </div>
 
           <button type="button" className={s.item} onClick={() => setProfileListOpen((value) => !value)} aria-expanded={profileListOpen}>
-            <Users size={14} className={s.itemIcon} />
+            <Users size={16} className={s.itemIcon} />
             <span className={s.grow}>切换 Profile</span>
-            <ChevronRight size={13} className={s.tailIcon} data-open={profileListOpen ? "true" : undefined} />
+            <ChevronRight size={12} className={s.tailIcon} data-open={profileListOpen ? "true" : undefined} />
           </button>
           {profileListOpen ? (
             <div className={s.profileList}>
@@ -244,30 +244,30 @@ export function AccountPopup() {
               ) : profiles.map((profile) => (
                 <button key={profile.name} type="button" className={s.profileItem} data-active={profile.name === activeProfile ? "true" : undefined} disabled={setActiveProfile.isPending} onClick={() => { if (profile.name !== activeProfile) setActiveProfile.mutate(profile.name); }}>
                   <span className={s.grow}>{profile.name}</span>
-                  {profile.name === activeProfile ? <Check size={13} /> : null}
+                  {profile.name === activeProfile ? <Check size={12} /> : null}
                 </button>
               ))}
             </div>
           ) : null}
 
           <button type="button" className={s.item} onClick={() => { setOpen(false); openCommandPalette(); }}>
-            <Command size={14} className={s.itemIcon} />
+            <Command size={16} className={s.itemIcon} />
             <span className={s.grow}>命令面板</span>
             <span className={s.tail}>⌘K</span>
           </button>
           <button type="button" className={s.item} onClick={() => openSettings("help")}>
-            <HelpCircle size={14} className={s.itemIcon} />
+            <HelpCircle size={16} className={s.itemIcon} />
             <span className={s.grow}>帮助与反馈</span>
             <span className={s.tail}>文档 · 调试包</span>
           </button>
           <button type="button" className={s.item} onClick={() => openSettings("help")}>
-            <RefreshCw size={14} className={s.itemIcon} />
+            <RefreshCw size={16} className={s.itemIcon} />
             <span className={s.grow}>检查更新</span>
             <span className={s.tail} data-tone="ok">{DESKTOP_VERSION_LABEL}</span>
           </button>
           <div className={s.sep} />
           <button type="button" className={s.item} data-tone="danger" onClick={quitApp}>
-            <Power size={14} className={s.itemIcon} />
+            <Power size={16} className={s.itemIcon} />
             <span className={s.grow}>退出</span>
           </button>
         </Popover.Content>

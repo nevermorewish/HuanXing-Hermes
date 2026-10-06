@@ -62,6 +62,47 @@ describe("composer prompt preparation", () => {
     expect(result.displayText).toBe("看看这张图\n\n附件：pasted.png");
   });
 
+  it("keeps the browser image's original display name when Core renames the stored file", async () => {
+    vi.stubGlobal("FileReader", FakeFileReader);
+    const file = {
+      name: "e2e-red-dot.png",
+      type: "image/png",
+      arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
+    } as unknown as File;
+    const attachImageBytes = vi.fn(async () => ({
+      attached: true,
+      text: "[User attached image: upload_20260824_120000_1.png]",
+      name: "upload_20260824_120000_1.png",
+      path: "/img/upload_20260824_120000_1.png",
+    }));
+
+    const result = await prepareComposerPrompt(
+      "s1",
+      {
+        text: "看看这张图",
+        attachments: [{
+          id: "a1",
+          source: "browser",
+          file,
+          name: "e2e-red-dot.png",
+          kind: "image",
+          status: "ready",
+          mimeType: "image/png",
+        }],
+      },
+      { attachImage: vi.fn(), attachImageBytes, detectDroppedPath: vi.fn() },
+    );
+
+    expect(result.promptText).toContain("name=e2e-red-dot.png");
+    expect(result.displayImages).toEqual([
+      expect.objectContaining({
+        name: "e2e-red-dot.png",
+        alt: "e2e-red-dot.png",
+        title: "e2e-red-dot.png",
+      }),
+    ]);
+  });
+
   it("in remote mode, a path-only image uploads its bytes (image.attach_bytes), not the path", async () => {
     const readImageBytes = vi.fn(async () => ({
       contentBase64: "QUJD",
@@ -129,6 +170,101 @@ describe("composer prompt preparation", () => {
     expect(readImageBytes).not.toHaveBeenCalled();
   });
 
+  it("attaches an in-browser PDF File via file.attach with a data URL", async () => {
+    vi.stubGlobal("FileReader", FakeFileReader);
+    const bytes = new TextEncoder().encode("%PDF-1.7");
+    const file = {
+      name: "report.pdf",
+      type: "application/pdf",
+      size: bytes.byteLength,
+      arrayBuffer: async () => bytes.buffer,
+    } as unknown as File;
+    const attachFile = vi.fn(async () => ({
+      attached: true,
+      name: "report.pdf",
+      path: "/workspace/.hermes/desktop-attachments/report.pdf",
+      ref_path: ".hermes/desktop-attachments/report.pdf",
+      ref_text: "@file:.hermes/desktop-attachments/report.pdf",
+      uploaded: true,
+    }));
+    const uploadFile = vi.fn();
+    const detectDroppedPath = vi.fn();
+
+    const result = await prepareComposerPrompt(
+      "s1",
+      {
+        text: "读一下 PDF",
+        attachments: [{
+          id: "a1",
+          source: "browser",
+          file,
+          name: "report.pdf",
+          kind: "file",
+          status: "ready",
+          mimeType: "application/pdf",
+        }],
+      },
+      {
+        attachImage: vi.fn(),
+        attachFile,
+        uploadFile,
+        detectDroppedPath,
+      },
+    );
+
+    expect(attachFile).toHaveBeenCalledWith(
+      "s1",
+      undefined,
+      "data:application/pdf;base64,JVBERi0xLjc=",
+      "report.pdf",
+    );
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect(detectDroppedPath).not.toHaveBeenCalled();
+    expect(result.promptText).toBe("@file:.hermes/desktop-attachments/report.pdf\n\n读一下 PDF");
+    expect(result.displayText).toBe("读一下 PDF\n\n附件：report.pdf");
+  });
+
+  it("attaches a local non-image path via file.attach before detect_drop", async () => {
+    const attachFile = vi.fn(async () => ({
+      attached: true,
+      name: "report.pdf",
+      path: "/workspace/.hermes/desktop-attachments/report.pdf",
+      ref_text: "@file:.hermes/desktop-attachments/report.pdf",
+      uploaded: false,
+    }));
+    const detectDroppedPath = vi.fn();
+
+    const result = await prepareComposerPrompt(
+      "s1",
+      {
+        text: "总结",
+        attachments: [{
+          id: "a1",
+          source: "path",
+          path: "/Users/enzo/Downloads/report.pdf",
+          name: "report.pdf",
+          kind: "file",
+          status: "ready",
+          mimeType: "application/pdf",
+        }],
+      },
+      {
+        attachImage: vi.fn(),
+        attachFile,
+        detectDroppedPath,
+      },
+    );
+
+    expect(attachFile).toHaveBeenCalledWith(
+      "s1",
+      "/Users/enzo/Downloads/report.pdf",
+      undefined,
+      "report.pdf",
+    );
+    expect(detectDroppedPath).not.toHaveBeenCalled();
+    expect(result.promptText).toBe("@file:.hermes/desktop-attachments/report.pdf\n\n总结");
+  });
+
   it("includes image attach/vision text in the transport prompt but hides it from display text", async () => {
     const result = await prepareComposerPrompt(
       "s1",
@@ -190,6 +326,87 @@ describe("composer prompt preparation", () => {
     ].join("\n");
 
     expect(stripHermesUiWorkspaceContext(storedPrompt)).toBe("看一下这张图里面是什么内容\n\n附件：ga.png");
+  });
+
+  it("hides Core attached context while preserving the staged file label", () => {
+    const storedPrompt = [
+      "@file:.hermes/desktop-attachments/report.pdf",
+      "",
+      "总结这个 PDF",
+      "",
+      "--- Attached Context ---",
+      "",
+      "📎 @file:.hermes/desktop-attachments/report.pdf (application/pdf, 29 B) — binary file, not inlined as text.",
+    ].join("\n");
+
+    expect(stripHermesUiWorkspaceContext(storedPrompt)).toBe("总结这个 PDF\n\n附件：report.pdf");
+  });
+
+  it("recognizes Core profile-home attachments without hiding inline workspace refs", () => {
+    const stagedRef = "@file:/opt/hermes/profiles/default/attachments/report.pdf";
+    const storedPrompt = [
+      stagedRef,
+      "",
+      "同时检查 @file:src/main.ts",
+      "",
+      "--- Attached Context ---",
+      "",
+      `📎 ${stagedRef} (application/pdf, 29 B) — binary file, not inlined as text.`,
+      "",
+      "📄 @file:src/main.ts (10 tokens)",
+      "```ts",
+      "const main = true;",
+      "```",
+    ].join("\n");
+
+    expect(stripHermesUiWorkspaceContext(storedPrompt)).toBe(
+      "同时检查 @file:src/main.ts\n\n附件：report.pdf",
+    );
+  });
+
+  it("normalizes a persisted profile attachment ref even without attached context", () => {
+    const storedPrompt = [
+      "@file:/home/runner/e2e/.runtime/hermes-home/attachments/report.pdf",
+      "",
+      "总结这个 PDF",
+    ].join("\n");
+
+    expect(stripHermesUiWorkspaceContext(storedPrompt)).toBe(
+      "总结这个 PDF\n\n附件：report.pdf",
+    );
+  });
+
+  it("hides Core native image directives and keeps the original image label", () => {
+    const storedPrompt = [
+      "[Hermes UI Image]",
+      "name=shot.png",
+      "description:",
+      "[User attached image: upload_20260815_1.png]",
+      "[/Hermes UI Image]",
+      "",
+      "图里是什么？",
+      "@image:/opt/hermes/images/upload_20260815_1.png",
+      "[screenshot]",
+    ].join("\n");
+
+    expect(stripHermesUiWorkspaceContext(storedPrompt)).toBe(
+      "图里是什么？\n\n附件：shot.png",
+    );
+  });
+
+  it("keeps user-authored workspace refs while hiding their injected context", () => {
+    const storedPrompt = [
+      "请检查 @file:src/main.ts",
+      "",
+      "--- Attached Context ---",
+      "",
+      "📄 @file:src/main.ts (10 tokens)",
+      "```ts",
+      "const main = true;",
+      "```",
+    ].join("\n");
+
+    expect(stripHermesUiWorkspaceContext(storedPrompt)).toBe("请检查 @file:src/main.ts");
   });
 
   it("uses a dispatched skill invocation as transport text without changing display text", async () => {

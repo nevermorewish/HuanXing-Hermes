@@ -3,14 +3,14 @@
   max-width: min(480px, 92vw);
   background: var(--h-bg-app);
   border-radius: var(--h-radius-xl);
-  padding: 26px 26px 24px;
+  padding: 28px 28px 24px;
 }
 
 .tokenIcon {
   display: grid;
   width: 36px;
   height: 36px;
-  margin: 0 auto 10px;
+  margin: 0 auto 12px;
   place-items: center;
   border: 1px solid var(--h-accent-border);
   border-radius: var(--h-radius-md);
@@ -30,7 +30,7 @@
 .close {
   position: absolute;
   top: 12px;
-  right: 14px;
+  right: 16px;
   width: 28px;
   height: 28px;
   border-radius: var(--h-radius-sm);
@@ -45,9 +45,9 @@
 
 .close:hover { background: var(--h-bg-soft); color: var(--h-text); }
 .title { font-size: 18px; font-weight: 700; margin: 0; text-align: center; }
-.sub { font-size: 12.5px; color: var(--h-text-3); text-align: center; margin: 6px 0 18px; }
+.sub { font-size: 12.5px; color: var(--h-text-3); text-align: center; margin: 8px 0 20px; }
 .form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
+.field { display: flex; flex-direction: column; gap: 4px; }
 .label { font-size: 12.5px; color: var(--h-text-3); }
 
 .input {
@@ -57,7 +57,7 @@
   background: var(--h-bg-input);
   color: var(--h-text);
   font-size: 13.5px;
-  padding: 0 11px;
+  padding: 0 12px;
   outline: none;
   width: 100%;
   font-family: var(--h-font-ui);
@@ -74,7 +74,7 @@
 }
 
 .visit {
-  min-width: 78px;
+  min-width: 80px;
   height: 36px;
   border: 1px solid var(--h-line);
   border-radius: var(--h-radius-md);
@@ -86,7 +86,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
   cursor: pointer;
 }
 
@@ -94,11 +94,11 @@
 .visit:disabled { opacity: 0.55; cursor: default; }
 .adminHint { color: var(--h-warn); font-size: 12px; line-height: 1.45; }
 .passwordWrap { position: relative; display: block; }
-.passwordWrap .input { padding-right: 34px; }
+.passwordWrap .input { padding-right: 36px; }
 
 .eye {
   position: absolute;
-  right: 6px;
+  right: 8px;
   top: 50%;
   transform: translateY(-50%);
   width: 24px;
@@ -118,7 +118,7 @@
 .error, .notice, .status {
   font-size: 12.5px;
   border-radius: var(--h-radius-sm);
-  padding: 7px 10px;
+  padding: 8px 12px;
 }
 
 .error { color: var(--h-err); background: var(--h-color-danger-bg); border: 1px solid var(--h-color-danger-border); }
@@ -128,8 +128,8 @@
 .progressPanel {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 12px 12px;
   border: 1px solid var(--h-line);
   border-radius: var(--h-radius-md);
   background: var(--h-bg-soft);
@@ -137,9 +137,9 @@
 
 .progressText { color: var(--h-text-2); font-size: 12.5px; font-weight: 600; text-align: center; }
 .progressTrack {
-  height: 6px;
+  height: 8px;
   overflow: hidden;
-  border-radius: 999px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-line);
 }
 
@@ -164,7 +164,7 @@
 
 .submit {
   margin-top: 4px;
-  height: 38px;
+  height: 40px;
   border-radius: var(--h-radius-md);
   background: var(--h-text);
   color: var(--h-bg-app);
@@ -176,14 +176,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 8px;
 }
 
 .submit:hover:not(:disabled) { opacity: 0.88; }
 .submit:disabled, .skip:disabled, .secondary:disabled { opacity: 0.55; cursor: default; }
 
 .skip {
-  height: 34px;
+  height: 36px;
   border: none;
   border-radius: var(--h-radius-md);
   color: var(--h-text-2);
@@ -196,7 +196,7 @@
 .skip:hover:not(:disabled) { color: var(--h-text); background: var(--h-bg-soft); }
 
 .secondary {
-  height: 34px;
+  height: 36px;
   border-radius: var(--h-radius-md);
   background: none;
   color: var(--h-err);
@@ -207,7 +207,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .secondary:hover:not(:disabled) { background: var(--h-color-danger-bg); }
