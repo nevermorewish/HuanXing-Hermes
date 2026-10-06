@@ -14,6 +14,8 @@ pub const BRAND_RECHARGE_URL: &str = "https://ccwork.site/";
 pub const BRAND_DATA_DIR_NAME: &str = ".ccworkhermes";
 pub const BRAND_WINDOW_TITLE: &str = "ccworkhermes 桌面版";
 pub const BRAND_HOMEPAGE: &str = "https://ccwork.site/";
-pub const BRAND_UPDATE_MANIFEST_URL: &str = "https://ccwork.site/hermes/latest.json";
-pub const BRAND_UPDATE_DOWNLOAD_URL: &str = "https://ccwork.site/";
+pub const BRAND_UPDATE_MANIFEST_URL: &str =
+    "https://huanxingupdate.oss-cn-beijing.aliyuncs.com/desktop-updates/latest.json";
+pub const BRAND_UPDATE_DOWNLOAD_URL: &str =
+    "https://huanxingupdate.oss-cn-beijing.aliyuncs.com/desktop-updates/";
 pub const BRAND_ACCOUNT_DEFAULT_MODELS: &[&str] = &[];

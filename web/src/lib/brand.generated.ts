@@ -50,8 +50,8 @@ export const BRAND: BrandConfig = {
   "longDescription": "Hermes desktop with ccwork accounts, models and billing.",
   "tagline": "ccwork AI Assistant",
   "edition": "桌面版",
-  "updateManifestUrl": "https://ccwork.site/hermes/latest.json",
-  "updateDownloadUrl": "https://ccwork.site/",
+  "updateManifestUrl": "https://huanxingupdate.oss-cn-beijing.aliyuncs.com/desktop-updates/latest.json",
+  "updateDownloadUrl": "https://huanxingupdate.oss-cn-beijing.aliyuncs.com/desktop-updates/",
   "accountDefaultModels": [],
   "knownBrandProviderKeys": [
     "ccworkhermes",
