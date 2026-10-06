@@ -262,7 +262,13 @@ async fn accept_session(
     .await?;
     current.organization_id = organization(&data(code, value)?)?;
     relay::stop().await;
-    account::clear_account_providers(state).await?;
+    // Authentication must remain usable while the local Core dashboard is
+    // starting. Provider cleanup is retried by status/provision once it is
+    // available, so a dashboard outage cannot strand a newly authenticated
+    // ccwork session.
+    if let Err(error) = account::clear_account_providers(state).await {
+        log::warn!("ccwork login: unable to clear previous account providers: {error}");
+    }
     persist(&current)?;
     *SESSION.lock().await = Some(current.clone());
     Ok(current.user)

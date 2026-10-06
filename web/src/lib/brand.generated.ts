@@ -52,14 +52,7 @@ export const BRAND: BrandConfig = {
   "edition": "桌面版",
   "updateManifestUrl": "https://ccwork.site/hermes/latest.json",
   "updateDownloadUrl": "https://ccwork.site/",
-  "accountDefaultModels": [
-    "ccwork-default-1",
-    "ccwork-default-2",
-    "ccwork-default-3",
-    "ccwork-default-4",
-    "ccwork-default-5",
-    "ccwork-default-6"
-  ],
+  "accountDefaultModels": [],
   "knownBrandProviderKeys": [
     "ccworkhermes",
     "fengchihermes",

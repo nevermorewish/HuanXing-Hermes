@@ -16,11 +16,4 @@ pub const BRAND_WINDOW_TITLE: &str = "ccworkhermes 桌面版";
 pub const BRAND_HOMEPAGE: &str = "https://ccwork.site/";
 pub const BRAND_UPDATE_MANIFEST_URL: &str = "https://ccwork.site/hermes/latest.json";
 pub const BRAND_UPDATE_DOWNLOAD_URL: &str = "https://ccwork.site/";
-pub const BRAND_ACCOUNT_DEFAULT_MODELS: &[&str] = &[
-    "ccwork-default-1",
-    "ccwork-default-2",
-    "ccwork-default-3",
-    "ccwork-default-4",
-    "ccwork-default-5",
-    "ccwork-default-6",
-];
+pub const BRAND_ACCOUNT_DEFAULT_MODELS: &[&str] = &[];

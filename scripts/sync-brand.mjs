@@ -224,6 +224,7 @@ function rustConst(name, value) {
 }
 
 function rustStringSliceConst(name, values) {
+  if (values.length === 0) return `pub const ${name}: &[&str] = &[];`;
   const items = values.map((value) => `    ${JSON.stringify(value)},`).join("\n");
   return `pub const ${name}: &[&str] = &[\n${items}\n];`;
 }

@@ -394,7 +394,8 @@ export function groupCandidates(
       // normal built-in choices only when they belong to the active brand.
       if (
         isCurrentBrandAccountProvider(providerSlug)
-        && isBrandAccountModel(candidate.model)
+        && (isBrandAccountModel(candidate.model)
+          || (BRAND.accountBackend === "ccwork" && BRAND.accountDefaultModels.length === 0))
         && !seenBuiltinModels.has(candidate.model)
       ) {
         seenBuiltinModels.add(candidate.model);
