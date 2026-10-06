@@ -440,7 +440,17 @@ pub async fn status(state: &State<'_, AppState>) -> Result<StatusResult, AppErro
     if SESSION.lock().await.is_none() && account::secret_store::get(&store_name())?.is_none() {
         return Ok(logged_out());
     }
-    let profile = authenticated("/auth/profile").await?;
+    let profile = match authenticated("/auth/profile").await {
+        Ok(profile) => profile,
+        Err(AppError::InvalidRequest(message)) if message == "请登录 ccwork 账号" => {
+            relay::stop().await;
+            if let Err(error) = account::clear_account_providers(state).await {
+                log::warn!("ccwork status: unable to clear expired providers: {error}");
+            }
+            return Ok(logged_out());
+        }
+        Err(error) => return Err(error),
+    };
     let mut current = session().await?;
     current.user = user(&profile)?;
     {

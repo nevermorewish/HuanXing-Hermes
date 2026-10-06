@@ -646,6 +646,44 @@ mod tests {
         assert!(Completion::default().finish(&n).is_err());
     }
     #[tokio::test]
+    #[serial_test::serial]
+    async fn proxy_sends_jwt_organization_and_original_model_body() {
+        use wiremock::matchers::{body_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let body =
+            json!({"model":"model-uuid","messages":[{"role":"user","content":"hi"}],"stream":true});
+        Mock::given(method("POST"))
+            .and(path("/api/llm/proxy"))
+            .and(header("authorization", "Bearer access-token"))
+            .and(header("x-tabtin-organization-id", "org-uuid"))
+            .and(header("x-tabtin-request-source", "ccworkhermes"))
+            .and(body_json(body.clone()))
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        *super::super::SESSION.lock().await = Some(super::super::Session {
+            base_url: server.uri(),
+            access_token: "access-token".into(),
+            refresh_token: "refresh-token".into(),
+            expires_at: super::super::now() + 3600,
+            user: super::super::AccountUser {
+                id: super::super::AccountUserId::Uuid("user-uuid".into()),
+                username: "user@example.com".into(),
+                display_name: "User".into(),
+                role: 0,
+                status: 1,
+                group: String::new(),
+            },
+            organization_id: "org-uuid".into(),
+        });
+        let response = super::open_proxy(body).await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        *super::super::SESSION.lock().await = None;
+    }
+
+    #[tokio::test]
     async fn streaming_proxy_aggregates_one_billed_request() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
