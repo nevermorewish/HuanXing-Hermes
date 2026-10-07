@@ -1874,6 +1874,14 @@ pub async fn account_balance() -> Result<AccountBalance, AppError> {
     })
 }
 
+#[tauri::command]
+pub async fn account_transactions(limit: Option<u32>, offset: Option<u32>) -> Result<super::ccwork_account::AccountTransactions, AppError> {
+    if super::ccwork_account::enabled() {
+        return super::ccwork_account::transactions(limit.unwrap_or(20), offset.unwrap_or(0)).await;
+    }
+    Err(AppError::InvalidRequest("当前账户服务不支持账单明细".into()))
+}
+
 /// Write the selected models into the runtime config as the account provider.
 /// The sk- key is injected here (server-side) and never crosses to the
 /// frontend.

@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Popover } from "@hermes/shared-ui";
 import {
+  BarChart3,
   Bot,
   Clock3,
   Folder,
@@ -113,6 +114,7 @@ const NAV_ITEMS: readonly NavItem[] = [
   { label: "项目", href: "/projects", icon: Folder, matches: (p) => p.startsWith("/projects") },
   { label: "技能", href: "/skills", icon: Puzzle, matches: (p) => p.startsWith("/skills") },
   { label: "连接器", href: "/mcp", icon: Plug, matches: (p) => p.startsWith("/mcp") },
+  { label: "使用情况", href: "/usage", icon: BarChart3, matches: (p) => p.startsWith("/usage") },
   { label: "自动化", href: "/cron", icon: Clock3, matches: (p) => p.startsWith("/cron") },
 ];
 

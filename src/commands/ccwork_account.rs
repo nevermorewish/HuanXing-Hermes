@@ -674,6 +674,51 @@ pub async fn balance() -> Result<AccountBalance, AppError> {
         today_consumed_credits: today,
     })
 }
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountTransaction {
+    pub id: String,
+    pub description: String,
+    pub amount_precise: String,
+    pub created_at: String,
+    pub transaction_type: String,
+    pub model_name: Option<String>,
+    pub provider_key: Option<String>,
+    pub meter_key: Option<String>,
+    pub quantity: Option<String>,
+    pub unit: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountTransactions {
+    pub total: u64,
+    pub transactions: Vec<AccountTransaction>,
+}
+
+pub async fn transactions(limit: u32, offset: u32) -> Result<AccountTransactions, AppError> {
+    let current = session().await?;
+    let limit = limit.clamp(1, 100);
+    let value = authenticated(&format!(
+        "/wallet/organizations/{}/transactions?transaction_type=consume&limit={limit}&offset={offset}",
+        urlencoding::encode(&current.organization_id)
+    )).await?;
+    let rows = value["transactions"].as_array().cloned().unwrap_or_default();
+    let transactions = rows.iter().map(|row| AccountTransaction {
+        id: row["id"].as_str().unwrap_or_default().to_string(),
+        description: row["description"].as_str().unwrap_or("模型消费").to_string(),
+        amount_precise: row["amount_precise"].as_str().map(str::to_string).unwrap_or_else(|| row["amount_precise"].to_string()),
+        created_at: row["created_at"].as_str().unwrap_or_default().to_string(),
+        transaction_type: row["transaction_type"].as_str().unwrap_or("consume").to_string(),
+        model_name: row["model_name"].as_str().map(str::to_string),
+        provider_key: row["provider_key"].as_str().map(str::to_string),
+        meter_key: row["meter_key"].as_str().map(str::to_string),
+        quantity: row["quantity"].as_str().map(str::to_string).or_else(|| row["quantity"].as_f64().map(|v| v.to_string())),
+        unit: row["unit"].as_str().map(str::to_string),
+    }).collect();
+    Ok(AccountTransactions { total: value["total"].as_u64().unwrap_or(0), transactions })
+}
 pub async fn logout(state: &State<'_, AppState>) -> Result<StatusResult, AppError> {
     let _change = ACCOUNT_CHANGE.lock().await;
     let current = SESSION.lock().await.take();

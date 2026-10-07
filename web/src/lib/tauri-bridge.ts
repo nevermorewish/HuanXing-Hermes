@@ -85,6 +85,7 @@ import type {
   AccountSetupResult,
   AccountTokenInfo,
   AccountBalanceInfo,
+  AccountTransactionsInfo,
   AccountSaveModelsInput,
   AccountTestModelResult,
   UserProviderInput,
@@ -314,6 +315,9 @@ const tauriBridge = {
   },
   async accountBalance(): Promise<AccountBalanceInfo> {
     return invokeCommand("account_balance");
+  },
+  async accountTransactions(input?: { limit?: number; offset?: number }): Promise<AccountTransactionsInfo> {
+    return invokeCommand("account_transactions", { limit: input?.limit, offset: input?.offset });
   },
   async accountSaveModels(input: AccountSaveModelsInput): Promise<AccountStatusResult> {
     return invokeCommand("account_save_models", { input });

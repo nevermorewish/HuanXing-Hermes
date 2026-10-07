@@ -64,6 +64,7 @@ const ImOnboardingRoute = lazy(() => import("@/routes/im-onboarding").then((m) =
 const ConsoleRoute = lazy(() => import("@/routes/console").then((m) => ({ default: m.ConsoleRoute })));
 const HealthRoute = lazy(() => import("@/routes/health").then((m) => ({ default: m.HealthRoute })));
 const AnalyticsRoute = lazy(() => import("@/routes/analytics").then((m) => ({ default: m.AnalyticsRoute })));
+const UsageRoute = lazy(() => import("@/routes/usage").then((m) => ({ default: m.UsageRoute })));
 const LogsRoute = lazy(() => import("@/routes/logs").then((m) => ({ default: m.LogsRoute })));
 const DebugRoute = lazy(() => import("@/routes/debug").then((m) => ({ default: m.DebugRoute })));
 const ThemeRoute = lazy(() => import("@/routes/advanced").then((m) => ({ default: m.ThemeRoute })));
@@ -149,6 +150,7 @@ function BackendApp() {
             <Route path="/console" element={withBoundary(<ConsoleRoute />)} />
             <Route path="/health" element={withBoundary(<HealthRoute />)} />
             <Route path="/analytics" element={withBoundary(<AnalyticsRoute />)} />
+            <Route path="/usage" element={withBoundary(<UsageRoute />)} />
             <Route path="/logs" element={withBoundary(<LogsRoute />)} />
             <Route path="/debug" element={withBoundary(<DebugRoute />)} />
             <Route path="/theme" element={withBoundary(<ThemeRoute />)} />

@@ -115,6 +115,47 @@ fn error(code: u16, message: &str) -> Response<Body> {
         json!({"error":{"message":message,"type":"ccwork_error","code":code}}),
     )
 }
+
+fn friendly_upstream_error(code: u16, value: &Value) -> String {
+    let error = &value["error"];
+    let category = error["error_category"]
+        .as_str()
+        .or_else(|| error["error_type"].as_str())
+        .unwrap_or_default();
+    let topup_reason = error["topup_reason"].as_str().unwrap_or_default();
+    if category == "organization_insufficient_credits"
+        || category == "insufficient_credits"
+        || category == "freeze_failed"
+        || topup_reason == "wallet_insufficient"
+    {
+        return if category == "organization_insufficient_credits" && !topup_reason.is_empty() {
+            "本月 LLM 代币已用完，请充值或开启自动补充后重试".into()
+        } else if category == "organization_insufficient_credits" {
+            "团队钱包余额不足，请充值后重试".into()
+        } else {
+            "模型代币余额不足，请充值后重试".into()
+        };
+    }
+    if matches!(category, "budget_exceeded" | "conversation_quota_exceeded") {
+        return "已达到当前用量限制，请调整额度或稍后重试".into();
+    }
+    if matches!(category, "upstream_rate_limited" | "rate_limited") || code == 429 {
+        return "请求过于频繁，请稍后重试或切换模型".into();
+    }
+    if matches!(category, "unauthorized" | "auth_failed") || matches!(code, 401 | 403) {
+        return "模型服务认证已失效，请重新登录或检查模型配置".into();
+    }
+    if code == 408 || code == 504 || category.contains("timeout") {
+        return "模型响应超时，请稍后重试或减少上下文内容".into();
+    }
+    if code >= 500 || category == "upstream_error" {
+        return "模型上游暂时不可用，请稍后重试或切换模型".into();
+    }
+    value["error"]["message"]
+        .as_str()
+        .unwrap_or("模型请求失败")
+        .to_string()
+}
 fn authorized(req: &Request<Incoming>, local: &Local) -> bool {
     let expected = format!("Bearer {}", local.token);
     let origin = local
@@ -169,12 +210,7 @@ async fn handle(
     if !upstream.status().is_success() {
         let status = upstream.status().as_u16();
         let value: Value = upstream.json().await.unwrap_or(json!({}));
-        let message = value["message"]
-            .as_str()
-            .or_else(|| value["detail"].as_str())
-            .or_else(|| value["error"].as_str())
-            .unwrap_or("ccwork 拒绝推理请求");
-        return Ok(error(status, message));
+        return Ok(error(status, &friendly_upstream_error(status, &value)));
     }
     if !upstream
         .headers()
@@ -315,12 +351,25 @@ impl Normalizer {
             return Ok(None);
         }
         if value.get("error").is_some() || value["type"] == "error" {
-            return Err(value["error"]["message"]
+            let category = value["error"]["error_category"]
+                .as_str()
+                .or_else(|| value["error"]["type"].as_str())
+                .unwrap_or_default();
+            let message = if category == "organization_insufficient_credits"
+                || category == "insufficient_credits"
+            {
+                value["error"]["message"]
+                    .as_str()
+                    .filter(|message| !message.contains("模型服务暂时不可用"))
+                    .unwrap_or("模型代币余额不足，请充值后重试")
+            } else {
+                value["error"]["message"]
                 .as_str()
                 .or_else(|| value["message"].as_str())
                 .or_else(|| value["error"].as_str())
                 .unwrap_or("ccwork 模型或计费请求失败")
-                .into());
+            };
+            return Err(message.into());
         }
         match value["type"].as_str().unwrap_or_default() {
             "message_start" => {
@@ -644,6 +693,18 @@ mod tests {
             .unwrap()
             .is_none());
         assert!(Completion::default().finish(&n).is_err());
+    }
+
+    #[test]
+    fn friendly_upstream_errors_preserve_actionable_billing_messages() {
+        let quota = json!({"error":{"error_category":"organization_insufficient_credits","topup_reason":"wallet_insufficient","message":"模型服务暂时不可用，请稍后重试"}});
+        assert_eq!(friendly_upstream_error(402, &quota), "本月 LLM 代币已用完，请充值或开启自动补充后重试");
+        let wallet = json!({"error":{"error_category":"organization_insufficient_credits","message":"模型服务暂时不可用，请稍后重试"}});
+        assert_eq!(friendly_upstream_error(402, &wallet), "团队钱包余额不足，请充值后重试");
+        let auth = json!({"error":{"error_category":"unauthorized"}});
+        assert_eq!(friendly_upstream_error(401, &auth), "模型服务认证已失效，请重新登录或检查模型配置");
+        let rate = json!({"error":{"error_category":"upstream_rate_limited"}});
+        assert_eq!(friendly_upstream_error(429, &rate), "请求过于频繁，请稍后重试或切换模型");
     }
     #[tokio::test]
     #[serial_test::serial]

@@ -434,6 +434,8 @@ export interface AccountSavedCredentialsInfo { hasSaved: boolean; username?: str
 export interface AccountSetupResult { user: AccountUser; baseUrl: string; models: string[]; modelEndpointTypes?: Record<string, string[]>; modelNames?: Record<string, string>; hasKey: boolean; maskedKey?: string; }
 export interface AccountTokenInfo { id: number; name: string; group: string; status: number; }
 export interface AccountBalanceInfo { quota: number; usedQuota: number; quotaPerUnit: number; displayInCurrency: boolean; topUpUrl: string; availableCredits?: string; frozenCredits?: string; monthlyConsumedCredits?: string; todayConsumedCredits?: string; }
+export interface AccountTransactionInfo { id: string; description: string; amountPrecise: string; createdAt: string; transactionType: string; modelName?: string; providerKey?: string; meterKey?: string; quantity?: string; unit?: string; }
+export interface AccountTransactionsInfo { total: number; transactions: AccountTransactionInfo[]; }
 export interface AccountSaveModelsInput { models: string[]; modelEndpointTypes?: Record<string, string[]>; primaryModelId?: string; tokenId?: number; }
 export interface AccountTestModelResult { ok: boolean; latencyMs?: number; reply?: string; error?: string; }
 export interface UserProviderInput {
@@ -495,6 +497,7 @@ declare global {
       accountFetchSetup?(): Promise<AccountSetupResult>;
       accountListTokens?(): Promise<AccountTokenInfo[]>;
       accountBalance?(): Promise<AccountBalanceInfo>;
+      accountTransactions?(input?: { limit?: number; offset?: number }): Promise<AccountTransactionsInfo>;
       accountSaveModels?(input: AccountSaveModelsInput): Promise<AccountStatusResult>;
       accountTestModel?(modelId: string): Promise<AccountTestModelResult>;
       accountLogout?(): Promise<AccountStatusResult>;

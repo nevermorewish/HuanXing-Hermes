@@ -682,6 +682,7 @@ fn main() {
             commands::account::account_fetch_setup,
             commands::account::account_list_tokens,
             commands::account::account_balance,
+            commands::account::account_transactions,
             commands::account::account_save_models,
             commands::account::account_test_model,
             commands::account::account_save_credentials,
