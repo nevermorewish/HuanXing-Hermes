@@ -1,7 +1,6 @@
-import { BRAND } from "@/lib/brand.generated";
 import { Routes, Route, Navigate, useLocation, useParams } from "react-router-dom";
 import { DEFAULT_THEME_CONFIG, hydrateThemeAtom, usePlatform, type ThemeConfig } from "@hermes/shared-ui";
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, type ReactNode } from "react";
 import { useSetAtom } from "jotai";
 import { useBootstrapActiveProfile } from "@/hooks/use-profiles";
 import { readUiValue } from "@/lib/ui-store";
@@ -15,18 +14,11 @@ import { WanderMemoryRouteLifecycle } from "@/components/wander-memory/route-lif
 import { AppShell } from "@/components/app-shell/app-shell";
 import { CommandPalette } from "@/components/command-palette";
 import { BootSplash } from "@/components/boot-splash";
-import { DeviceTokenDialog } from "@/components/auth/device-token-dialog";
 import { useBackendGate } from "@/hooks/use-backend-gate";
 import {
   normalizeSettingsPane,
   openSettingsDialogAtom,
 } from "@/stores/settings-dialog";
-import { getTeamDeviceTokenStatus } from "@/lib/tauri-bridge";
-import {
-  dismissTeamDeviceTokenOnboarding,
-  isTeamDeviceTokenOnboardingDismissed,
-  resetTeamDeviceTokenOnboarding,
-} from "@/stores/auth";
 import { runtime } from "@/lib/runtime";
 
 // ---------------------------------------------------------------------------
@@ -188,9 +180,6 @@ export function App() {
   const platform = usePlatform();
   const hydrateTheme = useSetAtom(hydrateThemeAtom);
   const gate = useBackendGate();
-  const [teamTokenGate, setTeamTokenGate] = useState<"checking" | "loading" | "prompt" | "done">(
-    () => BRAND.accountBackend === "ccwork" || window.__TAURI_INTERNALS__ == null ? "done" : "checking",
-  );
   useEffect(() => {
     hydrateTheme(readUiValue<Partial<ThemeConfig>>("hermes-theme", DEFAULT_THEME_CONFIG));
   }, [hydrateTheme]);
@@ -198,66 +187,12 @@ export function App() {
     void sendTelemetryPingIfDue();
     if (runtime.isBackendReady()) void sendTokenUsageTelemetryIfDue();
   }, []);
-  useEffect(() => {
-    if (gate !== "ready" || teamTokenGate !== "checking") return;
-    let cancelled = false;
-    void getTeamDeviceTokenStatus()
-      .then((status) => {
-        if (cancelled) return;
-        // A skipped startup prompt is a persisted user choice.  Previously we
-        // only reset the flag after a successful binding, but never consulted
-        // it here; every launch with no token therefore reopened the dialog.
-        if (status.configured) {
-          resetTeamDeviceTokenOnboarding();
-          setTeamTokenGate("loading");
-        } else if (status.invalidated) {
-          // A rejected/revoked token must override an earlier "skip" choice.
-          // The user needs a replacement token or an explicit clear action.
-          resetTeamDeviceTokenOnboarding();
-          setTeamTokenGate("prompt");
-        } else if (isTeamDeviceTokenOnboardingDismissed()) {
-          setTeamTokenGate("done");
-        } else {
-          setTeamTokenGate("prompt");
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setTeamTokenGate("done");
-      });
-    return () => { cancelled = true; };
-  }, [gate, teamTokenGate]);
-  useEffect(() => {
-    if (teamTokenGate !== "loading") return;
-    const timer = window.setTimeout(() => setTeamTokenGate("done"), 900);
-    return () => window.clearTimeout(timer);
-  }, [teamTokenGate]);
 
   let content: ReactNode;
   if (gate === "booting") {
     content = <BootSplash />;
   } else if (gate === "offline") {
     content = withSuspense(<OfflineShell />);
-  } else if (teamTokenGate !== "done") {
-    content = (
-      <>
-        <BootSplash
-          statusText={teamTokenGate === "loading" ? "设备令牌有效，正在加载企业配置…" : "工作台已就绪"}
-          hint={teamTokenGate === "loading" ? "加载完成后将自动进入工作台" : "可连接企业设备，也可以直接进入工作台"}
-          progressStages={teamTokenGate === "loading" ? "令牌验证 · 企业模型 · Skills · 进入工作台" : undefined}
-        />
-        {teamTokenGate === "prompt" ? (
-          <DeviceTokenDialog
-            variant="startup"
-            open
-            onConnected={() => setTeamTokenGate("done")}
-            onSkip={() => {
-              dismissTeamDeviceTokenOnboarding();
-              setTeamTokenGate("done");
-            }}
-          />
-        ) : null}
-      </>
-    );
   } else {
     content = <BackendApp />;
   }

@@ -4,8 +4,6 @@ import { readUiValue, removeUiValue, writeUiValue } from "@/lib/ui-store";
 import type { HuanxingAccount } from "@/lib/huanxing-auth";
 
 const HUANXING_AUTH_KEY = BRAND.accountBackend === "ccwork" ? `hermes.${BRAND.id}-auth` : "hermes.huanxing-auth";
-const TEAM_DEVICE_TOKEN_ONBOARDING_DISMISSED_KEY =
-  "hermes.team-device-token-onboarding-dismissed";
 
 function readStoredAccount(): HuanxingAccount | null {
   const value = readUiValue<HuanxingAccount | null>(HUANXING_AUTH_KEY, null);
@@ -29,21 +27,6 @@ export const huanxingAuthAtom = atom(
 
 /** 登录 / 注册弹窗开关。 */
 export const authDialogOpenAtom = atom<boolean>(false);
-
-/** 企业设备令牌弹窗开关。令牌本身由 Rust 写入 profile 私有文件。 */
-export const deviceTokenDialogOpenAtom = atom<boolean>(false);
-
-export function isTeamDeviceTokenOnboardingDismissed(): boolean {
-  return readUiValue<boolean>(TEAM_DEVICE_TOKEN_ONBOARDING_DISMISSED_KEY, false);
-}
-
-export function dismissTeamDeviceTokenOnboarding(): void {
-  writeUiValue(TEAM_DEVICE_TOKEN_ONBOARDING_DISMISSED_KEY, true);
-}
-
-export function resetTeamDeviceTokenOnboarding(): void {
-  removeUiValue(TEAM_DEVICE_TOKEN_ONBOARDING_DISMISSED_KEY);
-}
 
 /** Display names only; ccwork credentials never enter WebView storage. */
 export const accountModelNamesAtom = atom<Record<string, string>>({});

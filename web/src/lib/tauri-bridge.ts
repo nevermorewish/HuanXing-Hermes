@@ -262,25 +262,6 @@ async function invokeCommand<T = any>(command: string, args?: Record<string, unk
   }
 }
 
-export interface TeamDeviceTokenStatus {
-  configured: boolean;
-  invalidated?: boolean;
-  syncedModels: number;
-  syncedSkills: number;
-}
-
-export async function getTeamDeviceTokenStatus(): Promise<TeamDeviceTokenStatus> {
-  return invokeCommand("get_team_device_token_status");
-}
-
-export async function setTeamDeviceToken(token: string): Promise<TeamDeviceTokenStatus> {
-  return invokeCommand("set_team_device_token", { token });
-}
-
-export async function clearTeamDeviceToken(): Promise<void> {
-  return invokeCommand("clear_team_device_token");
-}
-
 function normalizeFileDropPayload(payload: TauriFileDropEventPayload): DesktopFileDropPayload {
   return {
     phase: payload.type,
@@ -313,8 +294,11 @@ const tauriBridge = {
   async accountRegister(input: { baseUrl: string; contact: string; password: string; verificationCode: string; inviteCode?: string }): Promise<AccountUser> {
     return invokeCommand("account_register", { input });
   },
-  async accountSendVerificationCode(contact: string, inviteCode?: string): Promise<void> {
-    return invokeCommand("account_send_verification_code", { contact, inviteCode });
+  async accountSendVerificationCode(input: { contact: string; codeType: "login" | "register"; challengeKey?: string; inviteCode?: string }): Promise<void> {
+    return invokeCommand("account_send_verification_code", input);
+  },
+  async accountLoginWithVerificationCode(input: { baseUrl: string; username: string; verificationCode: string; challengeKey: string }): Promise<AccountUser> {
+    return invokeCommand("account_login_with_verification_code", { input });
   },
   async accountLogin(input: AccountLoginInput): Promise<AccountUser> {
     return invokeCommand("account_login", { input });

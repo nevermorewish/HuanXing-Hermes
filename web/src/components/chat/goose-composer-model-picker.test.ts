@@ -4,9 +4,7 @@ import { BRAND } from "@/lib/brand.generated";
 import {
   buildCandidates,
   groupCandidates,
-  isTeamServiceProviderUrl,
   modelButtonText,
-  shouldShowEnterpriseModels,
 } from "./goose-composer-model-picker";
 
 const TEST_BRAND_MODELS = BRAND.accountDefaultModels.length > 0
@@ -14,22 +12,6 @@ const TEST_BRAND_MODELS = BRAND.accountDefaultModels.length > 0
   : ["ccwork-model-a", "ccwork-model-b", "ccwork-model-c", "ccwork-model-d", "ccwork-model-e", "ccwork-model-f"];
 
 describe("modelButtonText", () => {
-  it("shows the friendly Team model name instead of its opaque model id", () => {
-    const options = {
-      provider: "custom:gpt软件研发",
-      model: "mdl_rVPYUJij75Ht-cvb",
-      providers: [{
-        slug: "custom:gpt软件研发",
-        name: "gpt软件研发",
-        models: ["mdl_rVPYUJij75Ht-cvb"],
-        authenticated: true,
-        api_url: `${BRAND.teamServiceUrl}/api/workbuddy/proxy/v1`,
-      }],
-    } as ModelOptionsResult;
-
-    expect(modelButtonText(undefined, options)).toBe("gpt软件研发");
-  });
-
   it("keeps regular model ids visible", () => {
     const options = {
       provider: "deepseek",
@@ -38,18 +20,6 @@ describe("modelButtonText", () => {
     } as ModelOptionsResult;
 
     expect(modelButtonText(undefined, options)).toBe("deepseek-chat");
-  });
-
-  it("uses config classification when a Team model has a custom proxy URL", () => {
-    const options = {
-      provider: "custom:研发模型",
-      model: "mdl_opaque_id",
-      providers: [{ slug: "custom:研发模型", name: "研发模型", models: ["mdl_opaque_id"] }],
-    } as ModelOptionsResult;
-
-    expect(modelButtonText(undefined, options, {
-      enterpriseProviderIds: new Set(["custom:研发模型"]),
-    })).toBe("研发模型");
   });
 });
 
@@ -355,7 +325,7 @@ describe("buildCandidates", () => {
 });
 
 describe("groupCandidates", () => {
-  it("groups brand defaults as built-in and Team models as enterprise", () => {
+  it("groups brand defaults as built-in and keeps saved custom models separate", () => {
     const [firstBrandModel, secondBrandModel] = TEST_BRAND_MODELS;
     const brandProvider = `custom:acct-${BRAND.providerKey}`;
     const options = {
@@ -364,12 +334,6 @@ describe("groupCandidates", () => {
           slug: brandProvider,
           name: BRAND.appName,
           models: [secondBrandModel, "not-in-brand-json", firstBrandModel],
-          authenticated: true,
-        },
-        {
-          slug: "custom:team-company-model",
-          name: "企业模型",
-          models: [firstBrandModel],
           authenticated: true,
         },
         {
@@ -388,13 +352,9 @@ describe("groupCandidates", () => {
     } as ModelOptionsResult;
 
     const groups = groupCandidates(options, {
-      showEnterprise: true,
       savedCustomProviderIds: new Set(["custom:my-endpoint"]),
     });
 
-    expect(groups.enterprise.map((candidate) => candidate.key)).toEqual([
-      `custom:team-company-model:${firstBrandModel}`,
-    ]);
     expect(groups.custom.map((candidate) => candidate.key)).toEqual([
       "custom:my-endpoint:local-model",
     ]);
@@ -423,7 +383,7 @@ describe("groupCandidates", () => {
     );
   });
 
-  it("keeps brand defaults but hides Team models while logged out", () => {
+  it("keeps brand defaults while hiding unauthenticated and non-saved providers", () => {
     const brandModel = TEST_BRAND_MODELS[0];
     const messagesProvider = `custom:acct-${BRAND.providerKey}-messages`;
     const options = {
@@ -440,47 +400,15 @@ describe("groupCandidates", () => {
           models: ["not-ready"],
           authenticated: false,
         },
-        {
-          slug: "custom:team-company-model",
-          name: "Enterprise",
-          models: [brandModel],
-          authenticated: true,
-        },
       ],
     } as ModelOptionsResult;
 
-    const enterpriseProviderIds = new Set<string>();
-    const groups = groupCandidates(options, {
-      showEnterprise: shouldShowEnterpriseModels(false, enterpriseProviderIds),
-      enterpriseProviderIds,
-    });
+    const groups = groupCandidates(options);
 
     expect(groups.builtin.map((candidate) => candidate.key)).toEqual([
       `${messagesProvider}:${brandModel}`,
     ]);
-    expect(groups.enterprise).toEqual([]);
     expect(groups.custom).toEqual([]);
-  });
-
-  it("shows device-token Team models while logged out", () => {
-    const enterpriseProviderIds = new Set(["custom:team-company-model"]);
-    const options = {
-      providers: [{
-        slug: "custom:team-company-model",
-        name: "Enterprise",
-        models: ["enterprise-model"],
-        authenticated: true,
-      }],
-    } as ModelOptionsResult;
-
-    const groups = groupCandidates(options, {
-      showEnterprise: shouldShowEnterpriseModels(false, enterpriseProviderIds),
-      enterpriseProviderIds,
-    });
-
-    expect(groups.enterprise.map((candidate) => candidate.key)).toEqual([
-      "custom:team-company-model:enterprise-model",
-    ]);
   });
 
   it("shows one row per branded model when chat and Messages providers overlap", () => {
@@ -586,7 +514,7 @@ describe("groupCandidates", () => {
     expect(groups.custom).toEqual([]);
   });
 
-  it("groups a Team-managed friendly-name gateway slug as enterprise", () => {
+  it("keeps a working provider out of the custom group when it is not saved by the user", () => {
     const options = {
       providers: [
         {
@@ -599,50 +527,8 @@ describe("groupCandidates", () => {
       ],
     } as ModelOptionsResult;
 
-    const groups = groupCandidates(options, {
-      showEnterprise: true,
-      enterpriseProviderIds: new Set([
-        "custom:team-mdl_opaque_id",
-        "custom:rightcodegpt",
-      ]),
-      savedCustomProviderIds: new Set(),
-    });
+    const groups = groupCandidates(options, { savedCustomProviderIds: new Set() });
 
-    expect(groups.enterprise.map((candidate) => candidate.key)).toEqual([
-      "custom:rightcodegpt:mdl_opaque_id",
-    ]);
-    expect(groups.custom).toEqual([]);
-  });
-
-  it("groups a provider served by the brand Team service as enterprise", () => {
-    const apiUrl = `${BRAND.teamServiceUrl}/api/workbuddy/proxy/v1`;
-    const options = {
-      providers: [
-        {
-          slug: "custom:rightcodegpt",
-          name: "rightcodegpt",
-          models: ["mdl_opaque_id"],
-          authenticated: true,
-          source: "user-config",
-          api_url: apiUrl,
-        },
-      ],
-    } as ModelOptionsResult;
-
-    expect(isTeamServiceProviderUrl(apiUrl)).toBe(true);
-
-    const groups = groupCandidates(options, {
-      showEnterprise: true,
-      savedCustomProviderIds: new Set(),
-    });
-
-    expect(groups.enterprise).toMatchObject([
-      {
-        key: "custom:rightcodegpt:mdl_opaque_id",
-        displayName: "rightcodegpt",
-        subtitle: "由企业管理员下发",
-      },
-    ]);
     expect(groups.custom).toEqual([]);
   });
 });

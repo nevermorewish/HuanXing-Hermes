@@ -1,5 +1,6 @@
 import { fetchExternalJSON } from "./transport";
 import { BRAND } from "./brand.generated";
+import { isAccountModelProvider } from "./model-provider-visibility";
 
 export type ProviderTransport = "openai_chat" | "anthropic_messages" | "codex_responses";
 export type ProviderApiMode = "chat_completions" | "anthropic_messages" | "codex_responses";
@@ -245,6 +246,16 @@ export function buildCustomProviderDeleteUpdate(
 ): Record<string, any> {
   if (!providerId.startsWith("custom:")) {
     throw new Error("只能删除用户添加的自定义服务商。");
+  }
+  // Account/Team provisioning owns these entries (ccwork rewrites the account
+  // provider on every sign-in and status check). Core replaces the whole
+  // `providers` map on save, so deleting one here would also drop the account
+  // catalog that shares the map with it — and every ccwork model would vanish
+  // from the picker until the next account refresh.
+  const entry = getProviderEntry(config, providerId);
+  const bareEntry = getProviderEntry(config, providerId.replace(/^custom:/i, ""));
+  if (isAccountModelProvider(providerId, entry) || isAccountModelProvider(providerId, bareEntry)) {
+    throw new Error("账号提供的模型由 ccwork 统一管理，无法在此删除。");
   }
 
   const model = asRecord(config.model);

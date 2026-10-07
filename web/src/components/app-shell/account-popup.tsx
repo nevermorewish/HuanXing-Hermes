@@ -7,7 +7,6 @@ import {
   ChevronRight,
   Command,
   HelpCircle,
-  KeyRound,
   LogIn,
   LogOut,
   Palette,
@@ -25,11 +24,9 @@ import { openSettingsDialogAtom } from "@/stores/settings-dialog";
 import { gwConnectionAtom } from "@/stores/chat";
 import {
   authDialogOpenAtom,
-  deviceTokenDialogOpenAtom,
   huanxingAuthAtom,
 } from "@/stores/auth";
 import { huanxingAccountTypeLabel } from "@/lib/huanxing-auth";
-import { getTeamDeviceTokenStatus, type TeamDeviceTokenStatus } from "@/lib/tauri-bridge";
 import { dashboardPortFromUrl, dashboardUrlFromInputs } from "@/lib/dashboard-url";
 import { DESKTOP_VERSION, versionLabel } from "@/lib/build-info";
 import { runtime } from "@/lib/runtime";
@@ -49,7 +46,6 @@ function modelShort(model: string | null | undefined): string {
 export function AccountPopup() {
   const [open, setOpen] = useState(false);
   const [profileListOpen, setProfileListOpen] = useState(false);
-  const [teamDevice, setTeamDevice] = useState<TeamDeviceTokenStatus | null>(null);
   const activeProfile = useActiveProfileName();
   const profilesQuery = useProfiles();
   const setActiveProfile = useSetActiveProfile();
@@ -66,12 +62,6 @@ export function AccountPopup() {
   const ccwork = BRAND.accountBackend === "ccwork";
   const balance = useAccountBalance(ccwork && open && accountStatus?.loggedIn === true);
   const openAuthDialog = useSetAtom(authDialogOpenAtom);
-  const openDeviceTokenDialog = useSetAtom(deviceTokenDialogOpenAtom);
-
-  useEffect(() => {
-    if (!open || ccwork) return;
-    void getTeamDeviceTokenStatus().then(setTeamDevice).catch(() => setTeamDevice(null));
-  }, [open, ccwork]);
 
   useEffect(() => {
     const user = accountStatus?.user;
@@ -112,11 +102,6 @@ export function AccountPopup() {
   const openSettings = (pane: Parameters<typeof openSettingsDialog>[0]) => {
     setOpen(false);
     openSettingsDialog(pane);
-  };
-
-  const openDeviceDialog = () => {
-    setOpen(false);
-    openDeviceTokenDialog(true);
   };
 
   const quitApp = () => {
@@ -163,7 +148,6 @@ export function AccountPopup() {
                   <span className={s.enterpriseName}>{huanxingAccount.username}</span>
                   <span className={s.enterpriseMeta}>
                     {ccwork ? "ccwork 账号 · 个人组织" : huanxingAccountTypeLabel(huanxingAccount.type)}
-                    {huanxingAccount.enterpriseName ? ` · ${huanxingAccount.enterpriseName}` : ""}
                   </span>
                 </span>
                 <button
@@ -191,39 +175,17 @@ export function AccountPopup() {
               }}
             >
               <LogIn size={16} className={s.itemIcon} />
-              <span className={s.grow}>{ccwork ? "登录 / 注册 ccwork 账号" : "登录 / 注册企业账号"}</span>
+              <span className={s.grow}>{ccwork ? "登录 / 注册 ccwork 账号" : "登录 / 注册账号"}</span>
               <span className={s.tail}>账号登录</span>
             </button>
           )}
 
           {ccwork && accountStatus?.loggedIn && <div className={s.enterpriseCard}>
             <div className={s.enterpriseMeta}>
-              {balance.isLoading ? "正在读取 ccwork 钱包…" : balance.isError ? "ccwork 钱包暂时不可用" : balance.data ? <>可用积分 {balance.data.availableCredits} · 冻结积分 {balance.data.frozenCredits}<br />本月消耗 {balance.data.monthlyConsumedCredits} · 今日消耗 {balance.data.todayConsumedCredits}</> : null}
+              {balance.isLoading ? "正在读取 ccwork 钱包…" : balance.isError ? "ccwork 钱包暂时不可用" : balance.data ? <>可用积分 {balance.data.availableCredits} · 冻结积分 {balance.data.frozenCredits}<br />{balance.data.monthlyConsumedCredits != null && balance.data.todayConsumedCredits != null ? <>本月消耗 {balance.data.monthlyConsumedCredits} · 今日消耗 {balance.data.todayConsumedCredits}</> : "本月消耗暂不可用"}</> : null}
             </div>
             <button type="button" className={s.item} onClick={() => { void window.hermesDesktop?.openExternalUrl?.({ url: BRAND.rechargeUrl }); }}>在 ccwork 查看账单 / 充值</button>
           </div>}
-          {!ccwork && (teamDevice?.configured ? (
-            <div className={s.enterpriseCard}>
-              <div className={s.enterpriseRow}>
-                <span className={s.grow}>
-                  <span className={s.enterpriseName}>企业设备</span>
-                  <span className={s.enterpriseMeta}>
-                    已绑定 · {teamDevice.syncedModels} 个模型 · {teamDevice.syncedSkills} 个 Skills
-                  </span>
-                </span>
-                <button type="button" className={s.enterpriseLogout} title="更换企业设备令牌" onClick={openDeviceDialog}>
-                  <KeyRound size={12} />
-                  更换令牌
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button type="button" className={s.item} onClick={openDeviceDialog}>
-              <KeyRound size={16} className={s.itemIcon} />
-              <span className={s.grow}>绑定企业设备令牌</span>
-              <span className={s.tail}>同步模型下发</span>
-            </button>
-          ))}
 
           <div className={s.sep} />
           <button type="button" className={s.item} onClick={() => openSettings("system")}>

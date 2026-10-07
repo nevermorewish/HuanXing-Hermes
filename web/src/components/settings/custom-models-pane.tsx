@@ -6,7 +6,6 @@ import {
   EyeOff,
   Pencil,
   PlusCircle,
-  RefreshCw,
   Trash2,
   X,
 } from "lucide-react";
@@ -21,19 +20,7 @@ import {
   customProviderPresetsFromConfig,
   type ProviderPreset,
 } from "@/lib/provider-catalog";
-import {
-  DEFAULT_TEAM_SERVER_URL,
-  ENTERPRISE_PROVIDER_PREFIX,
-  readEnterpriseBinding,
-  readEnterpriseSyncMeta,
-  writeEnterpriseBinding,
-  writeEnterpriseSyncMeta,
-  type EnterpriseBinding,
-  type EnterpriseSyncMeta,
-} from "@/lib/enterprise-sync";
 import { savedCustomProviderIdsFromConfig } from "@/lib/model-provider-visibility";
-import { clearTeamDeviceToken, setTeamDeviceToken } from "@/lib/tauri-bridge";
-import { dismissTeamDeviceTokenOnboarding } from "@/stores/auth";
 import s from "./custom-models-pane.module.css";
 
 /* ── 工具 ─────────────────────────────────────────────────────── */
@@ -269,169 +256,6 @@ function CustomModelEditDialog({ title, initial, saving, error, onClose, onSave 
   );
 }
 
-/* ── 企业模型下发 ─────────────────────────────────────────────── */
-
-function EnterpriseSection() {
-  const { data: config } = useConfig();
-  const queryClient = useQueryClient();
-  const [binding, setBinding] = useState<EnterpriseBinding | null>(readEnterpriseBinding);
-  const [meta, setMeta] = useState<EnterpriseSyncMeta | null>(readEnterpriseSyncMeta);
-  const [serverUrl, setServerUrl] = useState(binding?.serverUrl ?? DEFAULT_TEAM_SERVER_URL);
-  const [deviceToken, setDeviceToken] = useState(binding?.deviceToken ?? "");
-  const [showToken, setShowToken] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  const enterprisePresets = useMemo(
-    () =>
-      customProviderPresetsFromConfig(config, [], undefined).filter((preset) =>
-        preset.id.startsWith(ENTERPRISE_PROVIDER_PREFIX),
-      ),
-    [config],
-  );
-  const defaultEnterpriseName = meta?.defaultModel
-    ? enterprisePresets.find((preset) => preset.defaultModel === meta.defaultModel)?.name
-      || meta.defaultModel
-    : "";
-
-  const handleSync = async () => {
-    const nextBinding: EnterpriseBinding = {
-      serverUrl: serverUrl.trim().replace(/\/+$/, ""),
-      deviceToken: deviceToken.trim(),
-    };
-    if (!nextBinding.serverUrl || !nextBinding.deviceToken) {
-      setError("请输入服务器地址与设备令牌。");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      // Rust owns Team config writes. It stores the token privately, fetches
-      // the manifest, and applies providers through model_registry atomically.
-      const status = await setTeamDeviceToken(nextBinding.deviceToken);
-      await invalidateModelConfigurationQueries(queryClient);
-      setBinding(nextBinding);
-      writeEnterpriseBinding(nextBinding);
-      const nextMeta: EnterpriseSyncMeta = {
-        lastSyncAt: Date.now(),
-        modelCount: status.syncedModels,
-      };
-      setMeta(nextMeta);
-      writeEnterpriseSyncMeta(nextMeta);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "同步失败，请稍后重试。");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleClearToken = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      if (window.__TAURI_INTERNALS__ != null) {
-        await clearTeamDeviceToken();
-        await invalidateModelConfigurationQueries(queryClient);
-      }
-      setDeviceToken("");
-      setBinding(null);
-      setMeta(null);
-      writeEnterpriseBinding(null);
-      writeEnterpriseSyncMeta(null);
-      dismissTeamDeviceTokenOnboarding();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "清除令牌失败，请稍后重试。");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <section className={s.section}>
-      <h4 className={s.sectionTitle}>企业模型下发</h4>
-      <div className={s.desc}>
-        由企业管理员（HuanXing-Team）为子账号下发模型；输入团队服务器地址与设备令牌后同步，
-        模型会出现在对话的模型选择器中。
-      </div>
-      <div className={s.card}>
-        <div className={s.bindRow}>
-          <input
-            className={s.input}
-            value={serverUrl}
-            onChange={(event) => setServerUrl(event.target.value)}
-            placeholder={DEFAULT_TEAM_SERVER_URL}
-            spellCheck={false}
-          />
-          <span className={s.keyWrap} data-grow="true">
-            <input
-              className={s.input}
-              type={showToken ? "text" : "password"}
-              value={deviceToken}
-              onChange={(event) => setDeviceToken(event.target.value)}
-              placeholder="设备令牌（wbd_...）"
-              spellCheck={false}
-            />
-            <button
-              type="button"
-              className={s.eye}
-              aria-label={showToken ? "隐藏令牌" : "显示令牌"}
-              onClick={() => setShowToken((v) => !v)}
-            >
-              {showToken ? <EyeOff size={16} /> : <Eye size={16} />}
-            </button>
-          </span>
-          <button
-            type="button"
-            className={s.btn}
-            data-variant="primary"
-            onClick={() => void handleSync()}
-            disabled={busy}
-          >
-            <RefreshCw size={12} />
-            {busy ? "同步中…" : binding ? "重新同步" : "绑定并同步"}
-          </button>
-          <button
-            type="button"
-            className={s.btn}
-            data-variant="danger"
-            onClick={() => void handleClearToken()}
-            disabled={busy}
-          >
-            <Trash2 size={12} />
-            清除令牌
-          </button>
-        </div>
-        <div className={s.syncMeta}>
-          {meta
-            ? meta.cleanupOnly
-              ? "设备已被企业停用，本地托管模型已清理。"
-              : `上次同步 ${new Date(meta.lastSyncAt).toLocaleString()} · ${meta.modelCount} 个模型${defaultEnterpriseName ? ` · 默认 ${defaultEnterpriseName}` : ""}`
-            : binding
-              ? "已绑定，尚未同步。"
-              : "未绑定设备。设备令牌由企业管理员在后台注册设备时发放。"}
-        </div>
-        {error ? <div className={s.error}>{error}</div> : null}
-      </div>
-
-      {enterprisePresets.length > 0 ? (
-        <div className={s.modelList}>
-          {enterprisePresets.map((preset) => (
-            <div className={s.modelRow} key={preset.id}>
-              <span className={s.modelIcon} data-tone="enterprise">
-                <PlusCircle size={16} />
-              </span>
-              <div className={s.modelText}>
-                <div className={s.modelName}>{preset.name || preset.defaultModel}</div>
-                <div className={s.modelSub}>企业下发 · {preset.defaultModel}{preset.vendor && preset.vendor !== "自定义" ? ` · ${preset.vendor}` : ""}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
 /* ── 自定义模型 ───────────────────────────────────────────────── */
 
 export function CustomModelsPane() {
@@ -557,8 +381,6 @@ export function CustomModelsPane() {
 
   return (
     <div>
-      <EnterpriseSection />
-
       <section className={s.section}>
         <h4 className={s.sectionTitle}>自定义模型</h4>
         <div className={s.card}>

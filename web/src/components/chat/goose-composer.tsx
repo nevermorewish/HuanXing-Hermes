@@ -105,7 +105,6 @@ import { isSingleUrl, urlReferenceText } from "@/lib/composer-url";
 import { filesFromClipboardData, imageFileFromClipboardData, readClipboardImageAsFile } from "@/lib/clipboard-image";
 import { downloadExternalImageFile } from "@/lib/transport";
 import { runtime } from "@/lib/runtime";
-import { enterpriseProviderIdsFromConfig } from "@/lib/model-provider-visibility";
 import { ReasoningEffortMenu } from "@/components/composer/reasoning-effort-menu";
 import s from "./goose-composer.module.css";
 
@@ -287,10 +286,6 @@ export function GooseComposer({
   const hasProcessingAttachment = attachments.some(isAttachmentBusy);
   const sttEnabled = sttEnabledFromConfig(voiceConfig);
   const maxRecordingSeconds = voiceMaxRecordingSecondsFromConfig(voiceConfig);
-  const enterpriseProviderIds = useMemo(
-    () => enterpriseProviderIdsFromConfig(voiceConfig ?? undefined),
-    [voiceConfig],
-  );
   const contextRisk = contextUsageRisk(contextUsage);
   const contextWarning = contextRiskText(contextRisk, loading);
   const controlsDisabled = disabled || loading;
@@ -1190,16 +1185,16 @@ export function GooseComposer({
   }, [loadModelOptions, modelOptions, modelPicker?.loadOptions, modelPickerDisabled]);
 
   // Keep the local picker state in sync when the parent's useModelOptions query
-  // changes. This matters after a config save (for example Team enterprise
-  // sync): the shared query is invalidated and refetched, but the composer
-  // may already have mounted with the previous provider list.
+  // changes. This matters after a config save: the shared query is invalidated
+  // and refetched, but the composer may already have mounted with the previous
+  // provider list.
   useEffect(() => {
     if (modelPicker?.initialOptions && modelPicker.initialOptions !== modelOptions) {
       setModelOptions(modelPicker.initialOptions);
     }
   }, [modelPicker?.initialOptions, modelOptions]);
 
-  const modelText = modelButtonText(modelPicker, modelOptions, { enterpriseProviderIds });
+  const modelText = modelButtonText(modelPicker, modelOptions);
   const voiceButtonTitle = !sttEnabled
     ? "语音识别（STT）已关闭"
     : voiceStatus === "recording"

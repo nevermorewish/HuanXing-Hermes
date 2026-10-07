@@ -233,6 +233,39 @@ describe("provider catalog config updates", () => {
     expect(removed.providers).toEqual({});
   });
 
+  // Core replaces the whole `providers` map when the desktop saves config, so
+  // deleting the account provider also drops every ccwork model sharing that
+  // map — leaving the picker empty until the next account refresh.
+  it("refuses to delete the account-provisioned provider", () => {
+    const config = {
+      model: { provider: "deepseek", default: "deepseek-v4-pro" },
+      providers: {
+        [`custom:acct-${BRAND.providerKey}`]: { base_url: "http://127.0.0.1:1/v1" },
+        [`custom:acct-${BRAND.providerKey}-messages`]: { base_url: "http://127.0.0.1:1/v1" },
+        [`custom:${BRAND.providerKey}`]: { base_url: "https://account.example/v1" },
+        "custom:user-mine": { base_url: "http://localhost:3000/v1" },
+      },
+    };
+
+    for (const id of [
+      `custom:acct-${BRAND.providerKey}`,
+      `custom:acct-${BRAND.providerKey}-messages`,
+      `custom:${BRAND.providerKey}`,
+    ]) {
+      expect(() => buildCustomProviderDeleteUpdate(config, id)).toThrow(
+        /ccwork 统一管理/,
+      );
+    }
+
+    // The user's own saved model stays deletable.
+    expect(buildCustomProviderDeleteUpdate(config, "custom:user-mine").providers)
+      .toEqual({
+        [`custom:acct-${BRAND.providerKey}`]: { base_url: "http://127.0.0.1:1/v1" },
+        [`custom:acct-${BRAND.providerKey}-messages`]: { base_url: "http://127.0.0.1:1/v1" },
+        [`custom:${BRAND.providerKey}`]: { base_url: "https://account.example/v1" },
+      });
+  });
+
   it("writes catalog providers as canonical providers instead of custom slugs", () => {
     const preset = BUILTIN_PROVIDER_CATALOG.providers.find((provider) => provider.id === "cp.compshare.cn");
     expect(preset).toBeTruthy();

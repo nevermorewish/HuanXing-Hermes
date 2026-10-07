@@ -488,7 +488,8 @@ declare global {
       request(input: ElectronApiRequestInput): Promise<ElectronApiRequestResult>;
       externalRequest?(input: ElectronApiRequestInput): Promise<ElectronApiRequestResult>;
       accountRegister?(input: { baseUrl: string; contact: string; password: string; verificationCode: string; inviteCode?: string }): Promise<AccountUser>;
-      accountSendVerificationCode?(contact: string, inviteCode?: string): Promise<void>;
+      accountSendVerificationCode?(input: { contact: string; codeType: "login" | "register"; challengeKey?: string; inviteCode?: string }): Promise<void>;
+      accountLoginWithVerificationCode?(input: { baseUrl: string; username: string; verificationCode: string; challengeKey: string }): Promise<AccountUser>;
       accountLogin?(input: AccountLoginInput): Promise<AccountUser>;
       accountStatus?(): Promise<AccountStatusResult>;
       accountFetchSetup?(): Promise<AccountSetupResult>;

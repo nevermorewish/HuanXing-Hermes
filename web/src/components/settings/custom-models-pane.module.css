@@ -41,23 +41,6 @@
   flex-shrink: 0;
 }
 
-.bindRow {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.bindRow .input {
-  flex: 1 1 200px;
-  min-width: 0;
-}
-
-.syncMeta {
-  font-size: 12px;
-  color: var(--h-text-4);
-  margin-top: 12px;
-}
 
 .savedTitle {
   font-size: 13px;
@@ -104,11 +87,6 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-}
-
-.modelIcon[data-tone="enterprise"] {
-  background: var(--h-accent-soft);
-  color: var(--h-accent);
 }
 
 .modelText {

@@ -24,15 +24,13 @@ import {
   isBrandAccountModel,
   isCurrentBrandAccountProvider,
 } from "@/lib/brand-account-models";
-import { ENTERPRISE_PROVIDER_PREFIX } from "@/lib/enterprise-sync";
 import {
-  enterpriseProviderIdsFromConfig,
   isLegacyBrandModelProvider,
   savedCustomProviderIdsFromConfig,
 } from "@/lib/model-provider-visibility";
 import { getProviderIconUrl } from "@/lib/provider-icons";
 import { useConfig } from "@/hooks/use-config";
-import { accountModelNamesAtom, huanxingAuthAtom } from "@/stores/auth";
+import { accountModelNamesAtom } from "@/stores/auth";
 import { openSettingsDialogAtom } from "@/stores/settings-dialog";
 import type { ComposerModelPickerProps, ComposerModelSelection } from "./composer-types";
 import s from "./goose-composer.module.css";
@@ -62,22 +60,11 @@ export function modelMatches(model: string, query: string): boolean {
 export function modelButtonText(
   picker: ComposerModelPickerProps | undefined,
   options: ModelOptionsResult | null,
-  groupingOptions: ModelGroupingOptions = {},
+  _groupingOptions: ModelGroupingOptions = {},
 ): string {
   const model = picker?.selected?.model || options?.model;
   if (!model) return picker?.label || "切换模型";
-
-  const providerId = (picker?.selected?.provider || options?.provider || "").toLowerCase();
-  const provider = options?.providers.find(
-    (candidate) => candidate.slug.toLowerCase() === providerId,
-  );
-  const enterprise = providerId.startsWith(ENTERPRISE_PROVIDER_PREFIX)
-    || groupingOptions.enterpriseProviderIds?.has(providerId)
-    || isTeamServiceProviderUrl(provider?.api_url);
-  if (!enterprise) return model;
-
-  const friendlyName = provider?.name || picker?.selected?.providerName || "";
-  return friendlyName.replace(/^team-/i, "").trim() || model;
+  return model;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -97,7 +84,6 @@ export interface Candidate {
   baseUrl?: string;
   apiKeyLabel?: string;
   apiUrl?: string;
-  enterprise?: boolean;
   configured: boolean;
   caps: ProviderCatalogModel | null;
   warning?: string;
@@ -261,7 +247,6 @@ export function buildCandidates(
     const apiUrl = typeof extras.api_url === "string"
       ? extras.api_url
       : typeof extras.apiUrl === "string" ? extras.apiUrl : undefined;
-    const enterprise = isTeamServiceProviderUrl(apiUrl);
     const models = featuredModelIds(
       provider,
       preset,
@@ -285,7 +270,6 @@ export function buildCandidates(
         apiKeyLabel: preset?.apiKeyLabel ?? keyEnv,
         iconUrl: getProviderIconUrl(preset?.icon),
         apiUrl,
-        enterprise,
         configured: authenticated,
         caps: resolveModelCaps(provider, preset, modelId),
         warning,
@@ -332,7 +316,6 @@ interface ModelMenuProps {
 
 const CUSTOM_PROVIDER_PREFIX = "custom:";
 export interface ModelGroups {
-  enterprise: Candidate[];
   custom: Candidate[];
   builtin: Candidate[];
 }
@@ -342,25 +325,7 @@ function modelNameOrder(a: Candidate, b: Candidate): number {
 }
 
 export interface ModelGroupingOptions {
-  showEnterprise?: boolean;
-  enterpriseProviderIds?: ReadonlySet<string>;
   savedCustomProviderIds?: ReadonlySet<string>;
-}
-
-export function shouldShowEnterpriseModels(
-  isAccountSignedIn: boolean,
-  enterpriseProviderIds: ReadonlySet<string>,
-): boolean {
-  return isAccountSignedIn || enterpriseProviderIds.size > 0;
-}
-
-export function isTeamServiceProviderUrl(value: unknown): boolean {
-  if (typeof value !== "string" || !value.trim() || !BRAND.teamServiceUrl.trim()) return false;
-  try {
-    return new URL(value).origin === new URL(BRAND.teamServiceUrl).origin;
-  } catch {
-    return false;
-  }
 }
 
 export function groupCandidates(
@@ -368,28 +333,15 @@ export function groupCandidates(
   options: ModelGroupingOptions = {},
   modelNames: Readonly<Record<string, string>> = {},
 ): ModelGroups {
-  const groups: ModelGroups = { enterprise: [], custom: [], builtin: [] };
+  const groups: ModelGroups = { custom: [], builtin: [] };
   const { all } = buildCandidates(modelOptions, [], Number.MAX_SAFE_INTEGER, modelNames);
   const otherBuiltinCandidates: Candidate[] = [];
   const seenBuiltinModels = new Set<string>();
-  const showEnterprise = options.showEnterprise ?? true;
 
   for (const candidate of all) {
     if (!candidate.configured) continue;
     const providerSlug = candidate.providerSlug.toLowerCase();
-    if (
-      candidate.enterprise === true
-      || providerSlug.startsWith(ENTERPRISE_PROVIDER_PREFIX)
-      || options.enterpriseProviderIds?.has(providerSlug)
-    ) {
-      if (showEnterprise) {
-        groups.enterprise.push({
-          ...candidate,
-          displayName: candidate.providerName.replace(/^team-/i, "") || candidate.model,
-          subtitle: "由企业管理员下发",
-        });
-      }
-    } else if (providerSlug.startsWith("custom:acct-")) {
+    if (providerSlug.startsWith("custom:acct-")) {
       // Account-backed models are provisioned managed providers, but they are
       // normal built-in choices only when they belong to the active brand.
       if (
@@ -412,7 +364,6 @@ export function groupCandidates(
     }
   }
 
-  groups.enterprise.sort(modelNameOrder);
   groups.custom.sort(modelNameOrder);
   const brandOrder = new Map(BRAND.accountDefaultModels.map((model, index) => [model, index]));
   groups.builtin = otherBuiltinCandidates.sort((a, b) =>
@@ -430,12 +381,7 @@ function CandidateIcon({ candidate }: { candidate: Candidate }) {
   return (
     <span
       className={s.modelMenuItemIcon}
-      data-tone={
-        candidate.enterprise === true
-        || candidate.providerSlug.toLowerCase().startsWith(ENTERPRISE_PROVIDER_PREFIX)
-          ? "enterprise"
-          : "custom"
-      }
+      data-tone="custom"
       aria-hidden="true"
     >
       {(candidate.displayName || candidate.model).trim()[0]?.toUpperCase() ?? "M"}
@@ -455,7 +401,6 @@ export function ModelPickerModal({
   anchorRef,
 }: ModelMenuProps) {
   const openSettingsDialog = useSetAtom(openSettingsDialogAtom);
-  const huanxingAccount = useAtomValue(huanxingAuthAtom);
   const modelNames = useAtomValue(accountModelNamesAtom);
   const { data: config } = useConfig();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -465,19 +410,11 @@ export function ModelPickerModal({
     () => savedCustomProviderIdsFromConfig(config),
     [config],
   );
-  const enterpriseProviderIds = useMemo(
-    () => enterpriseProviderIdsFromConfig(config),
-    [config],
-  );
   const groups = useMemo(
-    () => groupCandidates(modelOptions, {
-      showEnterprise: shouldShowEnterpriseModels(Boolean(huanxingAccount), enterpriseProviderIds),
-      enterpriseProviderIds,
-      savedCustomProviderIds,
-    }, modelNames),
-    [enterpriseProviderIds, huanxingAccount, modelOptions, savedCustomProviderIds, modelNames],
+    () => groupCandidates(modelOptions, { savedCustomProviderIds }, modelNames),
+    [modelOptions, savedCustomProviderIds, modelNames],
   );
-  const isEmpty = groups.enterprise.length + groups.custom.length + groups.builtin.length === 0;
+  const isEmpty = groups.custom.length + groups.builtin.length === 0;
 
   const currentSelectionKey = useMemo(() => {
     const model = selected?.model ?? modelOptions?.model;
@@ -593,7 +530,6 @@ export function ModelPickerModal({
             <div className={s.modelMenuEmpty}>暂无可用模型，请先在下方配置</div>
           ) : (
             <>
-              {renderGroup("企业模型", groups.enterprise)}
               {renderGroup("自定义模型", groups.custom)}
               {renderGroup("内置模型", groups.builtin)}
             </>

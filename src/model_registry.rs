@@ -328,17 +328,15 @@ pub fn migrate_legacy_config(config: &mut Value, brand_provider_key: &str) -> bo
     };
     let mut changed = false;
 
-    // 1. Move old team_managed list entries into the canonical providers map.
-    // The old list used a display-name slug and could not round-trip. Preserve
-    // the useful credentials/model fields while assigning a stable team id.
+    // 1. Drop retired enterprise (Team) entries. The feature is gone, so these
+    //    entries have no writer that would refresh their device token; keeping
+    //    them would resurface dead models in the picker under stale credentials.
+    //    Both shapes are removed: legacy `custom_providers:` list entries marked
+    //    `team_managed`, and canonical `custom:team-*` provider-map keys.
     if let Some(Value::Sequence(entries)) = root.remove("custom_providers") {
         let mut keep = Vec::new();
-        let mut providers = match root.remove("providers") {
-            Some(Value::Mapping(map)) => map,
-            _ => Mapping::new(),
-        };
         for entry in entries {
-            let Some(mut map) = entry.as_mapping().cloned() else {
+            let Some(map) = entry.as_mapping() else {
                 keep.push(entry);
                 continue;
             };
@@ -348,25 +346,37 @@ pub fn migrate_legacy_config(config: &mut Value, brand_provider_key: &str) -> bo
                 .unwrap_or("");
             let managed = map.get("team_managed").and_then(Value::as_bool) == Some(true)
                 || legacy_key.to_ascii_lowercase().starts_with("team-");
-            if !managed {
-                keep.push(Value::Mapping(map));
+            if managed {
+                changed = true;
                 continue;
             }
-            let raw_model = map
-                .get("model")
-                .and_then(Value::as_str)
-                .or_else(|| map.get("name").and_then(Value::as_str))
-                .unwrap_or(legacy_key);
-            let id = managed_provider_id(ManagedNamespace::Team, raw_model);
-            map.insert("provider_key".into(), id.clone().into());
-            map.insert("team_managed".into(), true.into());
-            providers.insert(id.into(), Value::Mapping(map));
-            changed = true;
+            keep.push(entry);
         }
-        if !keep.is_empty() {
+        if keep.is_empty() {
+            // Leave no empty list behind; an absent key is the canonical shape.
+            changed = true;
+        } else {
             root.insert("custom_providers".into(), Value::Sequence(keep));
         }
-        root.insert("providers".into(), Value::Mapping(providers));
+    }
+    if let Some(providers) = root.get_mut("providers").and_then(Value::as_mapping_mut) {
+        let retired: Vec<Value> = providers
+            .iter()
+            .filter_map(|(key, value)| {
+                let id = key.as_str()?.trim().to_ascii_lowercase();
+                let by_prefix = id.starts_with(ManagedNamespace::Team.prefix());
+                let by_flag = value
+                    .as_mapping()
+                    .and_then(|map| map.get("team_managed"))
+                    .and_then(Value::as_bool)
+                    == Some(true);
+                (by_prefix || by_flag).then(|| key.clone())
+            })
+            .collect();
+        for key in retired {
+            providers.remove(&key);
+            changed = true;
+        }
     }
 
     // 2. 删掉旧账号 provider。它们的 api_key 归属上一个登录用户，且本分支上
@@ -448,6 +458,14 @@ pub fn retain_brand_account_models(
             &format!("{brand_provider_key}-messages"),
         ),
     ];
+    // An empty allowlist means the account backend itself decides which models
+    // the user may run — ccwork grants the whole catalog on sign-in, so the
+    // brand JSON ships no list. Treating that as "nothing is allowed" would
+    // prune every model and then delete the account provider outright, taking
+    // the whole ccwork catalog off the picker until the next `account_status`.
+    if allowed_models.is_empty() {
+        return false;
+    }
     let allowed: HashSet<&str> = allowed_models.iter().copied().collect();
     let Some(root) = config.as_mapping_mut() else {
         return false;
@@ -1027,7 +1045,7 @@ providers:
     }
 
     #[test]
-    fn migrate_moves_legacy_team_managed_list_entries() {
+    fn migrate_drops_legacy_team_managed_list_entries() {
         let mut config: Value = serde_yaml::from_str(
             r#"
 custom_providers:
@@ -1043,10 +1061,38 @@ custom_providers:
 
         assert!(migrate_legacy_config(&mut config, "fengchihermes"));
 
+        // The retired enterprise entry is dropped; the hand-written one survives.
         let seq = config["custom_providers"].as_sequence().unwrap();
         assert_eq!(seq.len(), 1);
         assert_eq!(seq[0]["provider_key"].as_str(), Some("my-own"));
-        assert!(config["providers"]["custom:team-old-team"].is_mapping());
+        assert!(config["providers"].get("custom:team-old-team").is_none());
+    }
+
+    #[test]
+    fn migrate_drops_canonical_team_provider_map_entries() {
+        let mut config: Value = serde_yaml::from_str(
+            r#"
+providers:
+  custom:team-a:
+    api_key: wbd
+  custom:team-b:
+    team_managed: true
+  custom:my-own:
+    api_key: sk-mine
+"#,
+        )
+        .unwrap();
+
+        assert!(migrate_legacy_config(&mut config, "fengchihermes"));
+
+        assert!(config["providers"].get("custom:team-a").is_none());
+        assert!(config["providers"].get("custom:team-b").is_none());
+        assert!(config["providers"].get("custom:my-own").is_some());
+
+        // A second pass must settle: nothing left to drop.
+        let snapshot = config.clone();
+        assert!(!migrate_legacy_config(&mut config, "fengchihermes"));
+        assert_eq!(snapshot, config);
     }
 
     #[test]
@@ -1142,10 +1188,10 @@ providers:
         let mut config: Value = serde_yaml::from_str(
             r#"
 providers:
-  custom:team-a:
-    api_key: wbd
+  custom:my-own:
+    api_key: sk-mine
 model:
-  provider: custom:team-a
+  provider: custom:my-own
   default: m
 "#,
         )
@@ -1211,6 +1257,42 @@ model:
         assert!(providers["custom:user-local"]["models"]["local-model"].is_mapping());
         assert_eq!(config["model"]["provider"], "custom:acct-brand");
         assert_eq!(config["model"]["default"], "allowed-chat");
+    }
+
+    /// ccwork grants the whole catalog on sign-in, so its brand JSON ships an
+    /// empty allowlist. Reading that as "nothing is allowed" used to prune every
+    /// model and then delete the account provider outright, which is a real
+    /// "models disappeared after upgrade" path.
+    #[test]
+    fn empty_allowlist_keeps_the_account_provider_intact() {
+        let source = r#"
+providers:
+  custom:acct-brand:
+    base_url: https://account.example/v1
+    api_key: sk-account
+    model: model-a
+    models:
+      model-a: {}
+      model-b: {}
+  custom:user-local:
+    model: local-model
+    models:
+      local-model: {}
+model:
+  provider: custom:acct-brand
+  default: model-a
+"#;
+        let mut config: Value = serde_yaml::from_str(source).unwrap();
+
+        assert!(!retain_brand_account_models(&mut config, "brand", &[]));
+
+        let providers = config["providers"].as_mapping().unwrap();
+        assert!(providers["custom:acct-brand"]["models"]["model-a"].is_mapping());
+        assert!(providers["custom:acct-brand"]["models"]["model-b"].is_mapping());
+        assert_eq!(config["model"]["provider"], "custom:acct-brand");
+        assert_eq!(config["model"]["default"], "model-a");
+        // Nothing was rewritten, so the on-disk YAML must be byte-identical.
+        assert_eq!(serde_yaml::to_string(&config).unwrap(), source.trim_start());
     }
 
     #[test]

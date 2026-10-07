@@ -293,6 +293,45 @@ pub async fn login(
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct VerificationCodeLoginInput {
+    pub base_url: String,
+    pub username: String,
+    pub verification_code: String,
+    /// ccwork binds a `login` code to the challenge key it was issued under, so
+    /// this must be the exact value the send-code call carried.
+    pub challenge_key: String,
+}
+
+/// Verification-code login. ccwork registers an unknown identifier on first use,
+/// so this doubles as the lowest-friction signup.
+#[tauri::command]
+pub async fn account_login_with_verification_code(
+    input: VerificationCodeLoginInput,
+    state: State<'_, AppState>,
+) -> Result<AccountUser, AppError> {
+    if !enabled() {
+        return Err(AppError::InvalidRequest(
+            "当前品牌不支持 ccwork 验证码登录".into(),
+        ));
+    }
+    let _change = ACCOUNT_CHANGE.lock().await;
+    let (code, value) = request(
+        &input.base_url,
+        "/auth/login/verification-code",
+        None,
+        Some(json!({
+            "username":input.username.trim(),
+            "verification_code":input.verification_code.trim(),
+            "challenge_key":input.challenge_key.trim(),
+            "remember_me":true,
+        })),
+    )
+    .await?;
+    accept_session(&input.base_url, data(code, value)?, &state).await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RegisterInput {
     pub base_url: String,
     pub contact: String,
@@ -329,6 +368,8 @@ pub async fn account_register(
 #[tauri::command]
 pub async fn account_send_verification_code(
     contact: String,
+    code_type: String,
+    challenge_key: Option<String>,
     invite_code: Option<String>,
 ) -> Result<(), AppError> {
     if !enabled() {
@@ -336,7 +377,23 @@ pub async fn account_send_verification_code(
             "当前品牌不支持 ccwork 验证码".into(),
         ));
     }
-    let mut body = json!({"username":contact.trim(),"code_type":"register"});
+    // ccwork scopes a code by its `code_type`: a `register` code is refused once
+    // the identifier exists, and a `login` code is bound to the challenge key it
+    // was issued under. Neither may be substituted.
+    let code_type = if code_type.trim() == "register" {
+        "register"
+    } else {
+        "login"
+    };
+    let mut body = json!({"username":contact.trim(),"code_type":code_type});
+    if code_type == "login" {
+        let challenge = challenge_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| AppError::InvalidRequest("验证码登录缺少 challenge_key".into()))?;
+        body["challenge_key"] = challenge.into();
+    }
     if let Some(invite) = invite_code.filter(|s| !s.trim().is_empty()) {
         body["invite_code"] = invite.trim().into();
     }
@@ -571,6 +628,14 @@ fn decimal(value: &Value, key: &str) -> Result<String, AppError> {
         _ => Err(AppError::ProxyError(format!("ccwork 钱包缺少 {key}"))),
     }
 }
+/// Wallet balance plus this month's/today's consumption.
+///
+/// The wallet and the usage dashboard are two different services, and only the
+/// wallet is required to show a balance. A dashboard outage used to propagate
+/// through `?` and turn the whole call into an error, so the popup showed
+/// "ccwork 钱包暂时不可用" even though the wallet had answered — reporting an
+/// unknown consumption as a missing balance. Consumption now degrades to empty
+/// while the wallet stays authoritative.
 pub async fn balance() -> Result<AccountBalance, AppError> {
     let current = session().await?;
     let wallet = authenticated(&format!(
@@ -582,9 +647,13 @@ pub async fn balance() -> Result<AccountBalance, AppError> {
         "/services/billing/organizations/{}/usage-dashboard",
         urlencoding::encode(&current.organization_id)
     ))
-    .await?;
-    let consumed = decimal(&usage, "current_month_total_credits")?;
-    let today = decimal(&usage, "today_total_credits")?;
+    .await
+    .unwrap_or_else(|error| {
+        log::warn!("ccwork usage dashboard unavailable, reporting balance only: {error}");
+        Value::Null
+    });
+    let consumed = decimal(&usage, "current_month_total_credits").ok();
+    let today = decimal(&usage, "today_total_credits").ok();
     let available = decimal(&wallet, "available_credits_precise")?;
     let frozen = decimal(&wallet, "credits_frozen_precise")?;
     Ok(AccountBalance {
@@ -592,6 +661,8 @@ pub async fn balance() -> Result<AccountBalance, AppError> {
             .parse()
             .map_err(|_| AppError::ProxyError("ccwork 钱包余额无效".into()))?,
         used_quota: consumed
+            .as_deref()
+            .unwrap_or("0")
             .parse()
             .map_err(|_| AppError::ProxyError("ccwork 消耗积分无效".into()))?,
         quota_per_unit: 1.,
@@ -599,8 +670,8 @@ pub async fn balance() -> Result<AccountBalance, AppError> {
         top_up_url: BRAND_RECHARGE_URL.into(),
         available_credits: Some(available),
         frozen_credits: Some(frozen),
-        monthly_consumed_credits: Some(consumed),
-        today_consumed_credits: Some(today),
+        monthly_consumed_credits: consumed,
+        today_consumed_credits: today,
     })
 }
 pub async fn logout(state: &State<'_, AppState>) -> Result<StatusResult, AppError> {

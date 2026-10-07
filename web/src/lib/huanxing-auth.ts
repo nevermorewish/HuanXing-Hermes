@@ -12,11 +12,9 @@ export interface HuanxingUser {
   role?: number;
   status?: number;
   group?: string;
-  /** 0 = 普通用户，1 = 企业管理员，2 = 子账号 */
+  /** 0 = 普通用户，2 = 子账号 */
   type?: number;
   topid?: number;
-  enterprise_id?: number;
-  enterprise_name?: string;
 }
 
 export interface HuanxingAccount {
@@ -26,8 +24,6 @@ export interface HuanxingAccount {
   displayName?: string;
   type?: number;
   topid?: number;
-  enterpriseId?: number;
-  enterpriseName?: string;
   accessToken?: string;
   sessionCookie?: string;
 }
@@ -44,7 +40,6 @@ export function normalizeHuanxingServerUrl(value: string | undefined | null): st
 }
 
 export function huanxingAccountTypeLabel(type: number | undefined): string {
-  if (type === 1) return "企业管理员";
   if (type === 2) return "子账号";
   return "标准账号";
 }
@@ -119,8 +114,6 @@ export async function loginHuanxingAccount(
     displayName: user.display_name || undefined,
     type: user.type,
     topid: user.topid,
-    enterpriseId: user.enterprise_id,
-    enterpriseName: user.enterprise_name || undefined,
     sessionCookie,
   };
   if (sessionCookie) {
@@ -162,7 +155,5 @@ export async function fetchHuanxingSelf(account: HuanxingAccount): Promise<Huanx
     displayName: user?.display_name || undefined,
     type: user?.type ?? account.type,
     topid: user?.topid ?? account.topid,
-    enterpriseId: user?.enterprise_id ?? account.enterpriseId,
-    enterpriseName: user?.enterprise_name || undefined,
   };
 }

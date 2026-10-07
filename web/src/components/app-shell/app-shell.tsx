@@ -3,7 +3,6 @@ import { TaskRail } from "./task-rail";
 import { ConnectionTargetNotice } from "./connection-target-notice";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
 import { AuthDialog } from "@/components/auth/auth-dialog";
-import { DeviceTokenDialog } from "@/components/auth/device-token-dialog";
 import s from "./app-shell.module.css";
 
 interface AppShellProps {
@@ -22,7 +21,6 @@ export function AppShell({ children }: AppShellProps) {
       </div>
       <SettingsDialog />
       <AuthDialog />
-      <DeviceTokenDialog />
     </div>
   );
 }

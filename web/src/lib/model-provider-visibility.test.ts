@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BRAND } from "./brand.generated";
-import {
-  enterpriseProviderIdsFromConfig,
-  savedCustomProviderIdsFromConfig,
-} from "./model-provider-visibility";
+import { savedCustomProviderIdsFromConfig } from "./model-provider-visibility";
 
 describe("savedCustomProviderIdsFromConfig", () => {
   it("keeps user entries and excludes account and Team-managed providers", () => {
@@ -36,32 +33,6 @@ describe("savedCustomProviderIdsFromConfig", () => {
       "custom:my-endpoint",
       "custom:old-brand",
       "custom:legacy-user",
-    ]);
-  });
-});
-
-describe("enterpriseProviderIdsFromConfig", () => {
-  it("includes the friendly-name slugs emitted by Core for Team-managed entries", () => {
-    const ids = enterpriseProviderIdsFromConfig({
-      custom_providers: [
-        {
-          provider_key: "team-mdl_opaque_one",
-          name: "rightcodegpt",
-          team_managed: true,
-        },
-        {
-          provider_key: "team-mdl_opaque_two",
-          name: "GPT 5.6",
-          team_managed: true,
-        },
-      ],
-    });
-
-    expect(Array.from(ids)).toEqual([
-      "custom:team-mdl_opaque_one",
-      "custom:rightcodegpt",
-      "custom:team-mdl_opaque_two",
-      "custom:gpt-5.6",
     ]);
   });
 });

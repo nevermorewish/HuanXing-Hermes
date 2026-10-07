@@ -2055,11 +2055,6 @@
   object-fit: contain;
 }
 
-.modelMenuItemIcon[data-tone="enterprise"] {
-  background: var(--h-accent-soft);
-  color: var(--h-accent);
-}
-
 .modelMenuItemIcon[data-tone="custom"] {
   background: var(--h-ok-soft);
   color: var(--h-ok);

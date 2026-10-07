@@ -65,10 +65,9 @@ impl DesktopControlState {
         Self {
             schema_version: CONTROL_SCHEMA_VERSION,
             guide_state: GuideState::Pending,
-            // The current startup flow lets the device-token prompt be skipped
-            // into the workbench, so a clean install needs a live managed
-            // backend immediately. Connection settings can still switch to an
-            // external backend later.
+            // A clean install needs a live managed backend immediately so the
+            // workbench is reachable on first launch. Connection settings can
+            // still switch to an external backend later.
             managed_runtime_desired_state: ManagedRuntimeDesiredState::Running,
         }
     }

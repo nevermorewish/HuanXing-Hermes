@@ -237,9 +237,9 @@ fn normalize_base_url(input: &str) -> String {
 
 /// 内置模型的 OpenAI 兼容 provider id。
 ///
-/// 走 [`managed_provider_id`] 生成，与设备令牌同步共用同一套规范化规则：全小写、
-/// 无 `.`、`custom:acct-` 前缀。旧版写的是 `custom:<brandProviderKey>`，那种形态
-/// 由 `migrate_legacy_config` 负责清除——它带着上一个登录用户的 api_key，且没有
+/// 走 [`managed_provider_id`] 生成，规范化规则：全小写、无 `.`、`custom:acct-`
+/// 前缀。旧版写的是 `custom:<brandProviderKey>`，那种形态由
+/// `migrate_legacy_config` 负责清除——它带着上一个登录用户的 api_key，且没有
 /// 任何代码会刷新。
 fn account_provider_id() -> String {
     managed_provider_id(ManagedNamespace::Account, BRAND_PROVIDER_KEY)
@@ -1641,7 +1641,7 @@ fn merge_account_provider(mut config: Value, input: &AccountProvision<'_>) -> Va
 
     let providers = account_providers(&config, input);
 
-    // 只接管 Account 命名空间：企业模型与用户自定义模型不归账号管。
+    // 只接管 Account 命名空间：用户自定义模型不归账号管。
     if let Err(error) =
         apply_managed_providers_json(&mut config, &[ManagedNamespace::Account], &providers)
     {

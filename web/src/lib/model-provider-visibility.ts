@@ -1,5 +1,12 @@
-import { ENTERPRISE_PROVIDER_PREFIX } from "./enterprise-sync";
 import { BRAND } from "./brand.generated";
+
+/**
+ * Prefix of the retired Team/enterprise provider namespace. The feature is gone,
+ * but existing installs still carry `custom:team-*` entries in config.yaml, so
+ * the prefix stays recognized until the startup migration removes them. Without
+ * this, those entries would reappear in the picker as user custom models.
+ */
+const LEGACY_TEAM_PROVIDER_PREFIX = "custom:team-";
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -15,14 +22,9 @@ function normalizedProviderId(value: unknown): string {
 
 // Core builds picker slugs for legacy custom_providers entries from their
 // display name, not provider_key (custom_provider_slug in Hermes-CN-Core).
-function gatewayProviderIdFromDisplayName(value: unknown): string {
-  const name = typeof value === "string" ? value.trim().toLowerCase() : "";
-  return name ? `custom:${name.replaceAll(" ", "-")}` : "";
-}
-
 const MANAGED_PROVIDER_PREFIXES = [
   "custom:acct-",
-  ENTERPRISE_PROVIDER_PREFIX,
+  LEGACY_TEAM_PROVIDER_PREFIX,
   "custom:user-",
 ] as const;
 
@@ -36,6 +38,21 @@ const LEGACY_BRAND_PROVIDER_IDS = new Set(
 /** Legacy account providers created by any packaged desktop brand. */
 export function isLegacyBrandModelProvider(providerId: string): boolean {
   return LEGACY_BRAND_PROVIDER_IDS.has(normalizedProviderId(providerId));
+}
+
+/**
+ * Providers the account backend provisions and rewrites on every sign-in and
+ * status poll. `custom:user-*` is deliberately excluded: those are the user's
+ * own saved models, which stay fully editable and deletable.
+ */
+export function isAccountModelProvider(
+  providerId: string,
+  rawEntry: unknown,
+): boolean {
+  const id = normalizedProviderId(providerId);
+  return id.startsWith("custom:acct-")
+    || isLegacyBrandModelProvider(id)
+    || asRecord(rawEntry).team_managed === true;
 }
 
 /** Providers written by account/device provisioning are not user custom models. */
@@ -85,41 +102,6 @@ export function savedCustomProviderIdsFromConfig(
     }
     if (isManagedModelProvider(id, entry)) continue;
     ids.add(id);
-  }
-
-  return ids;
-}
-
-/**
- * Gateway provider IDs that belong to Team-managed configuration.
- *
- * Managed provider ids are canonical and are returned by Core unchanged.
- * Legacy team entries are still recognized during the one-time migration.
- */
-export function enterpriseProviderIdsFromConfig(
-  config: Record<string, unknown> | undefined,
-): ReadonlySet<string> {
-  const ids = new Set<string>();
-
-  const addManagedEntry = (providerId: unknown, rawEntry: unknown) => {
-    const entry = asRecord(rawEntry);
-    const id = normalizedProviderId(providerId);
-    if (!id || !isManagedModelProvider(id, entry)) return;
-    if (id.startsWith(ENTERPRISE_PROVIDER_PREFIX) || entry.team_managed === true) {
-      ids.add(id);
-      const gatewayId = gatewayProviderIdFromDisplayName(entry.name);
-      if (gatewayId && entry.team_managed === true) ids.add(gatewayId);
-    }
-  };
-
-  for (const [providerId, rawEntry] of Object.entries(asRecord(config?.providers))) {
-    addManagedEntry(providerId, rawEntry);
-  }
-
-  const legacy = Array.isArray(config?.custom_providers) ? config.custom_providers : [];
-  for (const rawEntry of legacy) {
-    const entry = asRecord(rawEntry);
-    addManagedEntry(entry.provider_key ?? entry.name, entry);
   }
 
   return ids;
