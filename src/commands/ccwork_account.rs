@@ -204,9 +204,13 @@ async fn session() -> Result<Session, AppError> {
 }
 
 async fn authenticated(path: &str) -> Result<Value, AppError> {
+    authenticated_request(path, None).await
+}
+
+async fn authenticated_request(path: &str, payload: Option<Value>) -> Result<Value, AppError> {
     let mut current = session().await?;
     let (mut status, mut body) =
-        request(&current.base_url, path, Some(&current.access_token), None).await?;
+        request(&current.base_url, path, Some(&current.access_token), payload.clone()).await?;
     if status == 401 {
         let mut guard = SESSION.lock().await;
         if let Some(stored) = guard.as_mut() {
@@ -217,7 +221,7 @@ async fn authenticated(path: &str) -> Result<Value, AppError> {
         drop(guard);
         current = session().await?;
         (status, body) =
-            request(&current.base_url, path, Some(&current.access_token), None).await?;
+            request(&current.base_url, path, Some(&current.access_token), payload).await?;
         if status == 401 {
             *SESSION.lock().await = None;
             account::secret_store::delete(&store_name())?;
@@ -718,6 +722,37 @@ pub async fn transactions(limit: u32, offset: u32) -> Result<AccountTransactions
         unit: row["unit"].as_str().map(str::to_string),
     }).collect();
     Ok(AccountTransactions { total: value["total"].as_u64().unwrap_or(0), transactions })
+}
+
+#[tauri::command]
+pub async fn account_credit_packages() -> Result<Value, AppError> {
+    authenticated("/wallet/packages?active_only=true").await
+}
+
+#[tauri::command]
+pub async fn account_create_recharge(package_id: String, payment_method: String) -> Result<Value, AppError> {
+    if package_id.trim().is_empty() || !matches!(payment_method.as_str(), "alipay" | "wechat") {
+        return Err(AppError::InvalidRequest("请选择代币套餐和支付方式".into()));
+    }
+    let current = session().await?;
+    let payment_type = if payment_method == "alipay" { "qr" } else { "native" };
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("package_id", &package_id)
+        .append_pair("payment_method", &payment_method)
+        .append_pair("payment_type", payment_type)
+        .append_pair("organization_id", &current.organization_id)
+        .finish();
+    authenticated_request(&format!("/wallet/recharge?{query}"), Some(json!({}))).await
+}
+
+#[tauri::command]
+pub async fn account_recharge_status(order_no: String) -> Result<Value, AppError> {
+    authenticated(&format!("/services/payment/query-order?order_no={}", urlencoding::encode(&order_no))).await
+}
+
+#[tauri::command]
+pub async fn account_cancel_recharge(order_no: String) -> Result<Value, AppError> {
+    authenticated_request(&format!("/services/payment/cancel-order?order_no={}", urlencoding::encode(&order_no)), Some(json!({}))).await
 }
 pub async fn logout(state: &State<'_, AppState>) -> Result<StatusResult, AppError> {
     let _change = ACCOUNT_CHANGE.lock().await;

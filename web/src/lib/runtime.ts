@@ -436,6 +436,9 @@ export interface AccountTokenInfo { id: number; name: string; group: string; sta
 export interface AccountBalanceInfo { quota: number; usedQuota: number; quotaPerUnit: number; displayInCurrency: boolean; topUpUrl: string; availableCredits?: string; frozenCredits?: string; monthlyConsumedCredits?: string; todayConsumedCredits?: string; }
 export interface AccountTransactionInfo { id: string; description: string; amountPrecise: string; createdAt: string; transactionType: string; modelName?: string; providerKey?: string; meterKey?: string; quantity?: string; unit?: string; }
 export interface AccountTransactionsInfo { total: number; transactions: AccountTransactionInfo[]; }
+export interface CreditPackage { id: string; name: string; description: string; price: string | number; total_credits: number; bonus_credits: number; }
+export interface RechargePayment { orderNo: string; amount: string | number; creditsAmount?: number; qrCode?: string; expiredAt?: string; }
+export interface RechargeStatus { orderNo: string; status: string; expiredAt?: string; statusReason?: string | null; }
 export interface AccountSaveModelsInput { models: string[]; modelEndpointTypes?: Record<string, string[]>; primaryModelId?: string; tokenId?: number; }
 export interface AccountTestModelResult { ok: boolean; latencyMs?: number; reply?: string; error?: string; }
 export interface UserProviderInput {
@@ -498,6 +501,10 @@ declare global {
       accountListTokens?(): Promise<AccountTokenInfo[]>;
       accountBalance?(): Promise<AccountBalanceInfo>;
       accountTransactions?(input?: { limit?: number; offset?: number }): Promise<AccountTransactionsInfo>;
+      accountCreditPackages?(): Promise<CreditPackage[]>;
+      accountCreateRecharge?(input: { packageId: string; paymentMethod: "alipay" | "wechat" }): Promise<RechargePayment>;
+      accountRechargeStatus?(orderNo: string): Promise<RechargeStatus>;
+      accountCancelRecharge?(orderNo: string): Promise<void>;
       accountSaveModels?(input: AccountSaveModelsInput): Promise<AccountStatusResult>;
       accountTestModel?(modelId: string): Promise<AccountTestModelResult>;
       accountLogout?(): Promise<AccountStatusResult>;

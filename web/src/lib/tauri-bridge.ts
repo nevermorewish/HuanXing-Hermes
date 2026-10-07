@@ -86,6 +86,9 @@ import type {
   AccountTokenInfo,
   AccountBalanceInfo,
   AccountTransactionsInfo,
+  CreditPackage,
+  RechargePayment,
+  RechargeStatus,
   AccountSaveModelsInput,
   AccountTestModelResult,
   UserProviderInput,
@@ -318,6 +321,21 @@ const tauriBridge = {
   },
   async accountTransactions(input?: { limit?: number; offset?: number }): Promise<AccountTransactionsInfo> {
     return invokeCommand("account_transactions", { limit: input?.limit, offset: input?.offset });
+  },
+  async accountCreditPackages(): Promise<CreditPackage[]> {
+    const value = await invokeCommand<CreditPackage[] | { packages?: CreditPackage[] }>("account_credit_packages");
+    return Array.isArray(value) ? value : value.packages ?? [];
+  },
+  async accountCreateRecharge(input: { packageId: string; paymentMethod: "alipay" | "wechat" }): Promise<RechargePayment> {
+    const value = await invokeCommand<{ order_no: string; amount: string | number; credits_amount?: number; qr_code?: string; expired_at?: string }>("account_create_recharge", { packageId: input.packageId, paymentMethod: input.paymentMethod });
+    return { orderNo: value.order_no, amount: value.amount, creditsAmount: value.credits_amount, qrCode: value.qr_code, expiredAt: value.expired_at };
+  },
+  async accountRechargeStatus(orderNo: string): Promise<RechargeStatus> {
+    const value = await invokeCommand<{ order_no: string; status: string; expired_at?: string; status_reason?: string | null }>("account_recharge_status", { orderNo });
+    return { orderNo: value.order_no, status: value.status, expiredAt: value.expired_at, statusReason: value.status_reason };
+  },
+  async accountCancelRecharge(orderNo: string): Promise<void> {
+    await invokeCommand("account_cancel_recharge", { orderNo });
   },
   async accountSaveModels(input: AccountSaveModelsInput): Promise<AccountStatusResult> {
     return invokeCommand("account_save_models", { input });

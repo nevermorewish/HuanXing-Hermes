@@ -30,6 +30,7 @@ import { huanxingAccountTypeLabel } from "@/lib/huanxing-auth";
 import { dashboardPortFromUrl, dashboardUrlFromInputs } from "@/lib/dashboard-url";
 import { DESKTOP_VERSION, versionLabel } from "@/lib/build-info";
 import { runtime } from "@/lib/runtime";
+import { RechargeDialog } from "@/components/account/recharge-dialog";
 import s from "./account-popup.module.css";
 
 const DESKTOP_VERSION_LABEL = versionLabel(DESKTOP_VERSION);
@@ -62,6 +63,7 @@ export function AccountPopup() {
   const ccwork = BRAND.accountBackend === "ccwork";
   const balance = useAccountBalance(ccwork && open && accountStatus?.loggedIn === true);
   const openAuthDialog = useSetAtom(authDialogOpenAtom);
+  const [rechargeOpen, setRechargeOpen] = useState(false);
 
   useEffect(() => {
     const user = accountStatus?.user;
@@ -184,7 +186,7 @@ export function AccountPopup() {
             <div className={s.enterpriseMeta}>
               {balance.isLoading ? "正在读取 ccwork 钱包…" : balance.isError ? "ccwork 钱包暂时不可用" : balance.data ? <>可用积分 {balance.data.availableCredits} · 冻结积分 {balance.data.frozenCredits}<br />{balance.data.monthlyConsumedCredits != null && balance.data.todayConsumedCredits != null ? <>本月消耗 {balance.data.monthlyConsumedCredits} · 今日消耗 {balance.data.todayConsumedCredits}</> : "本月消耗暂不可用"}</> : null}
             </div>
-            <button type="button" className={s.item} onClick={() => { void window.hermesDesktop?.openExternalUrl?.({ url: BRAND.rechargeUrl }); }}>在 ccwork 查看账单 / 充值</button>
+            <button type="button" className={s.item} onClick={() => setRechargeOpen(true)}>充值代币</button>
           </div>}
 
           <div className={s.sep} />
@@ -244,6 +246,7 @@ export function AccountPopup() {
           </button>
         </Popover.Content>
       </Popover.Portal>
+      <RechargeDialog open={rechargeOpen} onOpenChange={setRechargeOpen} />
     </Popover.Root>
   );
 }
