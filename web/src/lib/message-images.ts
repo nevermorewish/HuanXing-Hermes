@@ -3,8 +3,9 @@ import { fileNameFromPath, isImagePath } from "@/lib/composer-prompt";
 
 export type HermesImagePart = Extract<HermesMessagePart, { type: "image" }>;
 
-const MARKDOWN_IMAGE_RE = /!\[([^\]\n]*)\]\(\s*(?:<([^>\n]+)>|([^\s)"'\n]+))(?:\s+["'][^"'\n]*["'])?\s*\)/g;
+const MARKDOWN_IMAGE_RE = /!\[([^\]\n]*)\]\(\s*(?:<([^>\n]+)>|([^\n)]+))\s*\)/g;
 const BARE_IMAGE_RE = /(?:data:image\/[a-z0-9.+-]+;[^\s<>"')]+|https?:\/\/[^\s<>"')]+\.(?:apng|avif|bmp|gif|heic|heif|jpe?g|png|tiff?|webp)(?:[?#][^\s<>"')]*)?|(?:\.{0,2}\/|\/|[A-Za-z]:[\\/]|\\\\|~[\\/])?[^\s<>"')]+\.(?:apng|avif|bmp|gif|heic|heif|jpe?g|png|tiff?|webp)(?:[?#][^\s<>"')]*)?)/gi;
+const LOCAL_IMAGE_WITH_SPACES_RE = /(?:file:\/\/)?(?:\/(?:Applications|Library|System|Users|Volumes|private|tmp|var)|~\/)[^\n<>"')]+?\.(?:apng|avif|bmp|gif|heic|heif|jpe?g|png|tiff?|webp)(?:[?#][^\s<>"')]*)?/gi;
 
 const IMAGE_TYPE_VALUES = new Set([
   "image",
@@ -79,8 +80,32 @@ export function isLikelyLocalFilePath(value: string): boolean {
   return (
     /^(?:file):/i.test(trimmed) ||
     /^(?:~[\\/]|[A-Za-z]:[\\/]|\\\\)/.test(trimmed) ||
+    // POSIX-style Windows drive path (/D:/foo) — produced by the markdown
+    // harden pass so Windows absolute paths survive rehype-harden.
+    /^\/[A-Za-z]:\//.test(trimmed) ||
     /^\/(?:Applications|Library|System|Users|Volumes|bin|dev|etc|home|opt|private|sbin|tmp|usr|var)(?:\/|$)/.test(trimmed)
   );
+}
+
+export function normalizeLocalFilePath(value: string): string {
+  const trimmed = value.trim();
+  if (/^file:/i.test(trimmed)) {
+    try {
+      return decodeURIComponent(new URL(trimmed).pathname);
+    } catch {
+      return trimmed;
+    }
+  }
+  // /D:/foo → D:/foo: strip the leading slash of the POSIX-style Windows drive
+  // path so the real filesystem path is passed to the media reader.
+  let candidate = trimmed;
+  const posixDriveMatch = trimmed.match(/^\/([A-Za-z]):(\/.*)$/);
+  if (posixDriveMatch) candidate = `${posixDriveMatch[1]}:${posixDriveMatch[2]}`;
+  try {
+    return decodeURI(candidate);
+  } catch {
+    return candidate;
+  }
 }
 
 export function isImageReference(value: string): boolean {
@@ -170,7 +195,9 @@ export function extractMarkdownImageParts(text: string): HermesImagePart[] {
   const parts: HermesImagePart[] = [];
   for (const match of text.matchAll(MARKDOWN_IMAGE_RE)) {
     const alt = match[1]?.trim();
-    const url = (match[2] ?? match[3] ?? "").trim();
+    const rawUrl = (match[2] ?? match[3] ?? "").trim();
+    const titled = rawUrl.match(/^(\S+)\s+["'][^"'\n]*["']$/);
+    const url = (titled?.[1] ?? rawUrl).trim();
     const part = imagePartFromTrustedString(url, alt || undefined);
     if (part) {
       parts.push({
@@ -184,7 +211,26 @@ export function extractMarkdownImageParts(text: string): HermesImagePart[] {
 
 function extractBareImageParts(text: string): HermesImagePart[] {
   const parts: HermesImagePart[] = [];
+  const localMatches = [...text.matchAll(LOCAL_IMAGE_WITH_SPACES_RE)];
+  const localRanges = localMatches.map((match) => ({
+    start: match.index ?? -1,
+    end: (match.index ?? -1) + (match[0]?.length ?? 0),
+  }));
+  const coveredByLocalMatch = (match: RegExpMatchArray) => {
+    const start = match.index ?? -1;
+    const end = start + (match[0]?.length ?? 0);
+    return localRanges.some((range) => start >= range.start && end <= range.end);
+  };
+
+  for (const match of localMatches) {
+    const raw = match[0]?.trim();
+    if (!raw || !isImageReference(raw)) continue;
+    const part = imagePartFromTrustedString(raw);
+    if (part) parts.push(part);
+  }
+
   for (const match of text.matchAll(BARE_IMAGE_RE)) {
+    if (coveredByLocalMatch(match)) continue;
     const raw = match[0]?.trim();
     if (!raw || !isImageReference(raw)) continue;
     const part = imagePartFromTrustedString(raw);

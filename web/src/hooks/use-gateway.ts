@@ -4,6 +4,7 @@ import { getDefaultStore, useAtomValue, useSetAtom } from "jotai";
 import {
   ConfigSetResult,
   CommandDispatchResult,
+  FileAttachResult,
   ImageAttachResult,
   InputDetectDropResult,
   ModelOptionsResult,
@@ -20,12 +21,15 @@ import {
 } from "@hermes/protocol";
 import { CN_BACKEND_PROVIDER_SLUGS } from "@/lib/cn-provider-slugs";
 import { getGatewayClient } from "@/lib/gateway-client";
-import { reattachAfterReconnect } from "@/lib/gateway-reconnect";
+import {
+  isDefinitiveMissingSessionError,
+  reattachAfterReconnect,
+} from "@/lib/gateway-reconnect";
 import {
   getCachedModelOptions,
   invalidateModelOptionsCache,
 } from "@/lib/model-options-cache";
-import { buildGatewayModelConfigValue } from "@/lib/provider-id";
+import { assertGatewayModelConfigResult, buildGatewayModelConfigValue } from "@/lib/provider-id";
 import type { ReasoningEffort } from "@/lib/reasoning-effort";
 import {
   rememberSessionMapping,
@@ -35,8 +39,15 @@ import {
 import { mirrorSessionWorkspaceMapping } from "@/lib/workspaces";
 import { humanizeGatewayError, parseGatewayResult } from "@/lib/gateway-result";
 import {
+  branchRuntimeMessages,
+  sessionBranchCreateParams,
+  type SessionBranchMessage,
+} from "@/lib/session-branch";
+import { sessionCreateParams } from "@/lib/session-create";
+import {
   applyGatewayEventAtom,
   chatRuntimeBySessionAtom,
+  createEmptyChatRuntime,
   ensureChatSessionAtom,
   gwConnectionAtom,
   gwSessionIdAtom,
@@ -49,9 +60,15 @@ import {
   terminateAllStreamsAtom,
   type ImageEntry,
 } from "@/stores/chat";
-import { sessionTipRedirectAtom } from "@/stores/ui";
+import { activeProfileAtom, sessionTipRedirectAtom } from "@/stores/ui";
+import { activeSessionIdAtom } from "@/stores/ui";
 import { recordTipRedirect } from "@/lib/session-tip-redirect";
 import { createDeltaCoalescer } from "@/lib/gateway-delta-coalescer";
+import { queryClient as appQueryClient } from "@/lib/query-client";
+import {
+  gatewayEventChangesSessionList,
+  invalidateSessionListQueries,
+} from "@/lib/session-query-sync";
 
 type GatewayState = ReturnType<typeof getGatewayClient>["state"];
 
@@ -112,17 +129,23 @@ async function reattachActiveSessionAfterReconnect(): Promise<void> {
           ),
         ),
       onResumed: (gatewaySessionId, persistentId) => {
-        store.set(gwSessionIdAtom, gatewaySessionId);
         rememberSessionMapping(gatewaySessionId, persistentId);
+        mirrorSessionWorkspaceMapping(gatewaySessionId, persistentId);
+        store.set(gwSessionIdAtom, gatewaySessionId);
       },
-      onResumeFailed: () => {
-        // The backend session is genuinely gone (reaped / crashed) — escalate
-        // the transient "reconnecting" turns to a real error so the UI is honest.
-        store.set(terminateAllStreamsAtom);
+      onResumeFailed: (error) => {
+        // A timeout or temporarily wedged backend does not mean the persistent
+        // session vanished. Keep the runtime in reconnecting state so it stays
+        // visible and can recover on the next reconnect. Only an explicit
+        // server-side "session missing" response is terminal.
+        if (isDefinitiveMissingSessionError(error)) {
+          store.set(terminateAllStreamsAtom);
+        }
       },
     });
   } finally {
     reattachInFlight = false;
+    void invalidateSessionListQueries(appQueryClient);
   }
 }
 
@@ -154,10 +177,37 @@ function ensureGatewayBridge(): GatewaySubscriptionBridge {
   // case. The server re-pins events to the new socket only via session.resume —
   // without it the remaining deltas of an in-flight turn are silently dropped.
   // See docs/gateway-connection-overhaul.md (C2).
+  //
+  // However, after a page refresh (F5) the module-level state is reset. If
+  // gwSessionIdAtom was persisted to the UI store (via Bug #3 fix), we can
+  // recover the in-flight turn on the very first connect after page load.
   let needsResumeOnReopen = false;
+  let isFirstConnect = true;
 
   bridge.unsubscribeState = client.onState((state) => {
     forEachSubscriber(bridge, (sub) => sub.setConnectionState(state));
+    if (state === "open") {
+      void invalidateSessionListQueries(appQueryClient);
+      // First connect after page load: check if a persisted gateway session
+      // ID was restored, and if so attempt to reattach the in-flight turn.
+      // As a fallback, also check activeSessionIdAtom (persisted via Bug #2)
+      // through the session map to find a recoverable gateway session ID.
+      if (isFirstConnect) {
+        isFirstConnect = false;
+        const store = getDefaultStore();
+        let restoredGwId = store.get(gwSessionIdAtom);
+        if (!restoredGwId) {
+          // Fallback: activeSessionId → resolveGatewaySessionId
+          const activeId = store.get(activeSessionIdAtom);
+          if (activeId) {
+            restoredGwId = resolveGatewaySessionId(activeId) ?? null;
+          }
+        }
+        if (restoredGwId) {
+          void reattachActiveSessionAfterReconnect();
+        }
+      }
+    }
     if (state === "open" && needsResumeOnReopen) {
       needsResumeOnReopen = false;
       void reattachActiveSessionAfterReconnect();
@@ -237,6 +287,22 @@ async function rememberPersistentSessionKey(gatewaySessionId: string) {
 interface CreateSessionOptions {
   activate?: boolean;
   cwd?: string;
+  /** Composer thinking-effort to bake into the session at create time
+   * (backend `session.create` param `reasoning_effort`, per-session override
+   * — see lib/session-create.ts). Without it the backend builds the first
+   * turn with its default (medium). */
+  reasoningEffort?: ReasoningEffort | null;
+}
+
+export interface CreateBranchSessionOptions {
+  parentSessionId: string;
+  cwd?: string | null;
+  messages: SessionBranchMessage[];
+}
+
+export interface CreatedBranchSession {
+  runtimeSessionId: string;
+  storedSessionId: string;
 }
 
 export function useGateway() {
@@ -244,6 +310,7 @@ export function useGateway() {
   const connectionState = useAtomValue(gwConnectionAtom);
   const gwSessionId = useAtomValue(gwSessionIdAtom);
   const runtimeBySession = useAtomValue(chatRuntimeBySessionAtom);
+  const setRuntimeBySession = useSetAtom(chatRuntimeBySessionAtom);
   const setConnectionState = useSetAtom(gwConnectionAtom);
   const setGwSessionId = useSetAtom(gwSessionIdAtom);
   const applyGatewayEvent = useSetAtom(applyGatewayEventAtom);
@@ -256,12 +323,19 @@ export function useGateway() {
   const setSessionTipRedirect = useSetAtom(sessionTipRedirectAtom);
   const terminateAllStreams = useSetAtom(terminateAllStreamsAtom);
 
+  const applyGatewayEventAndSync = useCallback((event: GatewayEvent) => {
+    applyGatewayEvent(event);
+    if (gatewayEventChangesSessionList(event)) {
+      void invalidateSessionListQueries(queryClient);
+    }
+  }, [applyGatewayEvent, queryClient]);
+
   const activeRuntime = gwSessionId ? runtimeBySession[gwSessionId] : undefined;
   const streamStatus = activeRuntime?.streamStatus ?? "idle";
 
   useEffect(() => {
-    return subscribeGateway(setConnectionState, applyGatewayEvent, terminateAllStreams);
-  }, [applyGatewayEvent, setConnectionState, terminateAllStreams]);
+    return subscribeGateway(setConnectionState, applyGatewayEventAndSync, terminateAllStreams);
+  }, [applyGatewayEventAndSync, setConnectionState, terminateAllStreams]);
 
   const ensureSubscribed = useCallback(() => {
     ensureGatewayBridge();
@@ -281,14 +355,16 @@ export function useGateway() {
     setGwSessionId(sessionId);
     resetChatSession(sessionId);
     void rememberPersistentSessionKey(sessionId);
-  }, [resetChatSession, setGwSessionId]);
+    void invalidateSessionListQueries(queryClient);
+  }, [queryClient, resetChatSession, setGwSessionId]);
 
   const createSession = useCallback(async (options?: CreateSessionOptions): Promise<string> => {
     ensureSubscribed();
     const result = parseGatewayResult(
       SessionCreateResult,
-      await getGatewayClient().request("session.create",
-        options?.cwd?.trim() ? { cwd: options.cwd.trim() } : {},
+      await getGatewayClient().request(
+        "session.create",
+        sessionCreateParams(options?.cwd, options?.reasoningEffort),
       ),
       "session.create",
     );
@@ -298,12 +374,47 @@ export function useGateway() {
     return result.session_id;
   }, [adoptCreatedSession, ensureSubscribed]);
 
+  const createBranchSession = useCallback(async (
+    options: CreateBranchSessionOptions,
+  ): Promise<CreatedBranchSession> => {
+    const parentSessionId = options.parentSessionId.trim();
+    if (!parentSessionId) throw new Error("缺少待分叉的会话 ID");
+    if (options.messages.length === 0) throw new Error("当前会话没有可用于分叉的对话内容");
+
+    ensureSubscribed();
+    const result = parseGatewayResult(
+      SessionCreateResult,
+      await getGatewayClient().request(
+        "session.create",
+        sessionBranchCreateParams(parentSessionId, options.cwd, options.messages),
+      ),
+      "session.create",
+    );
+    const storedSessionId = result.stored_session_id?.trim() || result.session_id;
+
+    rememberSessionMapping(result.session_id, storedSessionId);
+    setGwSessionId(result.session_id);
+    setRuntimeBySession((state) => ({
+      ...state,
+      [result.session_id]: {
+        ...createEmptyChatRuntime(),
+        messages: branchRuntimeMessages(options.messages, result.session_id),
+      },
+    }));
+
+    return {
+      runtimeSessionId: result.session_id,
+      storedSessionId,
+    };
+  }, [ensureSubscribed, setGwSessionId, setRuntimeBySession]);
+
   const closeSession = useCallback(async (sessionId: string) => {
     if (!sessionId) return;
     ensureSubscribed();
     await getGatewayClient().request("session.close", { session_id: sessionId });
-    setGwSessionId((current) => current === sessionId ? null : current);
-  }, [ensureSubscribed, setGwSessionId]);
+    if (gwSessionId === sessionId) setGwSessionId(null);
+    void invalidateSessionListQueries(queryClient);
+  }, [ensureSubscribed, gwSessionId, queryClient, setGwSessionId]);
 
   const beginPrompt = useCallback(
     (sessionId: string, text: string, now?: number, images?: ImageEntry[]) => {
@@ -331,17 +442,18 @@ export function useGateway() {
       "session.resume",
     );
     const resumed = result.resumed ?? persistentSessionId;
-    setGwSessionId(result.session_id);
-    resetChatSession(result.session_id);
     rememberSessionMapping(result.session_id, resumed);
     mirrorSessionWorkspaceMapping(result.session_id, resumed);
+    setGwSessionId(result.session_id);
+    resetChatSession(result.session_id);
     // Compression rotated the conversation onto a new continuation: the backend
     // followed the chain and resumed a different persistent id than we asked
     // for. Record it so the detail route can project onto the live tip instead
     // of stranding the user on the now-empty pre-compression id (issue #305).
     setSessionTipRedirect((prev) => recordTipRedirect(prev, persistentSessionId, result.resumed));
+    void invalidateSessionListQueries(queryClient);
     return result.session_id;
-  }, [ensureSubscribed, resetChatSession, setGwSessionId, setSessionTipRedirect]);
+  }, [ensureSubscribed, queryClient, resetChatSession, setGwSessionId, setSessionTipRedirect]);
 
   const sendPrompt = useCallback(
     async (
@@ -387,7 +499,10 @@ export function useGateway() {
           }
         }
 
-        await rememberPersistentSessionKey(sessionId);
+        // `prompt.submit` has already acknowledged the turn. Session-title
+        // lookup is only mapping maintenance and may contend with the active
+        // turn's database write, so it must not delay composer cleanup.
+        void rememberPersistentSessionKey(sessionId);
       } catch (error) {
         setSessionError({ sessionId, message: errorMessage(error) });
         throw error;
@@ -553,7 +668,7 @@ export function useGateway() {
     async (
       sessionId: string,
       model: string,
-      provider?: string,
+      provider: string,
     ): Promise<ConfigSetResult> => {
       ensureSubscribed();
       const value = buildGatewayModelConfigValue(model, provider);
@@ -566,6 +681,7 @@ export function useGateway() {
         }),
         "config.set",
       );
+      assertGatewayModelConfigResult(value, result.value);
       invalidateModelOptionsCache(sessionId);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["sessions"] }),
@@ -580,17 +696,19 @@ export function useGateway() {
   const setRuntimeModel = useCallback(
     async (
       model: string,
-      provider?: string,
+      provider: string,
     ): Promise<ConfigSetResult> => {
       ensureSubscribed();
+      const value = buildGatewayModelConfigValue(model, provider);
       const result = parseGatewayResult(
         ConfigSetResult,
         await getGatewayClient().request("config.set", {
           key: "model",
-          value: buildGatewayModelConfigValue(model, provider),
+          value,
         }),
         "config.set",
       );
+      assertGatewayModelConfigResult(value, result.value);
       invalidateModelOptionsCache();
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["sessions"] }),
@@ -662,6 +780,28 @@ export function useGateway() {
           ...(filename ? { filename } : {}),
         }),
         "image.attach_bytes",
+      );
+    },
+    [ensureSubscribed],
+  );
+
+  const attachFile = useCallback(
+    async (
+      sessionId: string,
+      path?: string,
+      dataUrl?: string,
+      name?: string,
+    ): Promise<FileAttachResult> => {
+      ensureSubscribed();
+      return parseGatewayResult(
+        FileAttachResult,
+        await getGatewayClient().request("file.attach", {
+          session_id: sessionId,
+          ...(path ? { path } : {}),
+          ...(dataUrl ? { data_url: dataUrl } : {}),
+          ...(name ? { name } : {}),
+        }),
+        "file.attach",
       );
     },
     [ensureSubscribed],
@@ -741,6 +881,7 @@ export function useGateway() {
     streamStatus,
     connect,
     createSession,
+    createBranchSession,
     adoptCreatedSession,
     closeSession,
     beginPrompt,
@@ -760,6 +901,7 @@ export function useGateway() {
     setSessionReasoningEffort,
     attachImage,
     attachImageBytes,
+    attachFile,
     detectDroppedPath,
     interruptSession,
     setSessionTitle,

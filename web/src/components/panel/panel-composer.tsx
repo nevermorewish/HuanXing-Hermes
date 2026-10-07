@@ -9,8 +9,19 @@ import { useSkills } from "@/hooks/use-skills";
 import { useSessions } from "@/hooks/use-sessions";
 import { useActiveProfileName } from "@/hooks/use-profiles";
 import { resolveModelContextWindow } from "@/lib/model-context";
+import { ensureBrandProviderModelDeclared } from "@/lib/provider-catalog";
 import { readLastUsedModel, rememberLastUsedModel } from "@/lib/last-used-model";
 import { recordModelUsage } from "@/lib/model-usage-log";
+import {
+  composerDraftStorageKey,
+  forgetComposerDraftByKey,
+  readComposerDraftByKey,
+  writeComposerDraftByKey,
+} from "@/lib/composer-drafts";
+import {
+  reasoningEffortFromConfig,
+  type ReasoningEffort,
+} from "@/lib/reasoning-effort";
 import { composerSubmitShortcutHint } from "@/lib/composer-submit-shortcut";
 import { shouldPrewarmDraftSession } from "@/lib/draft-session-prewarm";
 import {
@@ -50,6 +61,8 @@ export function PanelComposer() {
   const [selectedModel, setSelectedModel] = useState<ComposerModelSelection | null>(
     () => readLastUsedModel(),
   );
+  const [reasoningEffortOverride, setReasoningEffortOverride] =
+    useState<ReasoningEffort | null>(null);
   const [prefilledDraft, setPrefilledDraft] = useState({ text: "", nonce: 0 });
   const [prefill, setPrefill] = useAtom(composerPrefillAtom);
   const composerSubmitShortcut = useAtomValue(composerSubmitShortcutAtom);
@@ -60,6 +73,15 @@ export function PanelComposer() {
   const draftRef = useRef<{ id: string; cwd: string } | null>(null);
   const initialWorkspacePath = normalizeWorkspacePath(searchParams.get("workspace"));
   const submitShortcutHint = composerSubmitShortcutHint(composerSubmitShortcut);
+  const newTaskDraftKey = useMemo(
+    () => composerDraftStorageKey({ kind: "new", profile: activeProfile }),
+    [activeProfile],
+  );
+  const storedDraft = useMemo(
+    () => readComposerDraftByKey(newTaskDraftKey),
+    [newTaskDraftKey],
+  );
+  const composerInitial = prefilledDraft.nonce > 0 ? prefilledDraft.text : storedDraft;
   const enabledSkills = useMemo(
     () => (skillsQuery.data ?? []).filter((skill) => skill.enabled),
     [skillsQuery.data],
@@ -118,7 +140,7 @@ export function PanelComposer() {
     if (!model) return null;
     return {
       model,
-      provider: selectedModel?.provider ?? modelInfo?.provider,
+      provider: selectedModel?.provider ?? modelInfo?.provider ?? "",
       providerName: selectedModel?.providerName,
       contextWindow: selectedModel?.contextWindow,
     };
@@ -132,7 +154,21 @@ export function PanelComposer() {
     [config, contextSelection, modelInfo?.auto_context_length, modelInfo?.effective_context_length],
   );
 
-  const onModelSelect = useCallback((selection: ComposerModelSelection) => {
+  const onModelSelect = useCallback(async (selection: ComposerModelSelection) => {
+    // Brand catalogs intentionally include stable aliases that may be hidden
+    // from the relay's `/v1/models` response.  Declare the selected alias
+    // before the session config.set reaches Core; otherwise Core rejects the
+    // switch as an unverified custom-endpoint model.
+    if (config) {
+      const nextConfig = ensureBrandProviderModelDeclared(
+        config,
+        selection.provider,
+        selection.model,
+      );
+      if (nextConfig && nextConfig !== config) {
+        await saveConfig.mutateAsync(nextConfig);
+      }
+    }
     const enriched: ComposerModelSelection = {
       ...selection,
       contextWindow: resolveModelContextWindow(config, selection),
@@ -140,17 +176,29 @@ export function PanelComposer() {
     setSelectedModel(enriched);
     rememberLastUsedModel(enriched);
     recordModelUsage(enriched);
-  }, [config]);
+  }, [config, saveConfig]);
 
   const onConfigureProvider = useCallback((providerId: string) => {
     navigate(`/models#provider-${providerId}`);
   }, [navigate]);
 
-  const onSelectAndSetDefault = useCallback((selection: ComposerModelSelection) => {
-    onModelSelect(selection);
+  const configReasoningEffort = useMemo(() => reasoningEffortFromConfig(config), [config]);
+  const reasoningEffort = reasoningEffortOverride ?? configReasoningEffort;
+
+  const onReasoningEffortSelect = useCallback((effort: ReasoningEffort) => {
+    setReasoningEffortOverride(effort);
+  }, []);
+
+  const onSelectAndSetDefault = useCallback(async (selection: ComposerModelSelection) => {
+    await onModelSelect(selection);
     if (!config) return;
-    saveConfig.mutate({
-      ...config,
+    const declaredConfig = ensureBrandProviderModelDeclared(
+      config,
+      selection.provider,
+      selection.model,
+    ) ?? config;
+    await saveConfig.mutateAsync({
+      ...declaredConfig,
       model: {
         ...(typeof config.model === "object" && config.model !== null && !Array.isArray(config.model)
           ? config.model as Record<string, unknown>
@@ -190,6 +238,7 @@ export function PanelComposer() {
         void closeSession(draft.id).catch(() => {});
       }
       await createAndSendSession(payload, controls, options);
+      forgetComposerDraftByKey(newTaskDraftKey);
     } catch (err) {
       console.error("Failed to create session:", err);
       throw err;
@@ -201,16 +250,22 @@ export function PanelComposer() {
     createAndSendSession,
     adoptCreatedSession,
     closeSession,
+    newTaskDraftKey,
   ]);
+
+  const onDraftChange = useCallback((text: string) => {
+    writeComposerDraftByKey(newTaskDraftKey, text);
+  }, [newTaskDraftKey]);
 
   return (
     <div ref={wrapperRef}>
       <GooseComposer
-        key={initialWorkspacePath || "default-workspace"}
+        key={`${initialWorkspacePath || "default-workspace"}:${newTaskDraftKey ?? "draft"}`}
         onSend={onSend}
-        initial={prefilledDraft.text}
+        initial={composerInitial}
         initialNonce={prefilledDraft.nonce}
         initialWorkspacePath={initialWorkspacePath}
+        onDraftChange={onDraftChange}
         placeholder={`描述你想完成的任务，${submitShortcutHint}…`}
         variant="big"
         headerLabel="新任务"
@@ -226,6 +281,11 @@ export function PanelComposer() {
           onSelect: onModelSelect,
           onSelectAndSetDefault,
           onConfigureProvider,
+          disabled: sending,
+        }}
+        reasoningPicker={{
+          value: reasoningEffort,
+          onSelect: onReasoningEffortSelect,
           disabled: sending,
         }}
         skillPicker={{

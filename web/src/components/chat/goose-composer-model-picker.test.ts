@@ -1,6 +1,27 @@
 import { describe, expect, it } from "vitest";
 import type { ModelOptionsResult } from "@hermes/protocol";
-import { buildCandidates } from "./goose-composer-model-picker";
+import { BRAND } from "@/lib/brand.generated";
+import {
+  buildCandidates,
+  groupCandidates,
+  modelButtonText,
+} from "./goose-composer-model-picker";
+
+const TEST_BRAND_MODELS = BRAND.accountDefaultModels.length > 0
+  ? [...BRAND.accountDefaultModels]
+  : ["ccwork-model-a", "ccwork-model-b", "ccwork-model-c", "ccwork-model-d", "ccwork-model-e", "ccwork-model-f"];
+
+describe("modelButtonText", () => {
+  it("keeps regular model ids visible", () => {
+    const options = {
+      provider: "deepseek",
+      model: "deepseek-chat",
+      providers: [{ slug: "deepseek", name: "DeepSeek", models: ["deepseek-chat"] }],
+    } as ModelOptionsResult;
+
+    expect(modelButtonText(undefined, options)).toBe("deepseek-chat");
+  });
+});
 
 describe("buildCandidates", () => {
   it("augments a stale MiniMax gateway model list with MiniMax-M3 from the desktop catalog", () => {
@@ -33,20 +54,215 @@ describe("buildCandidates", () => {
     });
   });
 
-  it("keeps MiniMax-M3 visible when the gateway only returns an unconfigured provider placeholder", () => {
+  it("omits providers that Core explicitly marks as unconfigured", () => {
     const options = {
       providers: [
         {
           slug: "minimax-cn",
           name: "MiniMax",
+          models: ["MiniMax-M3", "MiniMax-M2.7"],
+          authenticated: false,
         },
       ],
     } as ModelOptionsResult;
 
     const buckets = buildCandidates(options, []);
 
-    expect(buckets.recommended.map((candidate) => candidate.key)).toContain("minimax-cn:MiniMax-M3");
-    expect(buckets.all.map((candidate) => candidate.key)).toContain("minimax-cn:MiniMax-M2.7");
+    expect(buckets.all).toHaveLength(0);
+    expect(buckets.configured).toHaveLength(0);
+  });
+
+  it("treats a provider with advertised models as available on older Core responses", () => {
+    const options = {
+      providers: [
+        {
+          slug: "deepseek",
+          name: "DeepSeek",
+          models: ["deepseek-chat"],
+        },
+      ],
+    } as ModelOptionsResult;
+
+    const buckets = buildCandidates(options, []);
+
+    expect(buckets.configured.map((candidate) => candidate.key)).toContain("deepseek:deepseek-chat");
+  });
+
+  it("uses Core models.dev metadata before the desktop catalog for capability tags", () => {
+    const options = {
+      providers: [
+        {
+          slug: "deepseek",
+          name: "DeepSeek",
+          models: ["deepseek-v4-flash"],
+          authenticated: true,
+          capabilities: {
+            "deepseek-v4-flash": {
+              supports_tools: false,
+              supports_vision: true,
+              supports_pdf: true,
+              supports_audio: true,
+              supports_video: true,
+              supports_reasoning: true,
+              supports_reasoning_control: true,
+              open_weights: true,
+              context_window: 1_000_000,
+              max_output_tokens: 65_536,
+              model_family: "deepseek",
+            },
+          },
+        },
+      ],
+    } as ModelOptionsResult;
+
+    const candidate = buildCandidates(options, []).configured[0];
+
+    expect(candidate.caps).toMatchObject({
+      id: "deepseek-v4-flash",
+      contextWindow: 1_000_000,
+      supportsVision: true,
+      supportsPdf: true,
+      supportsAudio: true,
+      supportsVideo: true,
+      supportsTools: false,
+      supportsReasoning: true,
+      supportsReasoningControl: true,
+      openWeights: true,
+    });
+  });
+
+  it("reuses the canonical DeepSeek icon for custom:deepseek rows", () => {
+    const options = {
+      providers: [
+        {
+          slug: "deepseek",
+          name: "DeepSeek",
+          models: ["deepseek-chat"],
+          authenticated: true,
+        },
+        {
+          slug: "custom:deepseek",
+          name: "DeepSeek",
+          models: ["deepseek-v4-pro"],
+          authenticated: true,
+          is_user_defined: true,
+        },
+      ],
+    } as ModelOptionsResult;
+
+    const buckets = buildCandidates(options, []);
+    const canonical = buckets.all.find((candidate) => candidate.providerSlug === "deepseek");
+    const custom = buckets.all.find((candidate) => candidate.providerSlug === "custom:deepseek");
+
+    expect(custom).toMatchObject({ catalogId: "deepseek" });
+    expect(custom?.iconUrl).toBeTruthy();
+    expect(custom?.iconUrl).toBe(canonical?.iconUrl);
+  });
+
+  it("limits each configured provider to five catalog-curated models", () => {
+    const options = {
+      provider: "minimax-cn",
+      model: "MiniMax-M3",
+      providers: [
+        {
+          slug: "minimax-cn",
+          name: "MiniMax",
+          models: [
+            "MiniMax-M3",
+            "MiniMax-M2.7",
+            "MiniMax-M2.7-highspeed",
+            "MiniMax-M2.5",
+            "MiniMax-M2.5-highspeed",
+            "MiniMax-M2.1",
+          ],
+          authenticated: true,
+        },
+      ],
+    } as ModelOptionsResult;
+
+    const buckets = buildCandidates(options, []);
+    const minimaxModels = buckets.configured
+      .filter((candidate) => candidate.providerSlug === "minimax-cn")
+      .map((candidate) => candidate.model);
+
+    expect(minimaxModels).toEqual([
+      "MiniMax-M3",
+      "MiniMax-M2.7",
+      "MiniMax-M2.7-highspeed",
+      "MiniMax-M2.5",
+      "MiniMax-M2.5-highspeed",
+    ]);
+  });
+
+  it("keeps the current custom model inside the five-model shortlist", () => {
+    const options = {
+      provider: "my-provider",
+      model: "custom-current",
+      providers: [
+        {
+          slug: "my-provider",
+          name: "My Provider",
+          models: ["m1", "m2", "m3", "m4", "m5", "custom-current"],
+          authenticated: true,
+          is_user_defined: true,
+        },
+      ],
+    } as ModelOptionsResult;
+
+    const buckets = buildCandidates(options, []);
+
+    expect(buckets.configured.map((candidate) => candidate.model)).toEqual([
+      "m1",
+      "m2",
+      "m3",
+      "m4",
+      "custom-current",
+    ]);
+  });
+
+  it("does not add a duplicate static provider when Core returns an aliased provider slug", () => {
+    const options = {
+      providers: [
+        {
+          slug: "kimi-coding",
+          name: "Kimi Coding Plan",
+          models: ["kimi-k3"],
+          authenticated: true,
+        },
+      ],
+    } as ModelOptionsResult;
+
+    const buckets = buildCandidates(options, []);
+
+    expect(buckets.all.some((candidate) => candidate.providerSlug === "kimi-for-coding")).toBe(false);
+    expect(buckets.all.some((candidate) => candidate.providerSlug === "kimi-coding")).toBe(true);
+  });
+
+  it("keeps recently used models in the complete available-model bucket", () => {
+    const options = {
+      providers: [
+        {
+          slug: "deepseek",
+          name: "DeepSeek",
+          models: ["deepseek-chat"],
+          authenticated: true,
+        },
+      ],
+    } as ModelOptionsResult;
+    const usage = [
+      {
+        key: "deepseek:deepseek-chat",
+        provider: "deepseek",
+        model: "deepseek-chat",
+        count: 2,
+        lastUsedAt: Date.now(),
+      },
+    ];
+
+    const buckets = buildCandidates(options, usage);
+
+    expect(buckets.recent.map((candidate) => candidate.key)).toContain("deepseek:deepseek-chat");
+    expect(buckets.configured.map((candidate) => candidate.key)).toContain("deepseek:deepseek-chat");
   });
 
   it("splits the virtual moa provider into its own bucket instead of the regular groups", () => {
@@ -83,8 +299,6 @@ describe("buildCandidates", () => {
       ...buckets.all,
       ...buckets.recent,
       ...buckets.configured,
-      ...buckets.recommended,
-      ...buckets.more,
     ].map((candidate) => candidate.key);
     expect(regularKeys.filter((key) => key.startsWith("moa:"))).toHaveLength(0);
   });
@@ -107,5 +321,214 @@ describe("buildCandidates", () => {
 
     expect(buckets.recent).toHaveLength(0);
     expect(buckets.moa.map((candidate) => candidate.key)).toEqual(["moa:default"]);
+  });
+});
+
+describe("groupCandidates", () => {
+  it("groups brand defaults as built-in and keeps saved custom models separate", () => {
+    const [firstBrandModel, secondBrandModel] = TEST_BRAND_MODELS;
+    const brandProvider = `custom:acct-${BRAND.providerKey}`;
+    const options = {
+      providers: [
+        {
+          slug: brandProvider,
+          name: BRAND.appName,
+          models: [secondBrandModel, "not-in-brand-json", firstBrandModel],
+          authenticated: true,
+        },
+        {
+          slug: "custom:my-endpoint",
+          name: "我的模型",
+          models: ["local-model"],
+          authenticated: true,
+        },
+        {
+          slug: "official-provider",
+          name: "Official",
+          models: [firstBrandModel, "official-only"],
+          authenticated: true,
+        },
+      ],
+    } as ModelOptionsResult;
+
+    const groups = groupCandidates(options, {
+      savedCustomProviderIds: new Set(["custom:my-endpoint"]),
+    });
+
+    expect(groups.custom.map((candidate) => candidate.key)).toEqual([
+      "custom:my-endpoint:local-model",
+    ]);
+    expect(groups.builtin.map((candidate) => candidate.key)).toEqual(
+      BRAND.accountBackend === "ccwork"
+        ? [secondBrandModel, "not-in-brand-json", firstBrandModel].map((model) => `${brandProvider}:${model}`)
+        : [firstBrandModel, secondBrandModel].map((model) => `${brandProvider}:${model}`),
+    );
+  });
+
+  it("fills the complete built-in brand catalog when Core advertises only two models", () => {
+    const brandProvider = `custom:acct-${BRAND.providerKey}`;
+    const options = {
+      providers: [{
+        slug: brandProvider,
+        name: BRAND.appName,
+        models: TEST_BRAND_MODELS.slice(0, 2),
+        authenticated: true,
+      }],
+    } as ModelOptionsResult;
+
+    const groups = groupCandidates(options);
+
+    expect(groups.builtin.map((candidate) => candidate.model)).toEqual(
+      TEST_BRAND_MODELS.slice(0, 2).sort(),
+    );
+  });
+
+  it("keeps brand defaults while hiding unauthenticated and non-saved providers", () => {
+    const brandModel = TEST_BRAND_MODELS[0];
+    const messagesProvider = `custom:acct-${BRAND.providerKey}-messages`;
+    const options = {
+      providers: [
+        {
+          slug: messagesProvider,
+          name: `${BRAND.appName} Messages`,
+          models: [brandModel],
+          authenticated: true,
+        },
+        {
+          slug: "custom:not-ready",
+          name: "Not ready",
+          models: ["not-ready"],
+          authenticated: false,
+        },
+      ],
+    } as ModelOptionsResult;
+
+    const groups = groupCandidates(options);
+
+    expect(groups.builtin.map((candidate) => candidate.key)).toEqual([
+      `${messagesProvider}:${brandModel}`,
+    ]);
+    expect(groups.custom).toEqual([]);
+  });
+
+  it("shows one row per branded model when chat and Messages providers overlap", () => {
+    const [flash, pro, sol, kimi, glm, claude] = TEST_BRAND_MODELS;
+    const regularProvider = `custom:acct-${BRAND.providerKey}`;
+    const messagesProvider = `custom:acct-${BRAND.providerKey}-messages`;
+    const options = {
+      providers: [
+        {
+          slug: regularProvider,
+          name: BRAND.appName,
+          models: [flash, pro, sol],
+          authenticated: true,
+        },
+        {
+          slug: messagesProvider,
+          name: `${BRAND.appName} Messages`,
+          models: [kimi, glm, claude],
+          authenticated: true,
+        },
+      ],
+    } as ModelOptionsResult;
+
+    const groups = groupCandidates(options);
+
+    expect(groups.builtin.map((candidate) => candidate.key)).toEqual([
+      `${regularProvider}:${flash}`,
+      `${regularProvider}:${pro}`,
+      `${regularProvider}:${sol}`,
+      `${messagesProvider}:${kimi}`,
+      `${messagesProvider}:${glm}`,
+      `${messagesProvider}:${claude}`,
+    ]);
+  });
+
+  it("only shows custom providers that exist in the saved custom-model set", () => {
+    const options = {
+      providers: [
+        {
+          slug: "custom:old-account-provider",
+          name: "Managed account",
+          models: ["managed-model"],
+          authenticated: true,
+        },
+        {
+          slug: "custom:my-endpoint",
+          name: "My endpoint",
+          models: ["my-model"],
+          authenticated: true,
+        },
+      ],
+    } as ModelOptionsResult;
+
+    const groups = groupCandidates(options, {
+      savedCustomProviderIds: new Set(["custom:my-endpoint"]),
+    });
+
+    expect(groups.custom.map((candidate) => candidate.key)).toEqual([
+      "custom:my-endpoint:my-model",
+    ]);
+  });
+
+  it("hides account providers belonging to other packaged brands", () => {
+    const siblingBrandProviderKey = BRAND.knownBrandProviderKeys.find(
+      (providerKey) => providerKey !== BRAND.providerKey,
+    );
+    expect(siblingBrandProviderKey).toBeDefined();
+
+    const currentProvider = `custom:acct-${BRAND.providerKey}`;
+    const siblingProvider = `custom:acct-${siblingBrandProviderKey}`;
+    const legacySiblingProvider = `custom:${siblingBrandProviderKey}`;
+    const model = TEST_BRAND_MODELS[0];
+    const options = {
+      providers: [
+        {
+          slug: currentProvider,
+          name: BRAND.appName,
+          models: [model],
+          authenticated: true,
+        },
+        {
+          slug: siblingProvider,
+          name: "Sibling brand",
+          models: [model],
+          authenticated: true,
+        },
+        {
+          slug: legacySiblingProvider,
+          name: "Legacy sibling brand",
+          models: [model],
+          authenticated: true,
+        },
+      ],
+    } as ModelOptionsResult;
+
+    const groups = groupCandidates(options, {
+      savedCustomProviderIds: new Set([legacySiblingProvider]),
+    });
+
+    expect(groups.builtin.map((candidate) => candidate.key)).toEqual([
+      `${currentProvider}:${model}`,
+    ]);
+    expect(groups.custom).toEqual([]);
+  });
+
+  it("keeps a working provider out of the custom group when it is not saved by the user", () => {
+    const options = {
+      providers: [
+        {
+          slug: "custom:rightcodegpt",
+          name: "rightcodegpt",
+          models: ["mdl_opaque_id"],
+          authenticated: true,
+          source: "user-config",
+        },
+      ],
+    } as ModelOptionsResult;
+
+    const groups = groupCandidates(options, { savedCustomProviderIds: new Set() });
+
+    expect(groups.custom).toEqual([]);
   });
 });

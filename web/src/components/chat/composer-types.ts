@@ -29,7 +29,7 @@ export interface ComposerAttachment {
 
 export interface ComposerModelSelection {
   model: string;
-  provider?: string;
+  provider: string;
   providerName?: string;
   contextWindow?: number;
 }
@@ -48,6 +48,7 @@ export interface ComposerSubmitPayload {
   attachments: ComposerAttachment[];
   workspacePath?: string;
   modelSelection?: ComposerModelSelection;
+  reasoningEffort?: ReasoningEffort;
   skillCommandNames?: string[];
 }
 

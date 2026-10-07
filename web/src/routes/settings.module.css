@@ -17,7 +17,7 @@
 
 .nav {
   width: 220px;
-  padding: 18px 12px;
+  padding: 20px 12px;
   border-right: 1px solid var(--h-line);
   background: var(--h-bg-app);
   overflow-y: auto;
@@ -29,10 +29,10 @@
 .navItem {
   display: block;
   width: 100%;
-  padding: 10px 16px;
-  margin: 2px 0;
+  padding: 12px 16px;
+  margin: 4px 0;
   border: none;
-  border-radius: var(--h-r-md);
+  border-radius: var(--h-radius-sm);
   background: transparent;
   color: var(--h-text-2);
   font-size: 12.5px;
@@ -80,7 +80,7 @@
   width: 24px;
   height: 24px;
   border: 0;
-  border-radius: var(--h-r-sm);
+  border-radius: var(--h-radius-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -115,21 +115,21 @@
   font-size: 17px;
   font-weight: 600;
   color: var(--h-text);
-  margin: 0 0 6px;
+  margin: 0 0 8px;
 }
 
 .desc {
   font-size: 12px;
   color: var(--h-text-2);
-  margin: 0 0 22px;
+  margin: 0 0 24px;
   line-height: 1.7;
 }
 
 /* Provider mini grid */
 .providerGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(192px, 1fr));
+  gap: 12px;
   margin-bottom: 28px;
 }
 
@@ -137,12 +137,12 @@
   position: relative;
   background: var(--h-bg-pane);
   border: 1px solid var(--h-line);
-  border-radius: 10px;
+  border-radius: var(--h-radius-sm);
   padding: 12px;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   transition: border-color 0.15s, opacity 0.15s;
 }
 .providerMini[data-selected="true"] {
@@ -155,7 +155,7 @@
 .providerIcon {
   width: 32px;
   height: 32px;
-  border-radius: 7px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-chip);
   color: var(--h-text);
   display: flex;
@@ -185,14 +185,14 @@
   display: block;
   font-size: 10.5px;
   color: var(--h-text-3);
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 /* Provider detail pane */
 .providerDetail {
   background: var(--h-bg-app);
   border: 1px solid var(--h-line);
-  border-radius: 12px;
+  border-radius: var(--h-radius-sm);
   padding: 20px;
 }
 
@@ -207,7 +207,7 @@
   composes: providerIcon;
   width: 36px;
   height: 36px;
-  border-radius: 8px;
+  border-radius: var(--h-radius-sm);
   font-size: 14px;
 }
 
@@ -231,11 +231,11 @@
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  min-height: 22px;
+  min-height: 24px;
   font-size: 11px;
   line-height: 1;
-  padding: 0 10px;
-  border-radius: var(--h-r-pill);
+  padding: 0 12px;
+  border-radius: var(--h-radius-sm);
   white-space: nowrap;
 }
 .statusBadge[data-on="true"] {
@@ -253,8 +253,8 @@
 
 .cronFeedback {
   margin: 12px 0;
-  padding: 10px 12px;
-  border-radius: var(--h-r-md);
+  padding: 12px 12px;
+  border-radius: var(--h-radius-sm);
   border: 1px solid var(--h-line);
   color: var(--h-text-2);
   background: var(--h-bg-app);
@@ -282,14 +282,14 @@
 
 .envStatusBadge {
   min-width: 68px;
-  gap: 6px;
+  gap: 8px;
   padding: 0 12px;
 }
 .envStatusBadge::before {
   content: "";
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--h-radius-sm);
   flex: 0 0 auto;
 }
 .envStatusBadge[data-on="true"]::before {
@@ -314,17 +314,17 @@
 .fieldLabel {
   font-size: 11px;
   color: var(--h-text-2);
-  margin-bottom: 5px;
+  margin-bottom: 4px;
 }
 
 .fieldInput {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  padding: 7px 11px;
+  padding: 8px 12px;
   background: var(--h-bg-input);
   border: 1px solid var(--h-line);
-  border-radius: 6px;
+  border-radius: var(--h-radius-sm);
   color: var(--h-text);
   font-size: 12px;
   font-family: var(--h-font-cn);
@@ -335,7 +335,7 @@
 }
 
 .modelsList {
-  margin-top: 18px;
+  margin-top: 20px;
 }
 
 .modelsLabel {
@@ -347,7 +347,7 @@
 .modelTags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
 .modelTag {
@@ -355,8 +355,8 @@
   cursor: pointer;
   font-family: var(--h-font-mono);
   font-size: 11px;
-  padding: 4px 10px;
-  border-radius: 6px;
+  padding: 4px 12px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
   color: var(--h-text-2);
   border: 1px solid var(--h-line-soft);
@@ -371,7 +371,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 18px;
+  margin-top: 20px;
 }
 
 .modelPickerRow {
@@ -382,7 +382,7 @@
 }
 
 .modelPickerError {
-  margin-top: 6px;
+  margin-top: 8px;
   font-size: 11.5px;
   color: var(--h-warn, #c8782a);
   font-family: var(--h-font-cn);
@@ -391,8 +391,8 @@
 .modelsLoadError,
 .modelsLoadWarning {
   margin: 16px 0;
-  padding: 16px 18px;
-  border-radius: 14px;
+  padding: 16px 20px;
+  border-radius: var(--h-radius-sm);
   font-family: var(--h-font-cn);
 }
 
@@ -420,7 +420,7 @@
 
 .modelsLoadError p,
 .modelsLoadWarning p {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
   color: var(--h-text-2);
   font-size: 12px;
   line-height: 1.6;
@@ -431,7 +431,7 @@
 }
 
 .modelPickerHint {
-  margin-top: 6px;
+  margin-top: 8px;
   font-size: 11.5px;
   color: var(--h-text-3);
   font-family: var(--h-font-cn);
@@ -440,10 +440,10 @@
 .localContextWarning {
   margin-top: 8px;
   border: 1px solid color-mix(in srgb, var(--h-warn, #c8782a) 42%, var(--h-line));
-  border-radius: 10px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-warn-soft);
   color: var(--h-text-2);
-  padding: 9px 10px;
+  padding: 8px 12px;
   font-size: 11.5px;
   line-height: 1.55;
   font-family: var(--h-font-cn);
@@ -453,9 +453,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 6px 14px;
-  border-radius: 6px;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: var(--h-radius-sm);
   font-size: 12px;
   cursor: pointer;
   font-family: var(--h-font-cn);
@@ -510,7 +510,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
 .sectionTitleRow .heading {
@@ -520,9 +520,9 @@
 /* Appearance */
 .appearancePanel {
   overflow: hidden;
-  margin: 0 0 18px;
+  margin: 0 0 20px;
   border: 1px solid var(--h-line);
-  border-radius: 12px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-app);
 }
 
@@ -531,7 +531,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
-  padding: 16px 18px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--h-line-soft);
   background: var(--h-bg-pane);
 }
@@ -557,10 +557,10 @@
 .appearanceMeta {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
-  padding: 0 10px;
+  min-height: 24px;
+  padding: 0 12px;
   border: 1px solid var(--h-line);
-  border-radius: var(--h-r-pill);
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-chip);
   color: var(--h-text-3);
   font-family: var(--h-font-mono);
@@ -571,10 +571,10 @@
 
 .appearanceRow {
   display: grid;
-  grid-template-columns: minmax(190px, 260px) minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: minmax(192px, 260px) minmax(0, 1fr);
+  gap: 20px;
   align-items: start;
-  padding: 16px 18px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--h-line-soft);
 }
 
@@ -626,11 +626,11 @@
   min-width: 0;
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr);
-  gap: 10px;
+  gap: 12px;
   align-items: center;
-  padding: 10px 12px;
+  padding: 12px 12px;
   border: 1px solid var(--h-line);
-  border-radius: var(--h-r-lg);
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
   color: var(--h-text-2);
   cursor: pointer;
@@ -657,17 +657,17 @@
   position: relative;
   display: block;
   width: 48px;
-  height: 38px;
+  height: 40px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--skin-text) 18%, transparent);
-  border-radius: 9px;
+  border-radius: var(--h-radius-sm);
   background: var(--skin-bg);
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
 }
 
 .skinPreviewTop {
   display: block;
-  height: 9px;
+  height: 8px;
   background: var(--skin-pane);
   border-bottom: 1px solid color-mix(in srgb, var(--skin-text) 14%, transparent);
 }
@@ -675,13 +675,13 @@
 .skinPreviewBody {
   display: grid;
   gap: 4px;
-  padding: 6px 7px 0;
+  padding: 8px 8px 0;
 }
 
 .skinPreviewBody span {
   display: block;
-  height: 3px;
-  border-radius: var(--h-r-pill);
+  height: 4px;
+  border-radius: var(--h-radius-sm);
   background: color-mix(in srgb, var(--skin-text) 52%, var(--skin-soft));
 }
 
@@ -697,11 +697,11 @@
 
 .skinPreviewAccent {
   position: absolute;
-  right: 6px;
-  bottom: 5px;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
+  right: 8px;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--h-radius-sm);
   background: var(--skin-accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--skin-accent) 22%, transparent);
 }
@@ -709,7 +709,7 @@
 .skinCopy {
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: 4px;
 }
 
 .skinTitle {
@@ -731,9 +731,9 @@
 
 /* Toggle */
 .toggle {
-  width: 30px;
-  height: 17px;
-  border-radius: var(--h-r-pill);
+  width: 32px;
+  height: 16px;
+  border-radius: var(--h-radius-sm);
   border: 1px solid var(--h-line);
   background: var(--h-bg-chip);
   position: relative;
@@ -749,17 +749,17 @@
 
 .toggleThumb {
   position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 13px;
-  height: 13px;
+  top: 4px;
+  left: 4px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   transition: left 0.15s;
 }
 .toggle[data-on="true"] .toggleThumb {
-  left: 14px;
+  left: 16px;
 }
 
 /* Settings rows */
@@ -784,7 +784,7 @@
 .rowSub {
   font-size: 11px;
   color: var(--h-text-3);
-  margin-top: 3px;
+  margin-top: 4px;
 }
 
 .rowRight {
@@ -797,10 +797,10 @@
 .select {
   box-sizing: border-box;
   width: 100%;
-  padding: 5px 10px;
+  padding: 4px 12px;
   background: var(--h-bg-input);
   border: 1px solid var(--h-line);
-  border-radius: 6px;
+  border-radius: var(--h-radius-sm);
   color: var(--h-text);
   font-size: 12px;
   outline: none;
@@ -809,10 +809,10 @@
 }
 
 .input {
-  padding: 5px 10px;
+  padding: 4px 12px;
   background: var(--h-bg-input);
   border: 1px solid var(--h-line);
-  border-radius: 6px;
+  border-radius: var(--h-radius-sm);
   color: var(--h-text);
   font-size: 12px;
   outline: none;
@@ -828,14 +828,14 @@
   display: flex;
   gap: 4px;
   background: var(--h-bg-soft);
-  border-radius: var(--h-r-md);
-  padding: 2px;
+  border-radius: var(--h-radius-sm);
+  padding: 4px;
 }
 
 .radioBtn {
   padding: 4px 12px;
   border: none;
-  border-radius: var(--h-r-sm);
+  border-radius: var(--h-radius-sm);
   background: transparent;
   color: var(--h-text-2);
   font-size: 11.5px;
@@ -858,10 +858,10 @@
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 16px;
   align-items: center;
-  margin-bottom: 14px;
-  padding: 18px;
+  margin-bottom: 16px;
+  padding: 20px;
   border: 1px solid var(--h-line);
-  border-radius: 16px;
+  border-radius: var(--h-radius-sm);
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--h-bg-chip) 86%, transparent), transparent 62%),
     var(--h-bg-app);
@@ -877,7 +877,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 13px;
+  border-radius: var(--h-radius-sm);
   color: var(--h-text);
   background: var(--h-bg-pane);
   box-shadow: var(--h-shadow);
@@ -909,7 +909,7 @@
 }
 
 .aboutHero p {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   color: var(--h-text-2);
   font-size: 12px;
   line-height: 1.65;
@@ -918,9 +918,9 @@
 .aboutRuntimeTag {
   display: inline-block;
   margin-top: 8px;
-  padding: 2px 8px;
+  padding: 4px 8px;
   border: 1px solid var(--h-line);
-  border-radius: var(--h-r-sm);
+  border-radius: var(--h-radius-sm);
   color: var(--h-text-2);
   font-family: var(--h-font-mono);
   font-size: 11px;
@@ -931,7 +931,7 @@
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  margin: 12px 0 18px;
+  margin: 12px 0 20px;
 }
 
 .debugHeroActions {
@@ -944,7 +944,7 @@
 .debugHeroActions span {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   color: var(--h-text-3);
   font-size: 11px;
   white-space: nowrap;
@@ -953,7 +953,7 @@
 .aboutDebugGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 16px;
   align-items: start;
 }
 
@@ -969,195 +969,17 @@
 /* 关于页「桌面端更新」卡内按钮行：默认 margin-top 18 / bottom 0 偏大且不对称，
    这里收小并上下对称（仅作用于关于页，不影响共用该类的供应商设置等处）。 */
 .aboutDebugGrid .providerActions {
-  margin-top: 10px;
-  margin-bottom: 10px;
-}
-
-/* 「Designed by Wanderminds」署名页脚：居中、克制，logo 单色随 currentColor
-   适配主题；静置取弱化文本色，悬停整体提亮并浮起浅底。 */
-.wandermindsFooter {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  margin-top: 10px;
-  padding-top: 14px;
-}
-
-.wandermindsCopyright {
-  margin: 0;
-  color: var(--h-text-3);
-  font-size: 10.5px;
-  letter-spacing: 0.05em;
-  opacity: 0.7;
-}
-
-.wandermindsCredit {
-  display: inline-flex;
-  align-items: center;
-  gap: 11px;
-  padding: 9px 18px;
-  border-radius: 12px;
-  color: var(--h-text-3);
-  text-decoration: none;
-  transition: color 0.16s ease, background 0.16s ease;
-}
-
-.wandermindsCredit:hover {
-  color: var(--h-text);
-  background: var(--h-bg-soft);
-}
-
-.wandermindsCreditLabel {
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.03em;
-}
-
-.wandermindsCreditLogo {
-  display: block;
-  height: 30px;
-  width: auto;
-  color: inherit;
-}
-
-.thanksText {
-  display: grid;
-  gap: 8px;
-  color: var(--h-text-2);
-  font-size: 12px;
-  line-height: 1.7;
-}
-
-.thanksText p {
-  margin: 0;
-}
-
-.contactLayout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 18px;
-  align-items: start;
-}
-
-/* 微信 + 飞书两张群二维码并排（飞书在微信右侧）；窄屏可换行。 */
-.contactQrGroup {
-  display: flex;
-  gap: 14px;
-  align-items: start;
-  flex-wrap: wrap;
-}
-
-.wechatQrPanel {
-  display: grid;
-  justify-items: center;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--h-line-soft);
-  border-radius: 12px;
-  background: var(--h-bg-pane);
-}
-
-.wechatQrPanel img {
-  display: block;
-  width: 148px;
-  height: 148px;
-  border-radius: 8px;
-  background: #fff;
-}
-
-.wechatQrPanel p {
-  margin: 0;
-  color: var(--h-text-2);
-  font-size: 11.5px;
-  line-height: 1.55;
-  text-align: center;
-}
-
-.contactLines {
-  display: grid;
-  gap: 6px;
-  color: var(--h-text);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.businessContactField > span {
-  margin-bottom: 10px;
-}
-
-.businessContactLines {
-  display: grid;
-  gap: 2px;
-}
-
-.contactCopyLine {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-  line-height: 1.55;
-}
-
-.contactCopyLabel {
-  min-width: 0;
-  color: var(--h-text-2);
-  font-size: 12px;
-}
-
-.contactCopyValue {
-  color: var(--h-text);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: inherit;
-}
-
-:global(#root) .contactCopyValue {
-  -webkit-user-select: text;
-  user-select: text;
-  cursor: text;
-}
-
-.contactCopyButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 19px;
-  padding: 0 7px;
-  border: 1px solid var(--h-line-soft);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--h-text-3);
-  font-family: var(--h-font-cn);
-  font-size: 10.5px;
-  line-height: 1;
-  cursor: pointer;
-  transform: translateY(-0.02em);
-}
-
-.contactCopyButton:hover {
-  border-color: color-mix(in srgb, var(--h-accent) 38%, var(--h-line));
-  color: var(--h-accent);
-}
-
-.contactCopyButton[data-copy-state="copied"] {
-  border-color: color-mix(in srgb, var(--h-ok) 42%, var(--h-line));
-  background: var(--h-ok-soft);
-  color: var(--h-ok);
-}
-
-.contactCopyButton[data-copy-state="error"] {
-  border-color: color-mix(in srgb, var(--h-err) 42%, var(--h-line));
-  color: var(--h-err);
+  margin-top: 12px;
+  margin-bottom: 12px;
 }
 
 .debugCard {
   display: inline-block;
   width: 100%;
   min-width: 0;
-  margin: 0 0 14px;
+  margin: 0 0 16px;
   border: 1px solid var(--h-line);
-  border-radius: 14px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-app);
   padding: 16px;
   break-inside: avoid;
@@ -1174,8 +996,8 @@
 .debugCardHeader {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
 .debugCardIcon {
@@ -1185,7 +1007,7 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  border-radius: 9px;
+  border-radius: var(--h-radius-sm);
   color: var(--h-text);
   background: var(--h-bg-chip);
 }
@@ -1198,17 +1020,17 @@
 }
 
 .debugCardHeader p {
-  margin: 3px 0 0;
+  margin: 4px 0 0;
   color: var(--h-text-3);
   font-size: 11.5px;
   line-height: 1.45;
 }
 
 .commandBlock {
-  margin-top: 14px;
+  margin-top: 16px;
   overflow: hidden;
   border: 1px solid var(--h-line-soft);
-  border-radius: 10px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
 }
 
@@ -1216,8 +1038,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 9px 11px;
+  gap: 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--h-line-soft);
   color: var(--h-text-2);
   font-size: 11px;
@@ -1226,7 +1048,7 @@
 .commandBlockHeader span {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .inlineCopyButton {
@@ -1251,9 +1073,9 @@
 
 .commandBlock code {
   display: block;
-  max-height: 118px;
+  max-height: 120px;
   overflow: auto;
-  padding: 11px;
+  padding: 12px;
   color: var(--h-text);
   font-family: var(--h-font-mono);
   font-size: 11px;
@@ -1286,7 +1108,7 @@
 
 .runtimeField > span {
   display: block;
-  margin-bottom: 3px;
+  margin-bottom: 4px;
   color: var(--h-text-3);
   font-size: 10.5px;
 }
@@ -1330,17 +1152,17 @@
 .platformList {
   display: grid;
   gap: 8px;
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 .platformItem {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 4px 10px;
+  gap: 4px 12px;
   align-items: center;
-  padding: 9px 10px;
+  padding: 8px 12px;
   border: 1px solid var(--h-line-soft);
-  border-radius: 9px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
   color: var(--h-text-2);
   font-size: 12px;
@@ -1361,11 +1183,11 @@
 .envCheckItem {
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 8px;
   min-width: 0;
-  padding: 12px 14px;
+  padding: 12px 16px;
   border: 1px solid var(--h-line-soft);
-  border-radius: 10px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
   color: var(--h-text-2);
 }
@@ -1378,7 +1200,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 14px;
+  gap: 16px;
   min-width: 0;
 }
 
@@ -1387,7 +1209,7 @@
   align-items: center;
   min-width: 0;
   min-height: 24px;
-  gap: 7px;
+  gap: 8px;
   color: var(--h-text);
   font-size: 13px;
   font-weight: 600;
@@ -1406,8 +1228,8 @@
 
 .envCheckIcon svg {
   display: block;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   stroke-width: 2;
 }
 
@@ -1438,7 +1260,7 @@
   justify-content: center;
   box-sizing: border-box;
   height: 20px;
-  border-radius: var(--h-r-pill);
+  border-radius: var(--h-radius-sm);
   font-size: 11px;
   font-weight: 600;
   line-height: 1;
@@ -1447,7 +1269,7 @@
 
 .envRequiredTag {
   flex: 0 0 auto;
-  padding: 0 7px;
+  padding: 0 8px;
   border: 1px solid color-mix(in srgb, var(--h-accent) 34%, var(--h-line));
   color: var(--h-accent);
   background: color-mix(in srgb, var(--h-accent-soft) 70%, transparent);
@@ -1456,7 +1278,7 @@
 .envStatusTag {
   flex: 0 0 auto;
   min-width: 48px;
-  padding: 0 10px;
+  padding: 0 12px;
   border: 1px solid transparent;
 }
 
@@ -1485,7 +1307,7 @@
 }
 
 .envCheckSummary {
-  margin: -2px 0 0;
+  margin: -4px 0 0;
   color: var(--h-text-2);
   font-size: 12px;
   line-height: 1.55;
@@ -1500,8 +1322,8 @@
 }
 
 .envCheckDetails {
-  margin-top: 2px;
-  padding-top: 9px;
+  margin-top: 4px;
+  padding-top: 8px;
   border-top: 1px solid var(--h-line-soft);
 }
 
@@ -1517,9 +1339,9 @@
 
 .commitItem {
   min-width: 0;
-  padding: 10px 11px;
+  padding: 12px 12px;
   border: 1px solid var(--h-line-soft);
-  border-radius: 10px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
 }
 
@@ -1533,7 +1355,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 5px;
+  margin-bottom: 4px;
 }
 
 .commitHash code {
@@ -1592,7 +1414,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
   margin-bottom: 12px;
   color: var(--h-text-2);
   font-size: 11.5px;
@@ -1609,9 +1431,9 @@
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 16px;
-  padding: 16px 18px;
+  padding: 16px 20px;
   border: 1px solid color-mix(in srgb, var(--h-accent) 38%, var(--h-line));
-  border-radius: 14px;
+  border-radius: var(--h-radius-sm);
   background: color-mix(in srgb, var(--h-accent) 9%, var(--h-bg-pane));
   box-shadow: 0 12px 28px color-mix(in srgb, #000 8%, transparent);
 }
@@ -1636,7 +1458,7 @@
   font-size: 11.5px;
   font-weight: 700;
   white-space: nowrap;
-  padding-top: 2px;
+  padding-top: 4px;
 }
 
 .modelsSettings {
@@ -1649,11 +1471,11 @@
   display: inline-flex;
   align-self: flex-start;
   gap: 0;
-  margin: 0 0 18px;
+  margin: 0 0 20px;
   border: 1px solid var(--h-line);
-  border-radius: 12px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
-  padding: 3px;
+  padding: 4px;
 }
 
 /* 自定义服务商表单的「接口格式」分段选择（OpenAI 兼容 / Anthropic）。 */
@@ -1661,17 +1483,17 @@
   display: inline-flex;
   gap: 0;
   border: 1px solid var(--h-line);
-  border-radius: 10px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
-  padding: 3px;
+  padding: 4px;
 }
 .apiModeToggle button {
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--h-radius-sm);
   background: transparent;
   color: var(--h-text-2);
   cursor: pointer;
-  padding: 6px 12px;
+  padding: 8px 12px;
   font-family: var(--h-font-cn);
   font-size: 12px;
   font-weight: 600;
@@ -1689,15 +1511,15 @@
 .modelTopTab {
   min-width: 132px;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--h-radius-sm);
   background: transparent;
   color: var(--h-text-2);
   cursor: pointer;
   display: inline-flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 3px;
-  padding: 9px 14px;
+  gap: 4px;
+  padding: 8px 16px;
   font-family: var(--h-font-cn);
   font-size: 13px;
   font-weight: 650;
@@ -1728,7 +1550,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
-  margin-bottom: 18px;
+  margin-bottom: 20px;
 }
 
 .modelsSectionHeader .desc {
@@ -1751,7 +1573,7 @@
 .providerPresetLayout {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 20px;
   min-width: 0;
   width: 100%;
 }
@@ -1760,7 +1582,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .providerGridHeader {
@@ -1798,10 +1620,10 @@
 .providerReviewBanner {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
   padding: 8px 12px;
-  border-radius: 10px;
+  border-radius: var(--h-radius-sm);
   border: 1px solid color-mix(in srgb, var(--h-accent) 26%, var(--h-line));
   background: color-mix(in srgb, var(--h-accent) 7%, var(--h-bg-pane));
   color: var(--h-text-2);
@@ -1831,7 +1653,7 @@
   width: min(520px, calc(100vw - 32px));
   max-height: min(640px, calc(100vh - 48px));
   border: 1px solid var(--h-line);
-  border-radius: 18px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-input);
   box-shadow:
     0 24px 72px rgba(31, 30, 27, 0.18),
@@ -1846,7 +1668,7 @@
   justify-content: space-between;
   gap: 16px;
   border-bottom: 1px solid var(--h-line-soft);
-  padding: 14px 18px;
+  padding: 16px 20px;
 }
 
 .customProviderTitleBar h2 {
@@ -1861,7 +1683,7 @@
   width: 28px;
   height: 28px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--h-radius-sm);
   background: transparent;
   color: var(--h-text-2);
   font-size: 18px;
@@ -1878,8 +1700,8 @@
 
 .customProviderBody {
   display: grid;
-  gap: 10px;
-  padding: 16px 18px 4px;
+  gap: 12px;
+  padding: 16px 20px 4px;
   overflow-y: auto;
 }
 
@@ -1893,7 +1715,7 @@
 
 .localProviderContextNotice {
   border: 1px solid color-mix(in srgb, var(--h-warn, #c8782a) 42%, var(--h-line));
-  border-radius: 14px;
+  border-radius: var(--h-radius-sm);
   background:
     radial-gradient(circle at 8% -10%, color-mix(in srgb, var(--h-warn, #c8782a) 16%, transparent), transparent 42%),
     var(--h-warn-soft);
@@ -1912,12 +1734,12 @@
 }
 
 .localProviderContextNotice p {
-  margin: 0 0 6px;
+  margin: 0 0 8px;
 }
 
 .localProviderDocLinks {
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
 .localProviderDocLinkRow {
@@ -1943,10 +1765,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 19px;
-  padding: 0 7px;
+  height: 20px;
+  padding: 0 8px;
   border: 1px solid var(--h-line-soft);
-  border-radius: 6px;
+  border-radius: var(--h-radius-sm);
   background: transparent;
   color: var(--h-text-2);
   font-size: 11px;
@@ -1973,19 +1795,19 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  margin: 2px 0 6px;
+  margin: 4px 0 8px;
 }
 
 .localProviderCard {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 5px;
+  gap: 4px;
   border: 1px solid var(--h-line-soft);
-  border-radius: 12px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
   color: var(--h-text-2);
-  padding: 10px;
+  padding: 12px;
   text-align: left;
   cursor: pointer;
 }
@@ -2020,18 +1842,18 @@
   justify-content: flex-end;
   gap: 8px;
   border-top: 1px solid var(--h-line-soft);
-  padding: 12px 18px;
+  padding: 12px 20px;
 }
 
 .providerSearchInput {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  height: 34px;
-  padding: 6px 12px;
+  height: 36px;
+  padding: 8px 12px;
   background: var(--h-bg-input);
   border: 1px solid var(--h-line);
-  border-radius: var(--h-r-md);
+  border-radius: var(--h-radius-sm);
   color: var(--h-text);
   font-size: 12px;
   font-family: var(--h-font-cn);
@@ -2048,9 +1870,9 @@
   display: grid;
   /* 最小卡宽 160→210：常规窗口宽下约 6 列（原来挤到 8 列太密），保持
      随宽度自适应。 */
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(212px, 1fr));
   gap: 12px;
-  padding: 8px 6px;
+  padding: 8px 8px;
 }
 
 /* 注意：类名用 presetCard* 前缀 —— 本文件底部的高级环境变量区块已占用
@@ -2060,13 +1882,13 @@
   /* 返佣星水印（presetCardBadge）探出下缘的部分由卡片圆角裁掉。 */
   overflow: hidden;
   min-width: 0;
-  min-height: 54px;
+  min-height: 56px;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 11px 14px;
+  gap: 8px;
+  padding: 12px 16px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-chip);
   color: var(--h-text);
   cursor: pointer;
@@ -2102,7 +1924,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-soft);
   color: var(--h-text-2);
   font-size: 11px;
@@ -2118,7 +1940,7 @@
   flex: 0 0 auto;
   width: 20px;
   height: 20px;
-  border-radius: 5px;
+  border-radius: var(--h-radius-sm);
   object-fit: contain;
 }
 
@@ -2140,12 +1962,12 @@
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .presetCardDot {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--h-ok, #3c9a5f);
 }
@@ -2161,9 +1983,9 @@
    是目录默认不标注，避免 30+ 张卡片全是角标。 */
 .presetCardProtoTag {
   flex: 0 0 auto;
-  padding: 1px 5px;
+  padding: 4px 4px;
   border: 1px solid var(--h-line);
-  border-radius: var(--h-r-pill);
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-soft);
   color: var(--h-text-3);
   font-size: 9px;
@@ -2176,8 +1998,8 @@
   /* 返佣标记 = 卡片右下角探出的半颗星水印：低透明度大字符，下半由
      卡片 overflow:hidden 裁掉，只露上半。 */
   position: absolute;
-  bottom: -14px;
-  right: -6px;
+  bottom: -16px;
+  right: -8px;
   color: color-mix(in srgb, var(--h-warn, #d4920a) 10%, transparent);
   font-size: 48px;
   line-height: 1;
@@ -2211,7 +2033,7 @@
 
 .providerPresetEmpty {
   grid-column: 1 / -1;
-  padding: 18px 12px;
+  padding: 20px 12px;
   color: var(--h-text-3);
   font-size: 12px;
 }
@@ -2261,7 +2083,7 @@ button.providerWebsiteButton:hover {
 .providerPresetPanel {
   min-width: 0;
   border: 1px solid var(--h-line);
-  border-radius: 8px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
   padding: 20px;
 }
@@ -2275,7 +2097,7 @@ button.providerWebsiteButton:hover {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 22px;
+  gap: 24px;
   color: var(--h-text);
 }
 
@@ -2286,8 +2108,8 @@ button.providerWebsiteButton:hover {
 }
 
 .providerPanelSpinner {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border: 2px solid var(--h-accent);
   border-right-color: transparent;
   border-radius: 50%;
@@ -2317,7 +2139,7 @@ button.providerWebsiteButton:hover {
 .providerPanelSkeletonLine {
   display: block;
   height: 40px;
-  border-radius: 10px;
+  border-radius: var(--h-radius-sm);
   background:
     linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.24), transparent),
     var(--h-bg-soft);
@@ -2348,7 +2170,7 @@ button.providerWebsiteButton:hover {
   justify-content: space-between;
   gap: 16px;
   align-items: flex-start;
-  margin-bottom: 22px;
+  margin-bottom: 24px;
 }
 
 .providerPresetHeader > div {
@@ -2367,7 +2189,7 @@ button.providerWebsiteButton:hover {
 .providerFormGrid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 14px;
+  gap: 16px;
   min-width: 0;
 }
 
@@ -2394,7 +2216,7 @@ button.providerWebsiteButton:hover {
 }
 
 .providerPresetPanel .providerActions {
-  margin-top: 18px;
+  margin-top: 20px;
 }
 
 .auxModels {
@@ -2407,12 +2229,12 @@ button.providerWebsiteButton:hover {
 .auxIntroCard {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
-  gap: 18px;
+  gap: 20px;
   align-items: start;
   border: 1px solid var(--h-line);
-  border-radius: 14px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
-  padding: 18px;
+  padding: 20px;
 }
 
 .auxIntroTitle {
@@ -2435,7 +2257,7 @@ button.providerWebsiteButton:hover {
 
 .auxImageModeBox {
   border: 1px solid var(--h-line-soft);
-  border-radius: 10px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-app);
   padding: 12px;
 }
@@ -2468,12 +2290,12 @@ button.providerWebsiteButton:hover {
 .auxTaskGroup {
   overflow: hidden;
   border: 1px solid var(--h-line);
-  border-radius: 10px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
 }
 
 .auxTaskGroupTitle {
-  padding: 10px 12px;
+  padding: 12px 12px;
   border-bottom: 1px solid var(--h-line-soft);
   color: var(--h-text-3);
   font-size: 11px;
@@ -2491,7 +2313,7 @@ button.providerWebsiteButton:hover {
   cursor: pointer;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
   padding: 12px;
   text-align: left;
@@ -2511,7 +2333,7 @@ button.providerWebsiteButton:hover {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 .auxTaskName {
@@ -2531,9 +2353,9 @@ button.providerWebsiteButton:hover {
 }
 
 .auxTaskState {
-  max-width: 150px;
+  max-width: 152px;
   border: 1px solid var(--h-line-soft);
-  border-radius: var(--h-r-pill);
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-app);
   color: var(--h-text-2);
   font-family: var(--h-font-mono);
@@ -2551,7 +2373,7 @@ button.providerWebsiteButton:hover {
 .auxEditorPanel {
   min-width: 0;
   border: 1px solid var(--h-line);
-  border-radius: 12px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
   padding: 20px;
 }
@@ -2561,7 +2383,7 @@ button.providerWebsiteButton:hover {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 18px;
+  margin-bottom: 20px;
 }
 
 .auxEditorTitle {
@@ -2571,7 +2393,7 @@ button.providerWebsiteButton:hover {
 }
 
 .auxEditorSubtitle {
-  margin-top: 5px;
+  margin-top: 4px;
   color: var(--h-text-2);
   font-size: 12px;
   line-height: 1.6;
@@ -2579,9 +2401,9 @@ button.providerWebsiteButton:hover {
 
 .auxNotice,
 .auxWarning {
-  margin-top: 14px;
-  border-radius: 10px;
-  padding: 10px 12px;
+  margin-top: 16px;
+  border-radius: var(--h-radius-sm);
+  padding: 12px 12px;
   font-size: 12px;
   line-height: 1.65;
 }
@@ -2606,7 +2428,7 @@ button.providerWebsiteButton:hover {
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 0;
   font-family: var(--h-font-cn);
   font-size: 12px;
@@ -2622,10 +2444,10 @@ button.providerWebsiteButton:hover {
 .auxAdvancedGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 14px;
+  gap: 16px;
+  margin-top: 16px;
   border-top: 1px solid var(--h-line-soft);
-  padding-top: 14px;
+  padding-top: 16px;
 }
 
 .auxExtraBodyField {
@@ -2638,21 +2460,21 @@ button.providerWebsiteButton:hover {
   min-height: 132px;
   resize: vertical;
   border: 1px solid var(--h-line);
-  border-radius: 8px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-input);
   color: var(--h-text);
   font-family: var(--h-font-mono);
   font-size: 12px;
   line-height: 1.6;
   outline: none;
-  padding: 10px 12px;
+  padding: 12px 12px;
 }
 .auxJsonArea:focus {
   border-color: var(--h-accent);
 }
 
 .auxSavedHint {
-  margin-top: 10px;
+  margin-top: 12px;
   color: var(--h-ok);
   font-size: 12px;
   font-family: var(--h-font-cn);
@@ -2660,7 +2482,7 @@ button.providerWebsiteButton:hover {
 
 @media (max-width: 1180px) {
   .content {
-    padding: 22px 24px 36px;
+    padding: 24px 24px 36px;
   }
 
   .aboutDebugGrid {
@@ -2700,7 +2522,7 @@ button.providerWebsiteButton:hover {
   }
 
   .content {
-    padding: 18px 16px 30px;
+    padding: 20px 16px 32px;
   }
 
   .aboutHero {
@@ -2717,22 +2539,10 @@ button.providerWebsiteButton:hover {
     align-items: flex-start;
   }
 
-  .contactLayout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .wechatQrPanel {
-    justify-items: flex-start;
-  }
-
-  .wechatQrPanel p {
-    text-align: left;
-  }
-
   .providerPresetHeader {
     align-items: stretch;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
   }
 
   .providerPresetHeader .statusBadge {
@@ -2782,9 +2592,9 @@ button.providerWebsiteButton:hover {
 }
 
 .advancedEnvBlock {
-  margin-top: 18px;
+  margin-top: 20px;
   border: 1px solid var(--h-line);
-  border-radius: 8px;
+  border-radius: var(--h-radius-sm);
   overflow: hidden;
 }
 
@@ -2792,17 +2602,17 @@ button.providerWebsiteButton:hover {
 .providerCard {
   border: 1px solid var(--h-line);
   border-radius: 0;
-  margin-bottom: -1px;
+  margin-bottom: -4px;
 }
 .providerCard:first-child {
-  border-radius: 8px 8px 0 0;
+  border-radius: var(--h-radius-sm);
 }
 .providerCard:last-child {
-  border-radius: 0 0 8px 8px;
+  border-radius: var(--h-radius-sm);
   margin-bottom: 0;
 }
 .providerCard:only-child {
-  border-radius: 8px;
+  border-radius: var(--h-radius-sm);
 }
 
 .providerCardHeader {
@@ -2810,7 +2620,7 @@ button.providerWebsiteButton:hover {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 10px 14px;
+  padding: 12px 16px;
   border: none;
   background: transparent;
   cursor: pointer;
@@ -2849,7 +2659,7 @@ button.providerWebsiteButton:hover {
 
 .providerCardBody {
   border-top: 1px solid var(--h-line-soft);
-  padding: 4px 14px;
+  padding: 4px 16px;
 }
 
 /* Config tabs (wrapping category chips; avoid hidden horizontal overflow) */
@@ -2857,7 +2667,7 @@ button.providerWebsiteButton:hover {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 0 0 14px;
+  padding: 0 0 16px;
   margin: 0 0 16px;
   overflow: visible;
   border-bottom: 1px solid var(--h-line-soft);
@@ -2866,11 +2676,11 @@ button.providerWebsiteButton:hover {
 .configTab {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-height: 32px;
   padding: 0 12px;
   border: 1px solid var(--h-line);
-  border-radius: var(--h-r-pill);
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-chip);
   color: var(--h-text-3);
   font-size: 12px;
@@ -2910,7 +2720,7 @@ button.providerWebsiteButton:hover {
 .filterGroup {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .filterLabel {
@@ -2921,16 +2731,16 @@ button.providerWebsiteButton:hover {
 
 .segmented {
   display: flex;
-  gap: 1px;
-  padding: 2px;
+  gap: 4px;
+  padding: 4px;
   background: var(--h-bg-soft);
-  border-radius: var(--h-r-sm);
+  border-radius: var(--h-radius-sm);
 }
 
 .segmentBtn {
-  padding: 3px 8px;
+  padding: 4px 8px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--h-radius-sm);
   background: transparent;
   color: var(--h-text-2);
   font-size: 10.5px;
@@ -2952,7 +2762,7 @@ button.providerWebsiteButton:hover {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .autoRefreshLabel {
@@ -2966,8 +2776,8 @@ button.providerWebsiteButton:hover {
 
 .liveDot {
   display: inline-block;
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--h-ok);
 }
@@ -2976,7 +2786,7 @@ button.providerWebsiteButton:hover {
 .logBlock {
   background: var(--h-bg-code);
   border: 1px solid var(--h-line-soft);
-  border-radius: 8px;
+  border-radius: var(--h-radius-sm);
   padding: 12px;
   max-height: 400px;
   overflow-y: auto;
@@ -2991,7 +2801,7 @@ button.providerWebsiteButton:hover {
   word-break: break-all;
   padding: 0 4px;
   margin: 0 -4px;
-  border-radius: 2px;
+  border-radius: var(--h-radius-sm);
   transition: background 0.1s;
 }
 .logLine:hover {
@@ -3032,12 +2842,12 @@ button.providerWebsiteButton:hover {
 
 @media (max-width: 720px) {
   .appearancePanel {
-    border-radius: 12px;
+    border-radius: var(--h-radius-sm);
   }
 
   .appearanceHeader,
   .appearanceRow {
-    padding: 18px;
+    padding: 20px;
   }
 
   .skinPicker {
@@ -3049,7 +2859,7 @@ button.providerWebsiteButton:hover {
 .approvalModePanel {
   margin-top: 28px;
   border: 1px solid var(--h-line);
-  border-radius: var(--h-r-md);
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
   box-shadow: var(--h-shadow);
   padding: 16px;
@@ -3063,14 +2873,14 @@ button.providerWebsiteButton:hover {
 
 .approvalModeHead {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: flex-start;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .approvalModeHead svg {
   color: var(--h-accent);
-  margin-top: 2px;
+  margin-top: 4px;
   flex-shrink: 0;
 }
 
@@ -3091,7 +2901,7 @@ button.providerWebsiteButton:hover {
 .approvalModeOptions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .approvalModeOption {
@@ -3102,7 +2912,7 @@ button.providerWebsiteButton:hover {
   min-height: 132px;
   padding: 12px;
   border: 1px solid var(--h-line-soft);
-  border-radius: var(--h-r-md);
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-soft);
   color: var(--h-text-2);
   text-align: left;
@@ -3136,7 +2946,7 @@ button.providerWebsiteButton:hover {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   color: var(--h-text);
   font-size: 13px;
   font-weight: 650;
@@ -3155,8 +2965,8 @@ button.providerWebsiteButton:hover {
 }
 
 .approvalModeBadge {
-  padding: 2px 7px;
-  border-radius: var(--h-r-pill);
+  padding: 4px 8px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-chip);
   color: var(--h-text-3);
   font-size: 10.5px;
@@ -3166,7 +2976,7 @@ button.providerWebsiteButton:hover {
 .approvalModeFooter {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
   margin-top: 12px;
   color: var(--h-text-3);
@@ -3180,7 +2990,7 @@ button.providerWebsiteButton:hover {
 }
 
 .approvalModeError {
-  margin-top: 10px;
+  margin-top: 12px;
   color: var(--h-err);
   font-size: 12px;
   line-height: 1.5;
@@ -3196,7 +3006,7 @@ button.providerWebsiteButton:hover {
 .connModeGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
   margin: 4px 0 20px;
 }
 
@@ -3210,10 +3020,10 @@ button.providerWebsiteButton:hover {
   display: flex;
   gap: 8px;
   align-items: flex-start;
-  margin-bottom: 18px;
-  padding: 10px 12px;
+  margin-bottom: 20px;
+  padding: 12px 12px;
   border: 1px solid color-mix(in srgb, var(--h-err) 40%, var(--h-line));
-  border-radius: var(--h-r-md);
+  border-radius: var(--h-radius-sm);
   background: color-mix(in srgb, var(--h-err) 8%, transparent);
   color: var(--h-err);
   font-size: 12px;
@@ -3221,7 +3031,7 @@ button.providerWebsiteButton:hover {
 }
 
 .connEnvWarn svg {
-  margin-top: 2px;
+  margin-top: 4px;
   flex-shrink: 0;
 }
 
@@ -3232,8 +3042,8 @@ button.providerWebsiteButton:hover {
 .connProbe {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 6px;
+  gap: 8px;
+  margin-top: 8px;
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--h-text-3);
@@ -3259,8 +3069,8 @@ button.providerWebsiteButton:hover {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  margin-top: 22px;
+  gap: 12px;
+  margin-top: 24px;
 }
 
 .connFooterSpacer {
@@ -3268,7 +3078,7 @@ button.providerWebsiteButton:hover {
 }
 
 .connResult {
-  margin-top: 14px;
+  margin-top: 16px;
   font-size: 12px;
   line-height: 1.55;
   color: var(--h-text-3);
@@ -3291,7 +3101,7 @@ button.providerWebsiteButton:hover {
 .dangerZone {
   margin-top: 28px;
   border: 1px solid color-mix(in srgb, var(--h-err) 45%, var(--h-line));
-  border-radius: var(--h-r-md);
+  border-radius: var(--h-radius-sm);
   background: color-mix(in srgb, var(--h-err) 5%, transparent);
   padding: 4px 16px 8px;
 }
@@ -3299,7 +3109,7 @@ button.providerWebsiteButton:hover {
 .dangerZoneHead {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-size: 12px;
   font-weight: 600;
   color: var(--h-err);
@@ -3316,15 +3126,15 @@ button.providerWebsiteButton:hover {
 .dangerActions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .dangerBadge,
 .dangerBadgePending {
   font-size: 11px;
   font-weight: 600;
-  padding: 2px 8px;
-  border-radius: var(--h-r-pill);
+  padding: 4px 8px;
+  border-radius: var(--h-radius-sm);
   white-space: nowrap;
 }
 
@@ -3340,8 +3150,8 @@ button.providerWebsiteButton:hover {
 
 /* Confirmation dialog */
 .dangerDialog {
-  padding: 20px 22px 18px;
-  gap: 14px;
+  padding: 20px 24px 20px;
+  gap: 16px;
   max-width: min(440px, calc(100vw - 32px));
 }
 
@@ -3373,8 +3183,8 @@ button.providerWebsiteButton:hover {
 }
 
 .dangerConfirmRow input {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   accent-color: var(--h-err);
   cursor: pointer;
 }
@@ -3383,7 +3193,7 @@ button.providerWebsiteButton:hover {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 .assistantProfileControl,
@@ -3403,9 +3213,9 @@ button.providerWebsiteButton:hover {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  padding: 7px 10px;
+  padding: 8px 12px;
   border: 1px solid var(--h-line);
-  border-radius: 8px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-input);
   color: var(--h-text);
   font-family: var(--h-font-cn);
@@ -3426,7 +3236,7 @@ button.providerWebsiteButton:hover {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--h-line);
-  border-radius: 8px;
+  border-radius: var(--h-radius-sm);
   background: var(--h-bg-pane);
   color: var(--h-text-3);
   cursor: pointer;
@@ -3443,8 +3253,8 @@ button.providerWebsiteButton:hover {
 
 .assistantAvatarPreview,
 .assistantAvatarPlaceholder {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   flex: 0 0 auto;
   border-radius: 50%;
   border: 1px solid var(--h-line);

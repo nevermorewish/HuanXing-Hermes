@@ -1,6 +1,5 @@
 import { cjk } from "@streamdown/cjk";
 import { createMathPlugin } from "@streamdown/math";
-import { mermaid } from "@streamdown/mermaid";
 import {
   createContext,
   memo,
@@ -13,9 +12,11 @@ import {
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema, type Options as SanitizeSchema } from "rehype-sanitize";
 import { harden } from "rehype-harden";
-import { Streamdown } from "streamdown";
+import { Streamdown, type DiagramPlugin } from "streamdown";
+import type { MermaidConfig } from "mermaid";
 import "katex/dist/katex.min.css";
 import { MessageImage } from "./message-image";
+import { isImageReference } from "@/lib/message-images";
 import s from "./markdown-renderer.module.css";
 
 interface MarkdownTextProps {
@@ -37,10 +38,54 @@ const ALLOWED_EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:"
 const BLOCKED_EXTERNAL_PROTOCOLS = /^(?:javascript|data|file|vbscript|tauri):/i;
 const KatexSpanContext = createContext(false);
 
+// Structural match for streamdown's (non-exported) MermaidInstance interface.
+interface LazyMermaidInstance {
+  initialize(config?: MermaidConfig): void;
+  render(id: string, source: string): Promise<{ svg: string }>;
+}
+
+// The mermaid diagram plugin is a lazy proxy: ``@streamdown/mermaid`` eagerly
+// imports the full ``mermaid`` library (~2.8 MB minified), so importing it here
+// would drag ~2.8 MB into every chat render — even for messages with no
+// diagrams. The proxy registers the same DiagramPlugin shape; streamdown only
+// calls ``getMermaid()`` when a mermaid code fence actually renders, which
+// triggers the dynamic import at that moment (the diagram then appears after a
+// short load — streamdown shows a "Loading diagram…" skeleton meanwhile).
+const lazyMermaidPlugin: DiagramPlugin = (() => {
+  let loading: Promise<typeof import("@streamdown/mermaid")> | null = null;
+  const load = () => (loading ??= import("@streamdown/mermaid"));
+  return {
+    name: "mermaid",
+    type: "diagram",
+    language: "mermaid",
+    getMermaid(config?: MermaidConfig) {
+      let real: LazyMermaidInstance | null = null;
+      const ensure = async () => {
+        const mod = await load();
+        real = mod.mermaid.getMermaid(config);
+        return real;
+      };
+      void ensure();
+      return {
+        initialize(cfg?: MermaidConfig) {
+          void load().then((mod) => {
+            const inst = mod.mermaid.getMermaid(cfg);
+            if (cfg) inst.initialize(cfg);
+          });
+        },
+        async render(id: string, source: string) {
+          const inst = real ?? (await ensure());
+          return inst.render(id, source);
+        },
+      };
+    },
+  };
+})();
+
 const streamdownPlugins = {
   cjk,
   math: createMathPlugin({ singleDollarTextMath: true }),
-  mermaid,
+  mermaid: lazyMermaidPlugin,
 };
 
 const streamdownLinkSafety: ComponentProps<typeof Streamdown>["linkSafety"] = {
@@ -58,6 +103,8 @@ const streamdownControls: ComponentProps<typeof Streamdown>["controls"] = {
 const streamdownTranslations: ComponentProps<typeof Streamdown>["translations"] = {
   copyCode: "复制代码",
 };
+
+const MARKDOWN_IMAGE_DEST_RE = /!\[([^\]\n]*)\]\(\s*([^<\n)]*?\.(?:apng|avif|bmp|gif|heic|heif|jpe?g|png|tiff?|webp)(?:[?#][^\n)]*)?)\s*\)/gi;
 
 const markdownSanitizeSchema: SanitizeSchema = {
   ...defaultSchema,
@@ -193,6 +240,30 @@ function normalizeTexMathDelimiters(text: string): string {
   }
 
   return result;
+}
+
+function toMarkdownSafeImageDestination(url: string): string {
+  // Windows absolute paths (D:\foo or D:/foo) parse as an unknown URL scheme
+  // ("d:") in rehype-harden and get blocked → "[Image blocked]" before the
+  // local-path handling in MessageImage ever runs. Convert them to a
+  // POSIX-style /D:/foo so the harden pass keeps them as relative paths;
+  // MessageImage maps them back to the real path in normalizeLocalFilePath.
+  const drive = url.match(/^([A-Za-z]):[\\/](.*)$/);
+  if (!drive) return url;
+  return `/${drive[1]}:/${drive[2].replace(/\\/g, "/")}`;
+}
+
+function normalizeMarkdownImageDestinations(text: string): string {
+  return text.replace(MARKDOWN_IMAGE_DEST_RE, (match, alt: string, rawUrl: string) => {
+    const url = rawUrl.trim();
+    if (!isImageReference(url)) return match;
+    const normalized = toMarkdownSafeImageDestination(url);
+    if (normalized !== url) {
+      return /\s/.test(normalized) ? `![${alt}](<${normalized}>)` : `![${alt}](${normalized})`;
+    }
+    if (/\s/.test(url)) return `![${alt}](<${url}>)`;
+    return match;
+  });
 }
 
 function safeHref(value: unknown): string | undefined {
@@ -561,7 +632,10 @@ export const MarkdownText = memo(function MarkdownText({
   text,
   streaming = false,
 }: MarkdownTextProps) {
-  const normalizedText = useMemo(() => normalizeTexMathDelimiters(text), [text]);
+  const normalizedText = useMemo(
+    () => normalizeTexMathDelimiters(normalizeMarkdownImageDestinations(text)),
+    [text],
+  );
 
   return (
     <Streamdown

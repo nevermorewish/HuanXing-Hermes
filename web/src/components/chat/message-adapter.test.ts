@@ -181,6 +181,71 @@ describe("message adapter", () => {
     expect(message?.text).toBe("阅读这张图片的内容\n\n附件：ga.png");
   });
 
+  it("extracts stored image attached-at paths without rendering the transport line", () => {
+    const path = "/Users/enzo/Library/Application Support/cn.org.hermesagent.desktop/runtime/hermes-home/images/upload.png";
+    const message = storedMessageToChatMessage(sessionMessage({
+      id: 10,
+      session_id: "s1",
+      role: "user",
+      content: [
+        "[Hermes UI Image]",
+        "name=upload.png",
+        "description:",
+        "[User attached image: upload.png]",
+        "[/Hermes UI Image]",
+        "",
+        "图里是什么？",
+        "",
+        `[Image attached at: ${path}]`,
+        "[screenshot]",
+      ].join("\n"),
+    }));
+
+    expect(message?.text).toBe("图里是什么？\n\n附件：upload.png");
+    expect(message?.images?.[0]?.url).toBe(path);
+  });
+
+  it("extracts Core native image refs with their original composer label", () => {
+    const path = "/opt/hermes/images/upload_20260815_1.png";
+    const message = storedMessageToChatMessage(sessionMessage({
+      id: 11,
+      session_id: "s1",
+      role: "user",
+      content: [
+        "[Hermes UI Image]",
+        "name=shot.png",
+        "description:",
+        "[User attached image: upload_20260815_1.png]",
+        "[/Hermes UI Image]",
+        "",
+        "图里是什么？",
+        `@image:${path}`,
+        "[screenshot]",
+      ].join("\n"),
+    }));
+
+    expect(message?.text).toBe("图里是什么？\n\n附件：shot.png");
+    expect(message?.images).toEqual([
+      expect.objectContaining({ url: path, name: "shot.png", alt: "shot.png" }),
+    ]);
+  });
+
+  it("normalizes injected Skill instructions from user to system messages", () => {
+    const message = hermesUIMessageToChatMessage(uiMessage({
+      id: "skill-invocation",
+      role: "user",
+      parts: [{
+        type: "text",
+        text: '[IMPORTANT: The user has invoked the "codex" skill, indicating they want you to follow its instructions.]',
+      }],
+    }));
+
+    expect(message).toMatchObject({
+      id: "skill-invocation",
+      role: "system",
+    });
+  });
+
   it("deduplicates stored image transport prompts against live display prompts", () => {
     const stored = [
       uiMessage({
@@ -237,6 +302,46 @@ describe("message adapter", () => {
       "看一下这张图里面是什么内容\n\n附件：ga.png",
       "我已经阅读了这张图片。",
     ]);
+  });
+
+  it("reconciles a Core native image ref with the current optimistic image turn", () => {
+    const stored = legacySessionMessagesToHermesUIMessages([
+      sessionMessage({
+        id: 12,
+        session_id: "s1",
+        role: "user",
+        timestamp: 100,
+        content: [
+          "[Hermes UI Image]",
+          "name=shot.png",
+          "description:",
+          "[User attached image: upload_20260815_1.png]",
+          "[/Hermes UI Image]",
+          "",
+          "图里是什么？",
+          "@image:/opt/hermes/images/upload_20260815_1.png",
+          "[screenshot]",
+        ].join("\n"),
+      }),
+    ]);
+    const live = [
+      uiMessage({
+        id: "live-user-image",
+        role: "user",
+        createdAt: 100_500,
+        parts: [
+          { type: "text", text: "图里是什么？\n\n附件：shot.png" },
+          { type: "image", url: "data:image/png;base64,AAAA", name: "shot.png", alt: "shot.png" },
+        ],
+      }),
+    ];
+
+    const merged = mergeHermesUIMessages(stored, live);
+    const chat = hermesUIMessagesToChatMessages(merged);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.id).toBe("live-user-image");
+    expect(chat[0]?.images?.[0]?.url).toBe("data:image/png;base64,AAAA");
   });
 
   it("keeps canonical progress as a streaming progress block", () => {
@@ -1155,6 +1260,39 @@ describe("assistant stats derivation", () => {
         token_count: 42,
       }),
     );
-    expect(stored?.stats).toMatchObject({ tokensTotal: 42 });
+      expect(stored?.stats).toMatchObject({ tokensTotal: 42 });
+  });
+
+  describe("metadata filter — legacySessionMessageToHermesUIMessage", () => {
+    it("drops model-switch system marker", () => {
+      const msg = {
+        id: 1, session_id: "s1", role: "user" as const,
+        content: "[System: The active model for this chat has changed to gpt-5 via provider openai. From this point forward, use this runtime metadata when answering questions about what model/provider is active.]",
+        timestamp: 1700000000,
+      };
+      // We check via storedMessageToChatMessage which calls legacySessionMessageToHermesUIMessage
+      const result = storedMessagesToChatMessages([msg]);
+      expect(result).toHaveLength(0);
+    });
+
+    it("drops gateway model-switch note", () => {
+      const msg = {
+        id: 2, session_id: "s1", role: "user" as const,
+        content: "[Note: model was just switched from gpt-4 to gpt-5 via openai. Adjust your self-identification accordingly.]",
+        timestamp: 1700000000,
+      };
+      const result = storedMessagesToChatMessages([msg]);
+      expect(result).toHaveLength(0);
+    });
+
+    it("keeps normal user messages", () => {
+      const msg = {
+        id: 3, session_id: "s1", role: "user" as const,
+        content: "Hello!",
+        timestamp: 1700000000,
+      };
+      const result = storedMessagesToChatMessages([msg]);
+      expect(result).toHaveLength(1);
+    });
   });
 });

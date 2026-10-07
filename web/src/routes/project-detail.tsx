@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Popover } from "@hermes/shared-ui";
+import { LoadingState, Popover } from "@hermes/shared-ui";
 import {
   ChevronLeft,
   ExternalLink,
@@ -25,6 +25,7 @@ import {
 } from "@/lib/workspaces";
 import { TopBar, TopBarActionButton } from "@/components/top-bar/top-bar";
 import { WorktreePanel } from "@/components/projects/worktree-panel";
+import { useConfirm } from "@/lib/use-confirm";
 import { runtime } from "@/lib/runtime";
 import s from "./project-detail.module.css";
 
@@ -66,13 +67,13 @@ function ProjectMenu({ desktopAvailable, onOpenInFinder, onDelete }: MenuProps) 
         {desktopAvailable ? (
           <Popover.Close asChild>
             <button type="button" onClick={onOpenInFinder} role="menuitem">
-              <ExternalLink size={13} /> 在 Finder 打开
+              <ExternalLink size={12} /> 在 Finder 打开
             </button>
           </Popover.Close>
         ) : null}
         <Popover.Close asChild>
           <button type="button" onClick={onDelete} role="menuitem" data-tone="danger">
-            <Trash2 size={13} /> 删除项目
+            <Trash2 size={12} /> 删除项目
           </button>
         </Popover.Close>
       </Popover.Content>
@@ -91,6 +92,7 @@ export function ProjectDetailRoute() {
   const [projects, setProjects] = useState<WorkspaceProject[]>(readWorkspaceProjects);
   const [sessionWorkspaceMap, setSessionWorkspaceMap] = useState(readSessionWorkspaceMap);
   const [menuOpen, setMenuOpen] = useState(false);
+  const { confirm } = useConfirm();
 
   useEffect(() => {
     return subscribeWorkspaceChanges(() => {
@@ -157,16 +159,19 @@ export function ProjectDetailRoute() {
     }
   }, [project]);
 
-  const handleDelete = useCallback(() => {
+  const handleDelete = useCallback(async () => {
     setMenuOpen(false);
     if (!project) return;
-    const confirmed = window.confirm(
-      `确认删除项目「${project.name}」？该工作区下的会话会被解除关联，但会话本身不会删除。`,
-    );
+    const confirmed = await confirm({
+      title: "删除项目",
+      body: `确认删除项目「${project.name}」？该工作区下的会话会被解除关联，但会话本身不会删除。`,
+      confirmLabel: "删除",
+      danger: true,
+    });
     if (!confirmed) return;
     removeWorkspaceProject(project.path);
     navigate("/projects");
-  }, [navigate, project]);
+  }, [confirm, navigate, project]);
 
   if (!workspacePath) {
     return (
@@ -190,7 +195,7 @@ export function ProjectDetailRoute() {
           sub={shortenPath(workspacePath)}
           right={
             <TopBarActionButton onClick={() => navigate("/projects")}>
-              <ChevronLeft size={13} />
+              <ChevronLeft size={12} />
               返回项目
             </TopBarActionButton>
           }
@@ -225,13 +230,13 @@ export function ProjectDetailRoute() {
         right={
           <>
             <TopBarActionButton onClick={goNewTask}>
-              <Plus size={13} />
+              <Plus size={12} />
               新对话
             </TopBarActionButton>
             <Popover.Root open={menuOpen} onOpenChange={setMenuOpen}>
               <Popover.Trigger asChild>
                 <TopBarActionButton aria-label="项目操作">
-                  <MoreHorizontal size={14} />
+                  <MoreHorizontal size={16} />
                 </TopBarActionButton>
               </Popover.Trigger>
               <ProjectMenu
@@ -248,10 +253,10 @@ export function ProjectDetailRoute() {
         <section className={s.hero}>
           <div className={s.heroLeft}>
             <span className={s.iconBox} aria-hidden>
-              <Folder size={22} />
+              <Folder size={24} />
             </span>
             <div className={s.heroMeta}>
-              <h1>{project.name}</h1>
+              <h2>{project.name}</h2>
               <div className={s.heroPath}>{project.path}</div>
               <div className={s.heroDates}>
                 创建于 {formatTimestampDate(project.createdAt / 1000)} · 更新于{" "}
@@ -312,7 +317,7 @@ export function ProjectDetailRoute() {
             ) : null}
           </div>
           {isLoading ? (
-            <div className={s.emptyHint}>加载会话中…</div>
+            <LoadingState variant="block" label="正在加载会话…" />
           ) : projectSessions.length === 0 ? (
             <div className={s.emptyHint}>这个项目下还没有会话。点上方「新对话」开始。</div>
           ) : (
@@ -324,8 +329,8 @@ export function ProjectDetailRoute() {
                     <th>标题</th>
                     <th style={{ width: 80 }}>来源</th>
                     <th style={{ width: 140 }}>模型</th>
-                    <th style={{ width: 110 }}>更新</th>
-                    <th style={{ width: 90 }} className={s.numeric}>Tokens</th>
+                    <th style={{ width: 112 }}>更新</th>
+                    <th style={{ width: 92 }} className={s.numeric}>Tokens</th>
                   </tr>
                 </thead>
                 <tbody>

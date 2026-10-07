@@ -10,6 +10,9 @@ import {
   CronRunsResponse,
   ElevenLabsVoicesResponse,
   FsListResponse,
+  GatewayModelProvider,
+  MemoryProviderConfigResponse,
+  MemoryProviderRuntimeStatusResponse,
   MoaConfigResponse,
   ProviderModelsListResult,
   ProfileCreateResponse,
@@ -20,9 +23,174 @@ import {
   SkillsResponse,
   SkillsHubSearchResponse,
   SessionCompressResult,
+  SessionCreateResult,
   SessionSummary,
   StatusResponse,
 } from "./hermes-api";
+
+
+describe("Gateway model provider schemas", () => {
+  it("parses models.dev capability metadata returned by Core", () => {
+    const parsed = GatewayModelProvider.parse({
+      slug: "deepseek",
+      models: ["deepseek-reasoner"],
+      capabilities: {
+        "deepseek-reasoner": {
+          fast: false,
+          reasoning: true,
+          supports_tools: true,
+          supports_vision: false,
+          supports_pdf: true,
+          supports_audio: true,
+          supports_video: true,
+          supports_reasoning: true,
+          supports_reasoning_control: true,
+          open_weights: true,
+          context_window: 131_072,
+          max_output_tokens: 65_536,
+          model_family: "deepseek",
+        },
+      },
+    });
+
+    expect(parsed.capabilities?.["deepseek-reasoner"]).toMatchObject({
+      supports_tools: true,
+      supports_vision: false,
+      supports_pdf: true,
+      supports_audio: true,
+      supports_video: true,
+      supports_reasoning: true,
+      supports_reasoning_control: true,
+      open_weights: true,
+      context_window: 131_072,
+    });
+  });
+});
+
+
+describe("Memory provider schemas", () => {
+  it("parses generic provider config fields without exposing a secret value", () => {
+    const parsed = MemoryProviderConfigResponse.parse({
+      name: "openviking",
+      label: "OpenViking",
+      fields: [
+        {
+          key: "endpoint",
+          label: "Endpoint",
+          kind: "text",
+          value: "http://127.0.0.1:1933",
+          is_set: true,
+        },
+        {
+          key: "api_key",
+          label: "API Key",
+          kind: "secret",
+          value: "",
+          is_set: true,
+        },
+      ],
+      setup: { dependencies_installed: true },
+    });
+
+    expect(parsed.fields[0].value).toBe("http://127.0.0.1:1933");
+    expect(parsed.fields[1].value).toBe("");
+    expect(parsed.fields[1].is_set).toBe(true);
+  });
+
+  it("accepts numeric provider fields and normalizes nullable constraints", () => {
+    const parsed = MemoryProviderConfigResponse.parse({
+      name: "openviking",
+      label: "OpenViking",
+      fields: [
+        {
+          key: "recall_limit",
+          label: "Recall Limit",
+          kind: "integer",
+          value: "12",
+          minimum: 1,
+          maximum: 100,
+          step: null,
+        },
+        {
+          key: "recall_score_threshold",
+          label: "Recall Score Threshold",
+          kind: "number",
+          value: "0.42",
+          minimum: 0,
+          maximum: 1,
+          step: 0.01,
+        },
+      ],
+    });
+
+    expect(parsed.fields[0]).toMatchObject({
+      kind: "integer",
+      value: "12",
+      minimum: 1,
+      maximum: 100,
+      step: undefined,
+    });
+    expect(parsed.fields[1]).toMatchObject({
+      kind: "number",
+      minimum: 0,
+      maximum: 1,
+      step: 0.01,
+    });
+  });
+
+  it("discriminates OpenViking runtime details", () => {
+    const parsed = MemoryProviderRuntimeStatusResponse.parse({
+      provider: "openviking",
+      active: true,
+      configured: true,
+      reachable: true,
+      healthy: true,
+      endpoint: "http://127.0.0.1:1933",
+      console_url: "http://127.0.0.1:1933/studio",
+      version: "0.3.26.dev3",
+      checked_at: "2026-07-28T12:00:00Z",
+      error: "",
+      details: {
+        kind: "openviking",
+        auth_mode: "dev",
+        memory_stats: { total_memories: 12 },
+        model_usage: [],
+        queue_usage: [],
+        tasks: [],
+      },
+    });
+
+    expect(parsed.details?.kind).toBe("openviking");
+    if (parsed.details?.kind === "openviking") {
+      expect(parsed.details.memory_stats.total_memories).toBe(12);
+    }
+  });
+
+  it("accepts a healthy Hindsight response without runtime config", () => {
+    const parsed = MemoryProviderRuntimeStatusResponse.parse({
+      provider: "hindsight",
+      active: false,
+      configured: true,
+      reachable: true,
+      healthy: true,
+      endpoint: "http://localhost:8888",
+      console_url: "http://localhost:9999/dashboard",
+      version: "0.5.0",
+      checked_at: "2026-07-28T12:00:00Z",
+      error: "",
+      details: {
+        kind: "hindsight",
+        mode: "local_external",
+        bank_id: "hermes",
+        stats: { total_nodes: 8 },
+        runtime_config: null,
+      },
+    });
+
+    expect(parsed.healthy).toBe(true);
+    expect(parsed.details?.kind).toBe("hindsight");
+  });
+});
 
 
 describe("Audio API schemas", () => {
@@ -477,6 +645,43 @@ describe("SessionSummary cwd (#216)", () => {
       offset: 0,
     });
     expect(parsed.sessions[0]?.cwd).toBe("/Users/claw/project-b");
+  });
+});
+
+describe("session branch contract", () => {
+  const baseSession = {
+    id: "branch-child",
+    model: "deepseek-v4-pro",
+    title: "分叉会话",
+    started_at: 1,
+    ended_at: null,
+    message_count: 2,
+    input_tokens: 0,
+    output_tokens: 0,
+    estimated_cost_usd: null,
+  };
+
+  it("preserves the Core parent session lineage", () => {
+    const parsed = SessionSummary.parse({
+      ...baseSession,
+      parent_session_id: "branch-parent",
+    });
+
+    expect(parsed.parent_session_id).toBe("branch-parent");
+  });
+
+  it("accepts the runtime and stored ids returned by session.create", () => {
+    const parsed = SessionCreateResult.parse({
+      session_id: "runtime-child",
+      stored_session_id: "branch-child",
+      message_count: 2,
+    });
+
+    expect(parsed).toMatchObject({
+      session_id: "runtime-child",
+      stored_session_id: "branch-child",
+      message_count: 2,
+    });
   });
 });
 

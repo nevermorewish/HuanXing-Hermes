@@ -20,7 +20,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { useConfig, useModelInfo, useSaveConfig } from "@/hooks/use-config";
 import { useDeleteEnv, useEnvVars, useRevealEnv, useSetEnv } from "@/hooks/use-env";
 import { useGateway } from "@/hooks/use-gateway";
-import { useProviderModels } from "@/hooks/use-provider-models";
+import { providerModelsErrorText, useProviderModels } from "@/hooks/use-provider-models";
 import type { ModelInfo, ProviderProbeResult } from "@hermes/protocol";
 import {
   apiModeBadgeLabel,
@@ -39,6 +39,7 @@ import {
   providerApiKeyLabels,
   providerHasSavedCredentials,
   resolveSelectedProvider,
+  shouldUpdateDefaultModelOnSave,
   sortProvidersForModelsPage,
   TOP5_PROVIDER_IDS,
   type ProviderPreset,
@@ -54,6 +55,7 @@ import { useOAuthProviders } from "@/hooks/use-oauth-providers";
 import { ModelCombobox } from "@/components/settings/model-combobox";
 import { translateEnvCategory, translateEnvVar } from "@/lib/env-translations";
 import { rememberLastUsedModel } from "@/lib/last-used-model";
+import { useConfirm } from "@/lib/use-confirm";
 import { reportPromoClick } from "@/lib/telemetry";
 import { openExternalUrl } from "@/lib/external-links";
 import {
@@ -64,7 +66,7 @@ import {
 } from "@/lib/local-provider-context";
 import type { EnvVarInfo } from "@hermes/protocol";
 import { CopyButton } from "@/components/ui/copy-button";
-import { Alert, Button, Field, Input, Select, Textarea } from "@hermes/shared-ui";
+import { Alert, Button, Field, Input, LoadingState, Select, Textarea } from "@hermes/shared-ui";
 import { OAuthProvidersSection } from "./settings-oauth-section";
 import { MoaPanel } from "./settings-moa-panel";
 import { useMoaConfig } from "@/hooks/use-moa-config";
@@ -613,6 +615,7 @@ export function ModelsSection() {
   const { data: moaConfig } = useMoaConfig();
   const moaPresetCount = Object.keys(moaConfig?.presets ?? {}).length;
   const saveConfig = useSaveConfig();
+  const { confirm } = useConfirm();
   const setEnv = useSetEnv();
   const deleteEnv = useDeleteEnv();
   const revealEnv = useRevealEnv();
@@ -858,6 +861,13 @@ export function ModelsSection() {
     listProviderModels,
     selectedProvider?.apiMode,
   );
+  const customModelsQuery = useProviderModels(
+    "custom-draft",
+    customForm.baseUrl,
+    customForm.apiKey.trim() || undefined,
+    listProviderModels,
+    customProviderMode === "local" ? "chat_completions" : customForm.apiMode,
+  );
   const liveModelIds = supportsModelListing ? modelsQuery.data?.models ?? [] : [];
   const mergedModelOptions = useMemo(() => {
     const set = new Set<string>();
@@ -866,10 +876,13 @@ export function ModelsSection() {
     if (providerForm.model) set.add(providerForm.model);
     return Array.from(set);
   }, [liveModelIds, selectedProvider, providerForm.model]);
+  const customModelOptions = useMemo(() => {
+    const set = new Set(customModelsQuery.data?.models ?? []);
+    if (customForm.model) set.add(customForm.model);
+    return Array.from(set);
+  }, [customModelsQuery.data?.models, customForm.model]);
 
-  const refreshLabel = modelsQuery.isFetching
-    ? "刷新中…"
-    : modelsQuery.isError
+  const refreshLabel = modelsQuery.isError
       ? "刷新失败 重试"
       : modelsQuery.data
         ? `已加载 ${modelsQuery.data.models.length} 个`
@@ -877,14 +890,17 @@ export function ModelsSection() {
 
   const refreshErrorText = useMemo(() => {
     if (!supportsModelListing || !modelsQuery.isError) return "";
-    const msg = modelsQuery.error instanceof Error ? modelsQuery.error.message : String(modelsQuery.error);
-    if (/\b404\b|not found/i.test(msg)) return "此服务商未提供 /models 端点";
-    if (/\b401\b|\b403\b|unauthor/i.test(msg)) return "API Key 无效或未保存";
-    if (/Failed to fetch|NetworkError|TypeError|cors/i.test(msg)) {
-      return "无法连接，可能被浏览器跨域策略拦截；桌面端可正常使用";
-    }
-    return msg;
+    return providerModelsErrorText(modelsQuery.error);
   }, [supportsModelListing, modelsQuery.isError, modelsQuery.error]);
+
+  const customRefreshLabel = customModelsQuery.isError
+      ? "刷新失败 重试"
+      : customModelsQuery.data
+        ? `已加载 ${customModelsQuery.data.models.length} 个`
+        : "刷新模型列表";
+  const customRefreshErrorText = customModelsQuery.isError
+    ? providerModelsErrorText(customModelsQuery.error)
+    : "";
 
   useEffect(() => {
     if (!selectedProvider) return;
@@ -1186,24 +1202,50 @@ export function ModelsSection() {
     const savedBaseUrl = providerForm.baseUrl.trim() || selectedProvider.baseUrl;
     const savedModel = providerForm.model.trim() || selectedProvider.defaultModel;
     const providerId = selectedProvider.id;
+    const providerName = selectedProvider.name;
+    // 「保存配置」需要一并更新顶层默认主模型（model.*）的两种情况：
+    // 1. 选中的服务商就是当前默认主模型（provider id 相同，无论是否改了模
+    //    型 / Base URL）：编辑当前默认服务商后保存，默认主模型必须跟着更新，
+    //    否则 config.model 与 providers.<id> 脱节——UI 上「已是当前模型」会
+    //    翻回「设为当前模型」，工作台默认模型仍是旧的（甚至已失效的）。
+    // 2. 首次运行还没有默认模型：保存即把该服务商提升为默认主模型。
+    // 其余情况保持原语义：保存配置只写 providers.<id>，不切换主模型。
+    const shouldUpdateDefaultModel = shouldUpdateDefaultModelOnSave({
+      currentProviderId,
+      selectedProviderId: selectedProvider.id,
+      modelInfo,
+    });
     setProviderSavePending(true);
     setProviderSaveError("");
     try {
       await syncProviderApiKeyToCanonicalEnv(selectedProvider, newApiKey);
-      // "保存配置" only touches providers.<id> — it does not switch the active
-      // model. The context-window override is a single field tied to the current
-      // model, so persist it here only when this provider's model is already the
-      // active one (editing the live model's window without re-switching).
-      // Writing it for a non-current provider would stomp the real current
-      // model's override.
-      let settingsUpdate = buildProviderSettingsUpdate(config, selectedProvider, providerForm);
-      if (selectedProviderIsCurrent) {
-        settingsUpdate = {
-          ...settingsUpdate,
-          model_context_length: parseContextWindowInput(providerForm.contextWindow),
-        };
+      let settingsUpdate;
+      if (shouldUpdateDefaultModel) {
+        // buildProviderConfigUpdate = providers.<id> + model.*（provider +
+        // default + base_url + api_key + 上下文覆盖）。
+        settingsUpdate = buildProviderConfigUpdate(config, selectedProvider, providerForm);
+      } else {
+        // 只写 providers.<id>。上下文窗口覆盖是绑定「当前模型」的单槽字段，
+        // 非默认服务商在此保存时不得写入，避免踩掉真正当前模型的覆盖值。
+        settingsUpdate = buildProviderSettingsUpdate(config, selectedProvider, providerForm);
       }
       await saveConfig.mutateAsync(settingsUpdate);
+      if (shouldUpdateDefaultModel) {
+        // 工作台 composer 从 UI store 读默认模型；配置已落盘就立刻播种，
+        // 让「切换模型」/ 新任务的模型设置显示新模型。
+        rememberLastUsedModel({
+          model: savedModel,
+          provider: providerId,
+          providerName,
+        });
+        // Live hot-switch 是尽力而为（全局 config.set，不碰运行中的会话）：
+        // config.yaml 已持久化，失败也不影响下一次会话用新模型。
+        try {
+          await setRuntimeModel(savedModel, providerId);
+        } catch (error) {
+          console.warn("保存默认主模型后热切换运行模型失败（默认配置已保存）", error);
+        }
+      }
       setProviderForm((prev) => ({ ...prev, apiKey: "" }));
       setSavedSnapshot({
         baseUrl: savedBaseUrl,
@@ -1242,9 +1284,6 @@ export function ModelsSection() {
       await saveConfig.mutateAsync(
         buildProviderConfigUpdate(config, selectedProvider, providerForm),
       );
-      // Same hot-switch path as the composer model picker: update the live
-      // gateway runtime explicitly after disk config is already usable.
-      await setRuntimeModel(savedModel, providerId);
       setProviderForm((prev) => ({ ...prev, apiKey: "" }));
       setSavedSnapshot({
         baseUrl: savedBaseUrl,
@@ -1256,12 +1295,25 @@ export function ModelsSection() {
       // PanelComposer seeds its model picker from the UI store.
       // This mirrors picking a model from the workbench composer, so the next
       // new session carries this explicit choice even before /api/model/info
-      // finishes refetching.
+      // finishes refetching. Seed it right after the config lands on disk so a
+      // failed live-switch below can never leave the workbench showing a stale
+      // last-used model while config.model already points at the new one.
       rememberLastUsedModel({
         model: savedModel,
         provider: providerId,
         providerName,
       });
+      // Same hot-switch path as the composer model picker: update the live
+      // gateway runtime explicitly after disk config is already usable.
+      // Best-effort: config.yaml is already persisted, so a refusal (e.g. the
+      // backend rejecting an unresolvable provider, or a busy session) must
+      // not fail the whole action — the default model is already updated and
+      // the workbench will pick it up.
+      try {
+        await setRuntimeModel(savedModel, providerId);
+      } catch (error) {
+        console.warn("设为当前模型后热切换运行模型失败（默认配置已保存）", error);
+      }
     } catch (error) {
       setProviderSaveError(error instanceof Error ? error.message : String(error || "设置失败"));
     } finally {
@@ -1339,7 +1391,13 @@ export function ModelsSection() {
     const confirmMessage = referencedTasks.length > 0
       ? `确定删除「${selectedProvider.name}」吗？引用它的辅助模型（${referencedTasks.join("、")}）会自动恢复为 Auto。`
       : `确定删除「${selectedProvider.name}」吗？此操作会移除该自定义服务商的 Base URL、模型和密钥配置。`;
-    if (!window.confirm(confirmMessage)) return;
+    const confirmed = await confirm({
+      title: "删除服务商",
+      body: confirmMessage,
+      confirmLabel: "删除",
+      danger: true,
+    });
+    if (!confirmed) return;
 
     const nextSelectedProviderId = orderedProviders.find((provider) => provider.id !== providerId)?.id ?? "";
     setProviderDeletePending(true);
@@ -1429,7 +1487,7 @@ export function ModelsSection() {
     onDelete: () => deleteEnv.mutate(key),
   });
 
-  if (configLoading || (envLoading && !envVars)) return <div className={s.desc}>加载中…</div>;
+  if (configLoading || (envLoading && !envVars)) return <LoadingState variant="block" label="正在加载模型配置…" />;
   if (configIsError || !config) {
     const message = configError instanceof Error ? configError.message : "配置加载失败";
     return (
@@ -1453,8 +1511,8 @@ export function ModelsSection() {
   const customProviderIsAnthropic = !customProviderIsLocal && customForm.apiMode === "anthropic_messages";
   const customProviderTitle = customProviderIsLocal ? "添加本地部署服务商" : "添加自定义服务商";
   const customProviderHint = customProviderIsLocal
-    ? "适合 LM Studio、Ollama、vLLM、llama.cpp 等本地 OpenAI 兼容服务。先启动本地服务、加载模型并把上下文窗口设到至少 64K，再选择下面的端点或手动填写。"
-    : "支持 OpenAI Chat Completions 兼容服务（百度千帆 / SiliconFlow / 私有部署等）与 Anthropic 格式的 Claude Code 中转站，请求协议在「接口格式」里选择。提交后可在网格里随时切换。";
+    ? "适合 LM Studio、Ollama、vLLM、llama.cpp 等本地 OpenAI 兼容服务。先启动本地服务、加载模型并把上下文窗口设到至少 64K，再填写端点、刷新模型列表并选择默认模型。"
+    : "先填写接口格式、Base URL 和 API Key，再刷新模型列表并选择默认模型；如果服务商不提供 /models，也可以手动输入。支持 OpenAI 兼容服务与 Anthropic 格式的 Claude Code 中转站。";
   const customProviderPlaceholders = customProviderIsLocal
     ? {
         name: "例如：LM Studio",
@@ -1680,7 +1738,8 @@ export function ModelsSection() {
                             type="button"
                             variant="outline"
                             tone="danger"
-                            disabled={providerDeletePending || providerSavePending || providerSetCurrentPending}
+                            loading={providerDeletePending}
+                            disabled={providerSavePending || providerSetCurrentPending}
                             onClick={() => void handleDeleteSelectedProvider()}
                             title={
                               currentProviderId === selectedProvider.id
@@ -1688,15 +1747,22 @@ export function ModelsSection() {
                                 : "删除此自定义服务商"
                             }
                           >
-                            {providerDeletePending ? "删除中…" : "删除服务商"}
+                            删除服务商
                           </Button>
                         )}
                       </div>
                     </div>
 
+                    {providerSaveError && (
+                      <div className={s.modelPickerError} style={{ marginTop: 8 }}>
+                        操作失败：{providerSaveError}
+                      </div>
+                    )}
+
                     <div className={s.providerFormGrid}>
                       <Field label={selectedProvider.apiKeyLabel} className={s.fieldRow}>
                         <Input
+                          aria-label={selectedProvider.apiKeyLabel}
                           mono
                           type="password"
                           value={providerForm.apiKey}
@@ -1712,6 +1778,7 @@ export function ModelsSection() {
                       </Field>
                       <Field label="Base URL" className={s.fieldRow}>
                         <Input
+                          aria-label="Base URL"
                           mono
                           value={providerForm.baseUrl}
                           onChange={(event) => setProviderForm((prev) => ({ ...prev, baseUrl: event.target.value }))}
@@ -1722,10 +1789,11 @@ export function ModelsSection() {
                           请求将发送到 <code>{selectedProviderEndpointPreview}</code>
                         </div>
                       )}
-                      <label className={s.fieldRow}>
+                      <div className={s.fieldRow}>
                         <div className={s.fieldLabel}>模型</div>
                         <div className={s.modelPickerRow}>
                           <ModelCombobox
+                            label="模型"
                             value={providerForm.model}
                             onChange={(next) => setProviderForm((prev) => ({ ...prev, model: next }))}
                             options={mergedModelOptions}
@@ -1734,7 +1802,7 @@ export function ModelsSection() {
                             <Button
                               type="button"
                               variant="outline"
-                              disabled={modelsQuery.isFetching}
+                              loading={modelsQuery.isFetching}
                               onClick={() => modelsQuery.refetch()}
                               title={`从 ${providerForm.baseUrl}/models 拉取`}
                             >
@@ -1742,7 +1810,7 @@ export function ModelsSection() {
                             </Button>
                           ) : null}
                         </div>
-                      </label>
+                      </div>
                       {!supportsModelListing && (
                         <div className={s.modelPickerHint}>此服务商不提供 /models 端点，使用预设模型或手动输入即可</div>
                       )}
@@ -1751,6 +1819,7 @@ export function ModelsSection() {
                       )}
                       <Field label="上下文窗口" className={s.fieldRow}>
                         <Input
+                          aria-label="上下文窗口"
                           mono
                           inputMode="numeric"
                           placeholder={
@@ -1813,7 +1882,7 @@ export function ModelsSection() {
                         }
                         onClick={() => void handleProviderSave()}
                       >
-                        {providerSavePending ? "保存中…" : showSavedFlash ? "✓ 已保存" : "保存配置"}
+                        {showSavedFlash ? "✓ 已保存" : "保存配置"}
                       </Button>
                       <Button
                         variant={isFormDirty || selectedProviderIsCurrent ? "outline" : "solid"}
@@ -1836,12 +1905,12 @@ export function ModelsSection() {
                               : "请先保存 API Key / provider 配置"
                         }
                       >
-                        {providerSetCurrentPending ? "切换中…" : selectedProviderIsCurrent ? "已是当前模型" : "设为当前模型"}
+                        {selectedProviderIsCurrent ? "已是当前模型" : "设为当前模型"}
                       </Button>
                       <Button
                         variant="outline"
+                        loading={probeForSelected?.status === "pending"}
                         disabled={
-                          probeForSelected?.status === "pending" ||
                           providerDeletePending ||
                           (!selectedHasCredentials && !providerForm.apiKey.trim() && !selectedProviderCanOmitApiKey)
                         }
@@ -1854,16 +1923,11 @@ export function ModelsSection() {
                               : "向 /models 端点发一次 GET，验证 API Key + 网络通"
                         }
                       >
-                        {probeForSelected?.status === "pending" ? "测试中…" : "测试连接"}
+                        测试连接
                       </Button>
                     </div>
                     {probeForSelected && probeForSelected.status !== "pending" && (
                       <ProbeResultRow probe={probeForSelected} />
-                    )}
-                    {providerSaveError && (
-                      <div className={s.modelPickerError} style={{ marginTop: 8 }}>
-                        操作失败：{providerSaveError}
-                      </div>
                     )}
                   </>
                 )}
@@ -1995,6 +2059,7 @@ export function ModelsSection() {
               )}
               <Field label="名称" className={s.fieldRow}>
                 <Input
+                  aria-label="名称"
                   value={customForm.name}
                   placeholder={customProviderPlaceholders.name}
                   autoFocus
@@ -2027,6 +2092,7 @@ export function ModelsSection() {
               )}
               <Field label="Base URL" className={s.fieldRow}>
                 <Input
+                  aria-label="Base URL"
                   mono
                   value={customForm.baseUrl}
                   placeholder={customProviderPlaceholders.baseUrl}
@@ -2057,18 +2123,52 @@ export function ModelsSection() {
                   已存在同 Base URL：{duplicateBaseUrlProvider.name}。如果只是换模型，可以直接编辑现有服务商。
                 </div>
               )}
-              <Field label="默认模型" className={s.fieldRow}>
+              <Field label="API Key" className={s.fieldRow}>
                 <Input
+                  aria-label="API Key"
                   mono
-                  value={customForm.model}
-                  placeholder={customProviderPlaceholders.model}
-                  onChange={(e) => setCustomForm((p) => ({ ...p, model: e.target.value }))}
+                  type="password"
+                  value={customForm.apiKey}
+                  placeholder={customProviderPlaceholders.apiKey}
+                  onChange={(e) => setCustomForm((p) => ({ ...p, apiKey: e.target.value }))}
                 />
               </Field>
+              <div className={s.modelPickerHint}>
+                部分模型服务商需要先填写有效的 API Key，才能获取模型列表。
+              </div>
+              <div className={s.fieldRow}>
+                <div className={s.fieldLabel}>默认模型</div>
+                <div className={s.modelPickerRow}>
+                  <ModelCombobox
+                    label="默认模型"
+                    value={customForm.model}
+                    options={customModelOptions}
+                    placeholder={customProviderPlaceholders.model}
+                    onChange={(model) => setCustomForm((p) => ({ ...p, model }))}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    loading={customModelsQuery.isFetching}
+                    disabled={!customBaseUrl || !customBaseUrlValid}
+                    onClick={() => void customModelsQuery.refetch()}
+                    title="从服务商读取模型列表"
+                  >
+                    {customRefreshLabel}
+                  </Button>
+                </div>
+              </div>
+              {customRefreshErrorText && (
+                <div className={s.modelPickerError}>{customRefreshErrorText}</div>
+              )}
+              {customModelsQuery.data?.models.length === 0 && (
+                <div className={s.modelPickerHint}>服务端返回了空模型列表，也可以继续手动输入模型 ID。</div>
+              )}
               {customProviderIsLocal && (
                 <>
                   <Field label="上下文窗口" className={s.fieldRow}>
                     <Input
+                      aria-label="上下文窗口"
                       mono
                       inputMode="numeric"
                       value={customForm.contextWindow}
@@ -2086,15 +2186,6 @@ export function ModelsSection() {
                   )}
                 </>
               )}
-              <Field label="API Key" className={s.fieldRow}>
-                <Input
-                  mono
-                  type="password"
-                  value={customForm.apiKey}
-                  placeholder={customProviderPlaceholders.apiKey}
-                  onChange={(e) => setCustomForm((p) => ({ ...p, apiKey: e.target.value }))}
-                />
-              </Field>
             </div>
             <div className={s.customProviderActions}>
               <Button type="button" variant="outline" onClick={closeCustomForm}>取消</Button>
@@ -2102,8 +2193,8 @@ export function ModelsSection() {
                 type="button"
                 variant="solid"
                 tone="accent"
+                loading={saveConfig.isPending}
                 disabled={
-                  saveConfig.isPending ||
                   !customForm.name.trim() ||
                   !customForm.baseUrl.trim() ||
                   !customBaseUrlValid ||
@@ -2111,7 +2202,7 @@ export function ModelsSection() {
                 }
                 onClick={handleAddCustom}
               >
-                {saveConfig.isPending ? "保存中…" : "添加并选中"}
+                添加并选中
               </Button>
             </div>
           </div>
@@ -2323,10 +2414,10 @@ function AuxiliaryModelsPanel({
         <Button
           type="button"
           variant="outline"
-          disabled={savingTask === "__all__"}
+          loading={savingTask === "__all__"}
           onClick={onResetAll}
         >
-          {savingTask === "__all__" ? "恢复中…" : "全部恢复为自动"}
+          全部恢复为自动
         </Button>
       </div>
 
@@ -2362,6 +2453,7 @@ function AuxiliaryModelsPanel({
           <div className={s.providerFormGrid}>
             <Field label="服务商" className={s.fieldRow}>
               <Select
+                aria-label="服务商"
                 value={form.provider}
                 onChange={(event) => updateForm({
                   provider: event.target.value,
@@ -2380,19 +2472,21 @@ function AuxiliaryModelsPanel({
               </div>
             </Field>
 
-            <label className={s.fieldRow}>
+            <div className={s.fieldRow}>
               <div className={s.fieldLabel}>模型</div>
               <ModelCombobox
+                label="模型"
                 value={form.model}
                 onChange={(next) => updateForm({ model: next })}
                 options={modelOptions}
                 placeholder={isAutoProvider ? "自动模式下不需要填写模型" : "搜索或输入辅助模型 ID"}
                 disabled={isAutoProvider}
               />
-            </label>
+            </div>
 
             <Field label="调用超时（秒）" className={s.fieldRow}>
               <Input
+                aria-label="调用超时（秒）"
                 mono
                 value={form.timeout}
                 inputMode="numeric"
@@ -2424,6 +2518,7 @@ function AuxiliaryModelsPanel({
             <div className={s.auxAdvancedGrid}>
               <Field label="Base URL" className={s.fieldRow}>
                 <Input
+                  aria-label="Base URL"
                   mono
                   value={form.baseUrl}
                   placeholder="可选，自定义 OpenAI-compatible endpoint"
@@ -2433,6 +2528,7 @@ function AuxiliaryModelsPanel({
               </Field>
               <Field label="内联 API Key" className={s.fieldRow}>
                 <Input
+                  aria-label="内联 API Key"
                   mono
                   type="password"
                   value={form.apiKey}
@@ -2444,6 +2540,7 @@ function AuxiliaryModelsPanel({
               {selectedTask === "vision" && (
                 <Field label="图片下载超时（秒）" className={s.fieldRow}>
                   <Input
+                    aria-label="图片下载超时（秒）"
                     mono
                     value={form.downloadTimeout}
                     inputMode="numeric"
@@ -2473,10 +2570,10 @@ function AuxiliaryModelsPanel({
               type="button"
               variant="solid"
               tone="accent"
-              disabled={isSavingCurrent}
+              loading={isSavingCurrent}
               onClick={onSaveTask}
             >
-              {isSavingCurrent ? "保存中…" : "保存此辅助任务"}
+              保存此辅助任务
             </Button>
             <Button
               type="button"
@@ -2562,7 +2659,7 @@ function EnvRow({ envKey, info, revealedValue, isEditing, editVal, onEdit, onEdi
           {info.tools.length > 0 && ` · 用于: ${info.tools.join(", ")}`}
         </div>
       </div>
-      <div className={s.rowRight} style={{ gap: 6, flexWrap: "wrap", minWidth: 200 }}>
+      <div className={s.rowRight} style={{ gap: 8, flexWrap: "wrap", minWidth: 200 }}>
         {isEditing ? (
           <>
             <Input mono type={info.is_password ? "password" : "text"} value={editVal} onChange={(e) => onEditChange(e.target.value)} placeholder="输入值…" style={{ width: 180 }} fullWidth={false} autoFocus />
@@ -2588,21 +2685,7 @@ function EnvRow({ envKey, info, revealedValue, isEditing, editVal, onEdit, onEdi
 
 function ProviderPanelLoading({ providerName }: { providerName: string }) {
   return (
-    <div className={s.providerPanelLoading} role="status" aria-live="polite">
-      <div className={s.providerPanelLoadingHeader}>
-        <span className={s.providerPanelSpinner} aria-hidden="true" />
-        <div>
-          <div className={s.providerPanelLoadingTitle}>正在加载 {providerName}</div>
-          <div className={s.providerPanelLoadingDesc}>正在同步配置、密钥状态和模型预设…</div>
-        </div>
-      </div>
-      <div className={s.providerPanelSkeleton} aria-hidden="true">
-        <span className={s.providerPanelSkeletonLine} data-width="long" />
-        <span className={s.providerPanelSkeletonLine} data-width="full" />
-        <span className={s.providerPanelSkeletonLine} data-width="full" />
-        <span className={s.providerPanelSkeletonLine} data-width="medium" />
-      </div>
-    </div>
+    <LoadingState variant="block" label={`正在加载 ${providerName}…`} />
   );
 }
 
@@ -2631,7 +2714,7 @@ function ProbeResultRow({ probe }: { probe: { status: "ok" | "error" | "pending"
   };
   const kind = result?.error_kind ? kindLabel[result.error_kind] ?? result.error_kind : "请求失败";
   return (
-    <div className={s.desc} style={{ marginTop: 8, color: "var(--h-danger, #c44)" }}>
+    <div className={s.desc} style={{ marginTop: 8, color: "var(--h-color-danger-fg)" }}>
       ✗ {kind} · {errorText}
     </div>
   );

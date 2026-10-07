@@ -65,9 +65,10 @@ impl DesktopControlState {
         Self {
             schema_version: CONTROL_SCHEMA_VERSION,
             guide_state: GuideState::Pending,
-            // A clean install must let /guide choose the backend before the
-            // bundled runtime is extracted or launched.
-            managed_runtime_desired_state: ManagedRuntimeDesiredState::Stopped,
+            // A clean install needs a live managed backend immediately so the
+            // workbench is reachable on first launch. Connection settings can
+            // still switch to an external backend later.
+            managed_runtime_desired_state: ManagedRuntimeDesiredState::Running,
         }
     }
 
@@ -108,12 +109,22 @@ fn write_to(path: &Path, state: &DesktopControlState) -> AppResult<()> {
     Ok(())
 }
 
-/// Initialize the v1 control file without interrupting existing users. A
-/// pre-existing runtime, saved connection config, or remote env override is an
-/// established installation and therefore skips the first-install guide.
+/// Initialize the v1 control file without interrupting existing users. Clean
+/// installs keep pending onboarding with a running managed backend; an existing
+/// explicit stop/uninstall/deferred choice is preserved below.
 pub fn initialize() -> AppResult<DesktopControlState> {
     let path = control_path();
-    if let Some(state) = read_from(&path) {
+    if let Some(mut state) = read_from(&path) {
+        // v1 originally wrote pending + stopped for every clean install. That
+        // now strands the startup UI on the offline page before onboarding can
+        // be skipped. Reconcile only this old first-run sentinel; an explicit
+        // completed/deferred + stopped choice remains stopped.
+        if state.guide_state == GuideState::Pending
+            && state.managed_runtime_desired_state == ManagedRuntimeDesiredState::Stopped
+        {
+            state.managed_runtime_desired_state = ManagedRuntimeDesiredState::Running;
+            write_to(&path, &state)?;
+        }
         return Ok(state);
     }
     let established = runtime::read_current_record().is_some()
@@ -161,9 +172,10 @@ pub fn set_managed_runtime_desired_state(
     Ok(state)
 }
 
-/// Decide whether bootstrap may install/start the managed runtime. Dev mode's
-/// explicit external-dashboard escape hatch keeps its existing behavior; a
-/// real first install stays offline until the guide records `running` intent.
+/// Decide whether bootstrap may install/start the managed runtime. Clean
+/// installs default to running; explicit stop/uninstall intent still keeps the
+/// recovery shell offline, while dev's external-dashboard escape hatch keeps
+/// its existing behavior.
 pub fn should_start_managed_runtime(
     state: &DesktopControlState,
     external_dev_dashboard: bool,
@@ -194,18 +206,40 @@ mod tests {
 
     #[test]
     #[serial]
-    fn clean_install_starts_in_pending_stopped_state() {
+    fn clean_install_starts_in_pending_running_state() {
         let root = TempDir::new().expect("tempdir");
         std::env::set_var("HERMES_DESKTOP_RUNTIME_ROOT", root.path());
         let state = initialize().expect("initialize");
         assert_eq!(state.guide_state, GuideState::Pending);
         assert_eq!(
             state.managed_runtime_desired_state,
-            ManagedRuntimeDesiredState::Stopped
+            ManagedRuntimeDesiredState::Running
         );
         assert!(control_path().is_file());
-        assert!(!should_start_managed_runtime(&state, false));
+        assert!(should_start_managed_runtime(&state, false));
         assert!(should_start_managed_runtime(&state, true));
+        std::env::remove_var("HERMES_DESKTOP_RUNTIME_ROOT");
+    }
+
+    #[test]
+    #[serial]
+    fn pending_stopped_first_run_is_reconciled_to_running() {
+        let root = TempDir::new().expect("tempdir");
+        std::env::set_var("HERMES_DESKTOP_RUNTIME_ROOT", root.path());
+        write(&DesktopControlState {
+            schema_version: CONTROL_SCHEMA_VERSION,
+            guide_state: GuideState::Pending,
+            managed_runtime_desired_state: ManagedRuntimeDesiredState::Stopped,
+        })
+        .expect("write legacy first-run state");
+
+        let state = initialize().expect("initialize");
+        assert_eq!(state.guide_state, GuideState::Pending);
+        assert_eq!(
+            state.managed_runtime_desired_state,
+            ManagedRuntimeDesiredState::Running
+        );
+        assert_eq!(read(), state);
         std::env::remove_var("HERMES_DESKTOP_RUNTIME_ROOT");
     }
 

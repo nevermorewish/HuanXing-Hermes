@@ -22,9 +22,48 @@ describe("activeSessionIdAtom", () => {
     store.set(activeSessionIdAtom, "session-1");
     expect(store.get(activeSessionIdAtom)).toBe("session-1");
   });
+
+  it("persists writes to the UI store and removes the key when cleared", async () => {
+    const { activeSessionIdAtom, uiStore } = await loadUi();
+    const store = createStore();
+    store.set(activeSessionIdAtom, "session-xyz-456");
+    expect(uiStore.readUiValue("hermes.active-session-id", null)).toBe("session-xyz-456");
+    store.set(activeSessionIdAtom, null);
+    expect(uiStore.readUiValue("hermes.active-session-id", "fallback")).toBe("fallback");
+  });
+
+  it("restores a persisted active session id after a reload (F5)", async () => {
+    const first = await loadUi();
+    createStore().set(first.activeSessionIdAtom, "session-persisted-789");
+    const second = await loadUi({ "hermes.active-session-id": "session-persisted-789" });
+    expect(createStore().get(second.activeSessionIdAtom)).toBe("session-persisted-789");
+  });
 });
 
 describe("sidebarSearchAtom", () => {
+  const ssStore: Record<string, string> = {};
+  const mockSessionStorage: Storage = {
+    getItem: (key) => ssStore[key] ?? null,
+    setItem: (key, value) => {
+      ssStore[key] = String(value);
+    },
+    removeItem: (key) => {
+      delete ssStore[key];
+    },
+    clear: () => {
+      Object.keys(ssStore).forEach((k) => delete ssStore[k]);
+    },
+    get length() {
+      return Object.keys(ssStore).length;
+    },
+    key: (index) => Object.keys(ssStore)[index] ?? null,
+  };
+
+  beforeEach(() => {
+    Object.keys(ssStore).forEach((k) => delete ssStore[k]);
+    vi.stubGlobal("sessionStorage", mockSessionStorage);
+  });
+
   it("defaults to empty string", async () => {
     const { sidebarSearchAtom } = await loadUi();
     const store = createStore();
@@ -36,6 +75,44 @@ describe("sidebarSearchAtom", () => {
     const store = createStore();
     store.set(sidebarSearchAtom, "tavily");
     expect(store.get(sidebarSearchAtom)).toBe("tavily");
+  });
+
+  it("persists the query to sessionStorage and removes it when cleared", async () => {
+    const { sidebarSearchAtom } = await loadUi();
+    const store = createStore();
+    store.set(sidebarSearchAtom, "tavily research");
+    expect(sessionStorage.getItem("hermes.sidebar-search")).toBe("tavily research");
+    store.set(sidebarSearchAtom, "");
+    expect(sessionStorage.getItem("hermes.sidebar-search")).toBeNull();
+  });
+
+  it("restores the query from sessionStorage after a module reload (F5)", async () => {
+    const first = await loadUi();
+    createStore().set(first.sidebarSearchAtom, "tavily research");
+    // F5: modules reset, sessionStorage survives
+    const second = await loadUi();
+    expect(createStore().get(second.sidebarSearchAtom)).toBe("tavily research");
+  });
+});
+
+describe("appSidebarVisibleAtom (persisted)", () => {
+  it("defaults to visible and restores a hidden sidebar", async () => {
+    const visibleUi = await loadUi();
+    expect(createStore().get(visibleUi.appSidebarVisibleAtom)).toBe(true);
+
+    const hiddenUi = await loadUi({ "hermes.app-sidebar-visible": false });
+    expect(createStore().get(hiddenUi.appSidebarVisibleAtom)).toBe(false);
+  });
+
+  it("persists visibility changes", async () => {
+    const { appSidebarVisibleAtom, uiStore } = await loadUi();
+    const store = createStore();
+    store.set(appSidebarVisibleAtom, false);
+    expect(store.get(appSidebarVisibleAtom)).toBe(false);
+    expect(uiStore.readUiValue("hermes.app-sidebar-visible", true)).toBe(false);
+
+    store.set(appSidebarVisibleAtom, true);
+    expect(uiStore.readUiValue("hermes.app-sidebar-visible", false)).toBe(true);
   });
 });
 
@@ -72,10 +149,10 @@ describe("showReasoningAtom (persisted)", () => {
 });
 
 describe("composerSubmitShortcutAtom (persisted)", () => {
-  it("defaults to Enter submit when nothing is stored", async () => {
+  it("defaults to Ctrl+Enter submit when nothing is stored", async () => {
     const { composerSubmitShortcutAtom } = await loadUi();
     const store = createStore();
-    expect(store.get(composerSubmitShortcutAtom)).toBe("enter");
+    expect(store.get(composerSubmitShortcutAtom)).toBe("ctrl-enter");
   });
 
   it("restores Ctrl+Enter submit from the UI store", async () => {
@@ -132,7 +209,7 @@ describe("conversationWidthModeAtom (persisted)", () => {
     const { conversationWidthMaxWidth } = await loadUi();
     expect(conversationWidthMaxWidth("small")).toBe("780px");
     expect(conversationWidthMaxWidth("medium")).toBe("960px");
-    expect(conversationWidthMaxWidth("large")).toBe("1006px");
+    expect(conversationWidthMaxWidth("large")).toBe("1008px");
     expect(conversationWidthMaxWidth("full")).toBe("100%");
   });
 });
@@ -229,6 +306,21 @@ describe("notification settings atoms (persisted)", () => {
   });
 });
 
+describe("rightRailVisibleAtom (persisted)", () => {
+  it("defaults to hidden and restores a persisted visible rail after reload (F5)", async () => {
+    const fresh = await loadUi();
+    expect(createStore().get(fresh.rightRailVisibleAtom)).toBe(false);
+
+    const first = await loadUi();
+    const store = createStore();
+    store.set(first.rightRailVisibleAtom, true);
+    expect(first.uiStore.readUiValue("hermes.right-rail-visible", false)).toBe(true);
+
+    const restored = await loadUi({ "hermes.right-rail-visible": true });
+    expect(createStore().get(restored.rightRailVisibleAtom)).toBe(true);
+  });
+});
+
 describe("profileSwitchingAtom", () => {
   it("defaults to { active: false }", async () => {
     const { profileSwitchingAtom } = await loadUi();
@@ -311,5 +403,61 @@ describe("assistant display profile atoms (persisted)", () => {
     store.set(assistantAvatarDataUrlAtom, "https://example.test/avatar.png");
     expect(store.get(assistantAvatarDataUrlAtom)).toBe("");
     expect(uiStore.readUiValue("hermes.assistant-avatar-data-url", "fallback")).toBe("");
+  });
+});
+
+describe("persisted atoms follow late ui-store hydration (#480)", () => {
+  it("restores common settings when the snapshot arrives after module evaluation", async () => {
+    const {
+      assistantAvatarDataUrlAtom,
+      assistantDisplayNameAtom,
+      composerSubmitShortcutAtom,
+      showReasoningAtom,
+      uiStore,
+    } = await loadUi();
+    const store = createStore();
+    const atoms = [
+      showReasoningAtom,
+      composerSubmitShortcutAtom,
+      assistantDisplayNameAtom,
+      assistantAvatarDataUrlAtom,
+    ] as const;
+    const unsubscribes = atoms.map((targetAtom) => store.sub(targetAtom, () => {}));
+
+    expect(store.get(showReasoningAtom)).toBe(false);
+    expect(store.get(composerSubmitShortcutAtom)).toBe("ctrl-enter");
+    expect(store.get(assistantDisplayNameAtom)).toBe("Hermes");
+    expect(store.get(assistantAvatarDataUrlAtom)).toBe("");
+
+    const avatar = "data:image/png;base64,AAAA";
+    uiStore.__resetUiStoreForTests({
+      "hermes.show-reasoning": true,
+      "hermes.composer-submit-shortcut": "ctrl-enter",
+      "hermes.assistant-display-name": "Claudia",
+      "hermes.assistant-avatar-data-url": avatar,
+    });
+
+    expect(store.get(showReasoningAtom)).toBe(true);
+    expect(store.get(composerSubmitShortcutAtom)).toBe("ctrl-enter");
+    expect(store.get(assistantDisplayNameAtom)).toBe("Claudia");
+    expect(store.get(assistantAvatarDataUrlAtom)).toBe(avatar);
+    unsubscribes.forEach((unsubscribe) => unsubscribe());
+  });
+
+  it("reads hydrated values on first mount without another notification", async () => {
+    const { composerSubmitShortcutAtom, showReasoningAtom, uiStore } = await loadUi();
+    uiStore.__resetUiStoreForTests({
+      "hermes.show-reasoning": true,
+      "hermes.composer-submit-shortcut": "ctrl-enter",
+    });
+
+    const store = createStore();
+    const unsubscribes = [
+      store.sub(showReasoningAtom, () => {}),
+      store.sub(composerSubmitShortcutAtom, () => {}),
+    ];
+    expect(store.get(showReasoningAtom)).toBe(true);
+    expect(store.get(composerSubmitShortcutAtom)).toBe("ctrl-enter");
+    unsubscribes.forEach((unsubscribe) => unsubscribe());
   });
 });

@@ -19,7 +19,6 @@ import {
   Globe,
   Folder,
   ImagePlus,
-  Loader2,
   MessageSquare,
   Mic,
   Plus,
@@ -27,6 +26,7 @@ import {
   Square,
   X,
 } from "lucide-react";
+import { LoadingIndicator, LoadingState } from "@hermes/shared-ui";
 import type { ModelOptionsResult } from "@hermes/protocol";
 import { fileNameFromPath } from "@/lib/composer-prompt";
 import {
@@ -102,7 +102,7 @@ import {
 import { WorkspacePickerModal } from "@/components/composer/workspace-picker";
 import { UrlDialog } from "@/components/composer/url-dialog";
 import { isSingleUrl, urlReferenceText } from "@/lib/composer-url";
-import { imageFileFromClipboardData, readClipboardImageAsFile } from "@/lib/clipboard-image";
+import { filesFromClipboardData, imageFileFromClipboardData, readClipboardImageAsFile } from "@/lib/clipboard-image";
 import { downloadExternalImageFile } from "@/lib/transport";
 import { runtime } from "@/lib/runtime";
 import { ReasoningEffortMenu } from "@/components/composer/reasoning-effort-menu";
@@ -137,6 +137,8 @@ interface GooseComposerProps {
   loading?: boolean;
   showMeta?: boolean;
   compact?: boolean;
+  /** Remove the lower corner radius when the composer sits flush with a page edge. */
+  flushBottom?: boolean;
   /** "big" makes the composer the page hero: shows a header bar (label + char count
    * + context ring) and a row of empty-state hints; textarea is taller. */
   variant?: "default" | "big";
@@ -152,6 +154,7 @@ interface GooseComposerProps {
   skillPicker?: ComposerSkillPickerProps;
   mentionPicker?: ComposerMentionPickerProps;
   contextUsage?: ComposerContextUsage | null;
+  onDraftChange?: (text: string) => void;
   /** Hide `/compress` affordances when the composer is not bound to an existing session. */
   showCompressCommand?: boolean;
   initialWorkspacePath?: string;
@@ -217,6 +220,7 @@ export function GooseComposer({
   loading = false,
   showMeta = true,
   compact = false,
+  flushBottom = false,
   variant = "default",
   headerLabel = "新任务",
   loadingPlaceholder,
@@ -227,6 +231,7 @@ export function GooseComposer({
   skillPicker,
   mentionPicker,
   contextUsage,
+  onDraftChange,
   showCompressCommand = true,
   initialWorkspacePath = "",
   voiceConfig = null,
@@ -251,7 +256,7 @@ export function GooseComposer({
   );
   const [modelLoading, setModelLoading] = useState(false);
   const [modelError, setModelError] = useState("");
-  const [modelSearch, setModelSearch] = useState("");
+  const modelButtonRef = useRef<HTMLButtonElement>(null);
   const [switchingModel, setSwitchingModel] = useState(false);
   const [selectedSkill, setSelectedSkill] = useState<ComposerSkillCandidate | null>(null);
   const [skillActiveIndex, setSkillActiveIndex] = useState(0);
@@ -515,11 +520,12 @@ export function GooseComposer({
 
   useEffect(() => {
     valueRef.current = value;
+    onDraftChange?.(value);
     const textarea = textareaRef.current;
     if (!textarea) return;
     textarea.style.height = "auto";
     textarea.style.height = `${Math.min(textarea.scrollHeight, 196)}px`;
-  }, [value]);
+  }, [onDraftChange, value]);
 
   useEffect(() => {
     voiceStatusRef.current = voiceStatus;
@@ -591,9 +597,9 @@ export function GooseComposer({
     return () => clearTimeout(timer);
   }, [mentionTokenKey]);
 
-  // Picker now groups candidates internally (recent / configured /
-  // recommended / more) from the catalog + usage log. Composer just hands it
-  // the raw model.options payload and stays out of the way.
+  // Picker now groups candidates internally (configured / recent / MoA)
+  // from the catalog + usage log. Composer just hands it the raw
+  // model.options payload and stays out of the way.
 
   const appendAttachmentDrafts = useCallback((drafts: ComposerAttachment[]) => {
     if (!drafts.length) return;
@@ -885,6 +891,7 @@ export function GooseComposer({
       attachments,
       workspacePath: workspacePath.trim() || undefined,
       modelSelection: selectedModelRef.current ?? undefined,
+      reasoningEffort: reasoningPicker?.value ?? undefined,
       skillCommandNames: skillPicker?.skills.map((skill) => skill.name),
     };
 
@@ -892,6 +899,7 @@ export function GooseComposer({
     markAttachmentsProcessing();
     try {
       await onSend?.(payload, { updateAttachment });
+      onDraftChange?.("");
       setValue("");
       setSelectedSkill(null);
       setSelectionStart(0);
@@ -1003,6 +1011,12 @@ export function GooseComposer({
     if (controlsDisabled) return;
     const clipboardData = event.clipboardData;
     const text = clipboardData.getData("text/plain");
+    const pastedFiles = filesFromClipboardData(clipboardData);
+    if (pastedFiles.length) {
+      event.preventDefault();
+      addBrowserFiles(pastedFiles);
+      return;
+    }
     const pastedImage = imageFileFromClipboardData(clipboardData);
     if (pastedImage) {
       event.preventDefault();
@@ -1170,11 +1184,12 @@ export function GooseComposer({
     };
   }, [loadModelOptions, modelOptions, modelPicker?.loadOptions, modelPickerDisabled]);
 
-  // When the parent's useModelOptions query resolves *after* this composer
-  // mounts (cache miss on first ever load), backfill our local state so the
-  // picker opens with data instead of a spinner.
+  // Keep the local picker state in sync when the parent's useModelOptions query
+  // changes. This matters after a config save: the shared query is invalidated
+  // and refetched, but the composer may already have mounted with the previous
+  // provider list.
   useEffect(() => {
-    if (modelPicker?.initialOptions && !modelOptions) {
+    if (modelPicker?.initialOptions && modelPicker.initialOptions !== modelOptions) {
       setModelOptions(modelPicker.initialOptions);
     }
   }, [modelPicker?.initialOptions, modelOptions]);
@@ -1195,6 +1210,7 @@ export function GooseComposer({
         className={s.box}
         data-disabled={disabled}
         data-drag-active={dragActive}
+        data-flush-bottom={flushBottom}
         data-variant={variant}
         onDrop={handleDrop}
         onDragEnter={handleDragEnter}
@@ -1264,7 +1280,7 @@ export function GooseComposer({
               {voiceStatus === "recording" ? (
                 <Mic aria-hidden="true" />
               ) : (
-                <Loader2 aria-hidden="true" />
+                <LoadingIndicator size="xs" />
               )}
             </span>
             <span className={s.voiceActivityText}>
@@ -1347,7 +1363,7 @@ export function GooseComposer({
               </div>
             ) : null}
             {skillToken && skillPicker?.loading && totalCandidates === 0 ? (
-              <div className={s.skillPanelState}>正在读取已启用 Skill…</div>
+              <LoadingState className={s.skillPanelState} variant="inline" label="正在读取已启用 Skill…" />
             ) : skillToken && skillPicker?.error && totalCandidates === 0 ? (
               <div className={s.skillPanelState} data-tone="error">
                 {skillPicker.error}
@@ -1396,7 +1412,7 @@ export function GooseComposer({
               <small>Enter / Tab 选择，Esc 关闭</small>
             </div>
             {mentionLoading && mentionCandidates.length === 0 ? (
-              <div className={s.skillPanelState}>正在检索…</div>
+              <LoadingState className={s.skillPanelState} variant="inline" label="正在检索…" />
             ) : mentionCandidates.length === 0 ? (
               <div className={s.skillPanelState}>没有匹配的引用</div>
             ) : (
@@ -1490,7 +1506,7 @@ export function GooseComposer({
               {voiceStatus === "recording" ? (
                 <Square className={s.toolIcon} aria-hidden="true" />
               ) : voiceStatus === "transcribing" ? (
-                <Loader2 className={s.toolIcon} aria-hidden="true" />
+                <LoadingIndicator className={s.toolIcon} size="sm" />
               ) : (
                 <Mic className={s.toolIcon} aria-hidden="true" />
               )}
@@ -1521,6 +1537,7 @@ export function GooseComposer({
             ) : null}
             {modelPicker ? (
               <button
+                ref={modelButtonRef}
                 className={s.toolButton}
                 type="button"
                 onClick={toggleModelPicker}
@@ -1595,8 +1612,6 @@ export function GooseComposer({
       </div>
       {modelOpen ? (
         <ModelPickerModal
-          modelSearch={modelSearch}
-          onSearchChange={setModelSearch}
           onClose={() => setModelOpen(false)}
           loading={modelLoading}
           error={modelError}
@@ -1616,10 +1631,7 @@ export function GooseComposer({
                 }
               : undefined
           }
-          onConfigureProvider={(providerId) => {
-            setModelOpen(false);
-            modelPicker?.onConfigureProvider?.(providerId);
-          }}
+          anchorRef={modelButtonRef}
         />
       ) : null}
       {workspacePickerOpen ? (

@@ -20,7 +20,10 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
-use crate::process::port_lock::{claim_port_set, release_orphaned_port_locks, PortLock};
+use crate::process::port_lock::{
+    claim_port_set, cleanup_stale_port_locks, pid_is_running, release_orphaned_port_locks,
+    reset_local_claims, PortLock,
+};
 use crate::state::{DashboardHandle, DashboardJobHandle};
 
 // A freshly installed onefile runtime can spend tens of seconds on macOS
@@ -116,15 +119,36 @@ fn fallback_ports(start: u16) -> Vec<u16> {
     ports
 }
 
-/// The well-known satellite ports that a desktop-managed dashboard tree may
-/// bind (webhook, proxy). These are reserved alongside the dashboard API port.
-const WELL_KNOWN_DASHBOARD_PORTS: &[u16] = &[8644, 8645];
+/// The base satellite ports that a desktop-managed dashboard tree may bind
+/// (webhook, proxy).  These are offset from ``DEFAULT_DESKTOP_DASHBOARD_PORT``
+/// so that multiple Hermes instances can coexist without colliding:
+///
+/// ```text
+///     dashboard=9120 → [9120, 8644, 8645]
+///     dashboard=9121 → [9121, 8646, 8647]
+///     dashboard=9122 → [9122, 8648, 8649]
+///     ...
+/// ```
+///
+/// Must be kept in sync with the Python ``_compute_well_known_ports`` in
+/// ``hermes_cli/main.py``.
+const SATELLITE_PORT_BASE_WEBHOOK: u16 = 8644;
+const SATELLITE_PORT_BASE_PROXY: u16 = 8645;
 
 /// Build the full set of ports to claim for a dashboard at ``dashboard_port``.
 fn ports_to_claim(dashboard_port: u16) -> Vec<u16> {
-    let mut ports = Vec::with_capacity(WELL_KNOWN_DASHBOARD_PORTS.len() + 1);
-    ports.push(dashboard_port);
-    ports.extend_from_slice(WELL_KNOWN_DASHBOARD_PORTS);
+    let offset = u32::from(dashboard_port.saturating_sub(DEFAULT_DESKTOP_DASHBOARD_PORT)) * 2;
+    let mut ports = vec![dashboard_port];
+
+    for base in [SATELLITE_PORT_BASE_WEBHOOK, SATELLITE_PORT_BASE_PROXY] {
+        let candidate = u32::from(base) + offset;
+        if let Ok(port) = u16::try_from(candidate) {
+            if !ports.contains(&port) {
+                ports.push(port);
+            }
+        }
+    }
+
     ports
 }
 
@@ -217,34 +241,8 @@ fn marker_owner_state(
     }
 }
 
-#[cfg(unix)]
-fn pid_is_running(pid: u32) -> bool {
-    if pid == 0 {
-        return false;
-    }
-    let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
-    rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-}
-
-#[cfg(windows)]
-fn pid_is_running(pid: u32) -> bool {
-    if pid == 0 {
-        return false;
-    }
-    let filter = format!("PID eq {}", pid);
-    let Ok(output) = Command::new("tasklist")
-        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
-        .output()
-    else {
-        return false;
-    };
-    String::from_utf8_lossy(&output.stdout).contains(&pid.to_string())
-}
-
-#[cfg(not(any(unix, windows)))]
-fn pid_is_running(_pid: u32) -> bool {
-    false
-}
+// pid_is_running is imported from port_lock.rs (the single canonical
+// implementation, using OpenProcess on Windows and libc::kill on Unix).
 
 fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> bool {
     let start = Instant::now();
@@ -971,10 +969,79 @@ fn resolve_hermes_command(allow_external_agent: bool) -> Result<(String, Vec<Str
 }
 
 /// Spawn the hermes dashboard subprocess.
+const MANAGED_TAVILY_BASE_URL: &str = "https://tavily.fengchiyun.com";
+// This is an intentionally extractable desktop credential. The proxy only
+// authorizes it for POST /search and POST /extract.
+const MANAGED_TAVILY_ACCESS_KEY: &str = "3JElum7mkWtDU8IzA8rZERBekzzcYyNkW-v0iAhArkI";
+
+fn configure_managed_web_provider(cmd: &mut Command) {
+    // Keep the Core provider and user-facing name as "Tavily", but route it
+    // through the operator-owned Tavily-compatible proxy.
+    cmd.env("TAVILY_BASE_URL", MANAGED_TAVILY_BASE_URL)
+        .env("TAVILY_API_KEY", MANAGED_TAVILY_ACCESS_KEY);
+}
+
+fn enforce_managed_web_provider_config(hermes_home: &str) -> Result<(), AppError> {
+    let home = Path::new(hermes_home);
+    fs::create_dir_all(home).map_err(|error| {
+        AppError::FileError(format!(
+            "create managed Hermes home {}: {error}",
+            home.display()
+        ))
+    })?;
+    let config_path = home.join("config.yaml");
+    let mut config: serde_yaml::Value = if config_path.exists() {
+        serde_yaml::from_slice(&fs::read(&config_path).map_err(|error| {
+            AppError::FileError(format!("read {}: {error}", config_path.display()))
+        })?)
+        .map_err(|error| AppError::FileError(format!("parse {}: {error}", config_path.display())))?
+    } else {
+        serde_yaml::Value::Mapping(Default::default())
+    };
+
+    let root = config.as_mapping_mut().ok_or_else(|| {
+        AppError::FileError(format!(
+            "{} root must be a YAML mapping",
+            config_path.display()
+        ))
+    })?;
+    let web = root
+        .entry(serde_yaml::Value::String("web".into()))
+        .or_insert_with(|| serde_yaml::Value::Mapping(Default::default()));
+    let web = web.as_mapping_mut().ok_or_else(|| {
+        AppError::FileError(format!(
+            "{}.web must be a YAML mapping",
+            config_path.display()
+        ))
+    })?;
+    for key in ["search_backend", "extract_backend"] {
+        web.insert(
+            serde_yaml::Value::String(key.into()),
+            serde_yaml::Value::String("tavily".into()),
+        );
+    }
+
+    let output = serde_yaml::to_string(&config)
+        .map_err(|error| AppError::FileError(format!("serialize config.yaml: {error}")))?;
+    if fs::read_to_string(&config_path).ok().as_deref() == Some(output.as_str()) {
+        return Ok(());
+    }
+
+    let mut temp = tempfile::NamedTempFile::new_in(home)
+        .map_err(|error| AppError::FileError(format!("create temporary config.yaml: {error}")))?;
+    temp.write_all(output.as_bytes())
+        .and_then(|_| temp.flush())
+        .map_err(|error| AppError::FileError(format!("write config.yaml: {error}")))?;
+    temp.persist(&config_path)
+        .map_err(|error| AppError::FileError(format!("replace config.yaml: {}", error.error)))?;
+    Ok(())
+}
+
 fn spawn_dashboard(
     options: &EnsureDashboardOptions,
     claimed_ports: Vec<u16>,
 ) -> Result<SpawnedDashboard, AppError> {
+    enforce_managed_web_provider_config(&options.hermes_home)?;
     let (program, mut prefix_args) = resolve_hermes_command(options.allow_external_agent)?;
 
     let api_args = vec![
@@ -1015,6 +1082,30 @@ fn spawn_dashboard(
     let gateway_lock_dir = gateway_runtime_dir.join("token-locks");
     let _ = std::fs::create_dir_all(&gateway_lock_dir);
     let _ = std::fs::create_dir_all(&gateway_runtime_dir);
+    if let Some(record) = crate::process::runtime::read_current_record() {
+        match crate::process::gateway::preflight_managed_gateway_restart(
+            &record,
+            &options.hermes_home,
+            &gateway_runtime_dir,
+            &gateway_lock_dir,
+        ) {
+            Ok(report) => {
+                if report.stop_attempted
+                    || report.stale_files_removed > 0
+                    || !report.remaining_pids.is_empty()
+                    || report.lock_active
+                {
+                    log::info!(
+                        "Gateway preflight before dashboard spawn: {}",
+                        report.summary()
+                    );
+                }
+            }
+            Err(err) => {
+                log::warn!("Gateway preflight before dashboard spawn failed: {}", err);
+            }
+        }
+    }
     cmd.args(&prefix_args)
         .env("HERMES_HOME", &options.hermes_home)
         .env(
@@ -1034,6 +1125,7 @@ fn spawn_dashboard(
             "HERMES_DASHBOARD_PREWARM_AGENT",
             std::env::var("HERMES_DASHBOARD_PREWARM_AGENT").unwrap_or_else(|_| "0".to_string()),
         );
+    configure_managed_web_provider(&mut cmd);
     if let Some(token) = session_token.as_deref() {
         cmd.env("HERMES_DASHBOARD_SESSION_TOKEN", token);
     }
@@ -1068,6 +1160,7 @@ fn spawn_dashboard(
     cmd.env("HERMES_GATEWAY_LOCK_DIR", &gateway_lock_dir)
         .env("HERMES_GATEWAY_RUNTIME_DIR", &gateway_runtime_dir)
         .env("HERMES_DESKTOP_MANAGED", "1")
+        .env("HERMES_DESKTOP", "1")
         .env("HERMES_GATEWAY_DETACHED", "1");
     // Identity-proving readiness channel: the kernel atomically writes
     // {"port": N} here once its socket is bound (Core:
@@ -1334,6 +1427,10 @@ async fn wait_for_spawned_dashboard(
 pub async fn ensure_hermes_dashboard(
     options: EnsureDashboardOptions,
 ) -> Result<DashboardHandle, AppError> {
+    // Clean up stale locks left by previous dead processes so they do not
+    // interfere with port allocation or fallback decisions.
+    cleanup_stale_port_locks(Path::new(&options.hermes_home));
+
     // Coordinate port usage with other Hermes instances (desktop, CLI
     // dashboards, gateways, proxies) before doing any network probes. We claim
     // the dashboard API port plus the well-known satellite ports (webhook,
@@ -1535,13 +1632,21 @@ pub async fn ensure_hermes_dashboard(
 
     // The effective port set is lock-claimed by us, yet something incompatible
     // still answers on it: an uncoordinated process (non-Hermes service, or a
-    // Hermes runtime predating port locks) is bound there. Shifting away
-    // silently would leak such collisions forever, so surface the conflict.
+    // Hermes runtime predating port locks / using a different HERMES_HOME) is
+    // bound there. In production we allow a bounded port fallback instead of
+    // forcing the user to stop the other process; dev builds surface the
+    // collision immediately because the Vite proxy target is fixed.
     if primary_occupied {
-        return Err(AppError::DashboardStartup(format!(
-            "{} is already occupied by another service. Stop the process on port {} so the desktop can spawn its managed runtime dashboard.",
-            api_base_url, effective_port
-        )));
+        if !options.allow_port_fallback {
+            return Err(AppError::DashboardStartup(format!(
+                "{} is already occupied by another service. Stop the process on port {} so the desktop can spawn its managed runtime dashboard.",
+                api_base_url, effective_port
+            )));
+        }
+        log::warn!(
+            "{} is occupied by another service; will attempt port fallback",
+            api_base_url
+        );
     }
 
     let mut spawn_options = EnsureDashboardOptions {
@@ -1569,6 +1674,9 @@ pub async fn ensure_hermes_dashboard(
             // scan. Release the old claim first — the new candidate (possibly
             // the same port) gets a fresh atomic claim of its full port set.
             drop(std::mem::take(&mut port_locks));
+            // Ensure no stale local claims remain from the dropped locks so
+            // the re-claim below gets real OS locks (not no-op handles).
+            reset_local_claims();
             let next = std::iter::once(options.port)
                 .chain(fallback_ports(options.port))
                 .filter(|port| {
@@ -1706,6 +1814,45 @@ mod tests {
 
         std::env::remove_var("HERMES_DESKTOP_ALLOW_EXTERNAL_AGENT");
         std::env::remove_var("HERMES_DESKTOP_DEV_EXTERNAL_DASHBOARD");
+    }
+
+    #[test]
+    fn managed_web_provider_uses_operator_tavily_proxy() {
+        let mut cmd = Command::new("hermes");
+        configure_managed_web_provider(&mut cmd);
+        let envs: std::collections::HashMap<_, _> = cmd
+            .get_envs()
+            .filter_map(|(key, value)| value.map(|value| (key.to_owned(), value.to_owned())))
+            .collect();
+
+        assert_eq!(
+            envs.get(std::ffi::OsStr::new("TAVILY_BASE_URL")),
+            Some(&std::ffi::OsString::from(MANAGED_TAVILY_BASE_URL))
+        );
+        assert_eq!(
+            envs.get(std::ffi::OsStr::new("TAVILY_API_KEY")),
+            Some(&std::ffi::OsString::from(MANAGED_TAVILY_ACCESS_KEY))
+        );
+    }
+
+    #[test]
+    fn managed_web_provider_config_preserves_other_values_and_forces_tavily() {
+        let home = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            home.path().join("config.yaml"),
+            "model: test-model\nweb:\n  backend: exa\n  search_backend: parallel\n",
+        )
+        .expect("seed config");
+
+        enforce_managed_web_provider_config(home.path().to_str().expect("utf-8 path"))
+            .expect("enforce provider config");
+
+        let config: serde_yaml::Value =
+            serde_yaml::from_slice(&fs::read(home.path().join("config.yaml")).unwrap()).unwrap();
+        assert_eq!(config["model"].as_str(), Some("test-model"));
+        assert_eq!(config["web"]["backend"].as_str(), Some("exa"));
+        assert_eq!(config["web"]["search_backend"].as_str(), Some("tavily"));
+        assert_eq!(config["web"]["extract_backend"].as_str(), Some("tavily"));
     }
 
     #[test]
@@ -2166,5 +2313,45 @@ mod tests {
             "live-foreign marker must collapse to stale adoption, not live attach"
         );
         std::env::remove_var("HERMES_DESKTOP_RUNTIME_ROOT");
+    }
+
+    // ── Bug 2: Satellite port offset ─────────────────────────────────
+
+    #[test]
+    fn ports_to_claim_offsets_satellite_ports() {
+        // dashboard=9120 → [9120, 8644, 8645]
+        let ports = ports_to_claim(9120);
+        assert_eq!(ports, vec![9120, 8644, 8645]);
+
+        // dashboard=9121 → [9121, 8646, 8647]
+        let ports = ports_to_claim(9121);
+        assert_eq!(ports, vec![9121, 8646, 8647]);
+
+        // dashboard=9130 → [9130, 8664, 8665]
+        let ports = ports_to_claim(9130);
+        assert_eq!(ports, vec![9130, 8664, 8665]);
+    }
+
+    #[test]
+    fn ports_to_claim_omits_satellites_outside_u16_range() {
+        assert_eq!(ports_to_claim(u16::MAX), vec![u16::MAX]);
+    }
+
+    #[test]
+    fn fallback_ports_each_have_unique_satellite_ports() {
+        use std::collections::HashSet;
+
+        let mut all_ports: HashSet<u16> = HashSet::new();
+        for offset in 0..=20 {
+            let dashboard_port = DEFAULT_DESKTOP_DASHBOARD_PORT + offset;
+            for p in ports_to_claim(dashboard_port) {
+                assert!(
+                    all_ports.insert(p),
+                    "port {} collides between offset {} and another",
+                    p,
+                    offset
+                );
+            }
+        }
     }
 }

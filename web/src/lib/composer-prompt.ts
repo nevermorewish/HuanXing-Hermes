@@ -3,7 +3,7 @@ import {
   type ComposerAttachment,
   type ComposerSubmitPayload,
 } from "@/components/chat/composer-types";
-import type { AttachmentUploadResult, ImageAttachResult, InputDetectDropResult } from "@hermes/protocol";
+import type { AttachmentUploadResult, FileAttachResult, ImageAttachResult, InputDetectDropResult } from "@hermes/protocol";
 
 const WORKSPACE_BLOCK_START = "[Hermes UI Workspace]";
 const WORKSPACE_BLOCK_END = "[/Hermes UI Workspace]";
@@ -11,8 +11,17 @@ const WORKSPACE_BLOCK_RE = /\n?\[Hermes UI Workspace\]\nworkspace=[^\n]*\ninstru
 const IMAGE_BLOCK_START = "[Hermes UI Image]";
 const IMAGE_BLOCK_END = "[/Hermes UI Image]";
 const IMAGE_BLOCK_RE = /\n?\[Hermes UI Image\]\nname=([^\n]*)\ndescription:\n[\s\S]*?\n\[\/Hermes UI Image\]\n?/g;
+const IMAGE_ATTACHED_AT_RE = /\n?\[Image attached at: [^\]\n]+\]\n?(?:\[[^\]\n]*\])?\n?/g;
 const IMAGE_FALLBACK_PREAMBLE_RE = /\n?\[The user attached an image(?: but analysis failed)?\.\]\n\[You can examine it with vision_analyze using image_url: [^\]\n]+\]\n?/g;
+const IMAGE_FULL_PREAMBLE_RE = /\n?\[The user attached an image[\s\S]*?\]\n?\[(?:If you need a closer look,? use|You can examine it with) vision_analyze (?:with |using )?image_url: [^\]\n]+\]\n?/g;
 const LEGACY_IMAGE_BLOCK_RE = /^\s*\[User attached image: ([^\]\n]+)\]\n[\s\S]*$/;
+const ATTACHED_CONTEXT_MARKER_RE = /(?:^|\n)--- Attached Context ---\s*\n/;
+const CONTEXT_WARNINGS_MARKER_RE = /(?:^|\n)--- Context Warnings ---[\s\S]*$/;
+const CONTEXT_REF_RE = /@(file|folder|url|image|tool|terminal):(?:"[^"\n]+"|'[^'\n]+'|`[^`\n]+`|\S+)/g;
+const FILE_DIRECTIVE_LINE_RE = /^@file:(?:`[^`\n]+`|"[^"\n]+"|'[^'\n]+'|\S+)\s*$/;
+const IMAGE_DIRECTIVE_LINE_RE = /^@image:(`[^`\n]+`|"[^"\n]+"|'[^'\n]+'|\S+)\s*$/gm;
+const SCREENSHOT_PLACEHOLDER_LINE_RE = /^\[screenshot\]\s*$/gm;
+const DESKTOP_ATTACHMENT_DIR = ".hermes/desktop-attachments/";
 
 const IMAGE_EXTENSIONS = new Set([
   ".apng",
@@ -61,22 +70,126 @@ function stripLegacyImageContext(value: string, labels: string[]): string {
   return lastSeparator >= 0 ? body.slice(lastSeparator + 2) : "";
 }
 
+function contextRefPath(ref: string): string {
+  const separator = ref.indexOf(":");
+  let path = separator >= 0 ? ref.slice(separator + 1) : ref;
+  const quote = path[0];
+  if ((quote === "\"" || quote === "'" || quote === "`") && path.endsWith(quote)) {
+    path = path.slice(1, -1);
+  }
+  return path.replace(/\\/g, "/");
+}
+
+export function extractHermesImageDirectivePaths(value: string | null | undefined): string[] {
+  return [...(value ?? "").matchAll(IMAGE_DIRECTIVE_LINE_RE)]
+    .map((match) => contextRefPath(`@image:${match[1] ?? ""}`))
+    .filter(Boolean);
+}
+
+function stripHermesImageDirectives(value: string, labels: string[]): string {
+  const paths = extractHermesImageDirectivePaths(value);
+  if (paths.length === 0) return value;
+  paths.forEach((path) => labels.push(fileNameFromPath(path)));
+  return value
+    .replace(IMAGE_DIRECTIVE_LINE_RE, "")
+    .replace(SCREENSHOT_PLACEHOLDER_LINE_RE, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function isAbsoluteProfileAttachment(path: string): boolean {
+  if (!/^(?:\/|[A-Za-z]:\/|\/\/)/.test(path)) return false;
+  const parts = path.split("/").filter(Boolean);
+  return parts.length >= 2 && parts[parts.length - 2] === "attachments";
+}
+
+function desktopAttachmentLabel(ref: string): string | null {
+  if (!ref.startsWith("@file:")) return null;
+  const path = contextRefPath(ref);
+  if (
+    !path.startsWith(DESKTOP_ATTACHMENT_DIR) &&
+    !path.includes(`/${DESKTOP_ATTACHMENT_DIR}`) &&
+    !isAbsoluteProfileAttachment(path)
+  ) {
+    return null;
+  }
+  return fileNameFromPath(path);
+}
+
+function removeStandaloneRefLine(value: string, ref: string): string | null {
+  const lines = value.split("\n");
+  const next = lines.filter((line) => line.trim() !== ref);
+  return next.length === lines.length ? null : next.join("\n");
+}
+
+function stripDesktopFileDirectiveLines(value: string, labels: string[]): string {
+  return value
+    .split("\n")
+    .filter((line) => {
+      const ref = line.trim();
+      if (!FILE_DIRECTIVE_LINE_RE.test(ref)) return true;
+      const label = desktopAttachmentLabel(ref);
+      if (!label) return true;
+      labels.push(label);
+      return false;
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function stripAttachedContext(value: string, labels: string[]): string {
+  const marker = value.match(ATTACHED_CONTEXT_MARKER_RE);
+  if (!marker || marker.index === undefined) {
+    return value.replace(CONTEXT_WARNINGS_MARKER_RE, "");
+  }
+
+  const context = value.slice(marker.index + marker[0].length);
+  let visible = value.slice(0, marker.index).replace(CONTEXT_WARNINGS_MARKER_RE, "");
+  const refs = [...new Set(context.match(CONTEXT_REF_RE) ?? [])];
+
+  for (const ref of refs) {
+    const label = desktopAttachmentLabel(ref);
+    if (!label) continue;
+    const nextVisible = removeStandaloneRefLine(visible, ref);
+    if (nextVisible === null) continue;
+    labels.push(label);
+    visible = nextVisible;
+  }
+
+  return visible.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function stripHermesUiWorkspaceContext(text: string | null | undefined): string {
   let value = (text ?? "")
+    .replace(IMAGE_ATTACHED_AT_RE, "")
     .replace(IMAGE_FALLBACK_PREAMBLE_RE, "")
+    .replace(IMAGE_FULL_PREAMBLE_RE, "")
     .replace(WORKSPACE_BLOCK_RE, "");
-  const imageLabels: string[] = [];
+  const contextAttachmentLabels: string[] = [];
+  const imageBlockLabels: string[] = [];
+  const nativeImageLabels: string[] = [];
+
+  value = stripAttachedContext(value, contextAttachmentLabels);
+  value = stripDesktopFileDirectiveLines(value, contextAttachmentLabels);
 
   value = value.replace(IMAGE_BLOCK_RE, (_block, label: string) => {
     const name = label.trim();
-    if (name) imageLabels.push(name);
+    if (name) imageBlockLabels.push(name);
     return "\n";
   });
-  value = stripLegacyImageContext(value, imageLabels).trim();
+  value = stripHermesImageDirectives(value, nativeImageLabels);
+  value = stripLegacyImageContext(value, imageBlockLabels).trim();
 
-  if (imageLabels.length === 0) return value.trimEnd();
+  const attachmentLabels = [
+    ...contextAttachmentLabels,
+    ...imageBlockLabels,
+    ...(imageBlockLabels.length === 0 ? nativeImageLabels : []),
+  ];
+  const labels = [...new Set(attachmentLabels)];
+  if (labels.length === 0) return value.trimEnd();
 
-  const suffix = attachmentSuffix(imageLabels);
+  const suffix = attachmentSuffix(labels);
   return value ? `${value}\n\n${suffix}` : suffix;
 }
 
@@ -143,6 +256,12 @@ export async function prepareComposerPrompt(
       contentBase64: string,
       filename?: string,
     ): Promise<ImageAttachResult>;
+    attachFile?(
+      sessionId: string,
+      path?: string,
+      dataUrl?: string,
+      name?: string,
+    ): Promise<FileAttachResult>;
     // True when attached to a remote gateway: it can't read this machine's
     // paths, so image bytes must be uploaded (matches the official desktop's
     // `remote ? attach_bytes : attach{path}`).
@@ -152,6 +271,7 @@ export async function prepareComposerPrompt(
     readImageBytes?(
       path: string,
     ): Promise<{ contentBase64: string; filename: string } | null>;
+    readFileDataUrl?(path: string): Promise<string | null>;
     detectDroppedPath(sessionId: string, path: string): Promise<InputDetectDropResult>;
     onAttachmentUpdate?(id: string, patch: Partial<ComposerAttachment>): void;
   },
@@ -254,7 +374,10 @@ export async function prepareComposerPrompt(
         }
 
         if (attached.text?.trim()) {
-          const label = attached.name || uploadedName || attachment.name || fileNameFromPath(path);
+          // Core deliberately renames byte uploads to a collision-safe storage
+          // filename. Keep the user-facing source name in the persisted UI
+          // marker so a history reload can pair that label with the safe path.
+          const label = attachment.name || uploadedName || attached.name || fileNameFromPath(path);
           parts.push([
             IMAGE_BLOCK_START,
             `name=${sanitizeContextValue(label)}`,
@@ -263,7 +386,7 @@ export async function prepareComposerPrompt(
             IMAGE_BLOCK_END,
           ].join("\n"));
         }
-        const label = attached.name || uploadedName || attachment.name || fileNameFromPath(path);
+        const label = attachment.name || uploadedName || attached.name || fileNameFromPath(path);
         displayImages.push({
           url: await imageDisplayUrl(attachment, attached.path || path),
           alt: label,
@@ -275,9 +398,56 @@ export async function prepareComposerPrompt(
         continue;
       }
 
-      // Non-image attachments. A browser File with no path still needs the REST
-      // upload (uncommon in the desktop: pickers/drag supply real paths, paste
-      // produces images).
+      if (attachment.kind === "directory") {
+        if (!path) {
+          throw new Error("附件缺少可读取路径");
+        }
+        helpers.onAttachmentUpdate?.(attachment.id, { status: "processing" });
+        parts.push(`[User attached directory: ${path}]`);
+        helpers.onAttachmentUpdate?.(attachment.id, { status: "done", progress: 100 });
+        continue;
+      }
+
+      if (helpers.attachFile) {
+        helpers.onAttachmentUpdate?.(attachment.id, {
+          status: "uploading",
+          progress: attachment.file ? 0 : undefined,
+          error: undefined,
+        });
+        const name = attachment.name || uploadedName || fileNameFromPath(path);
+        const dataUrl = attachment.file
+          ? await readFileAsDataUrl(attachment.file)
+          : helpers.remote && path && helpers.readFileDataUrl
+            ? await helpers.readFileDataUrl(path)
+            : undefined;
+        if (!path && !dataUrl) {
+          throw new Error("无法读取文件数据");
+        }
+        const attached = await helpers.attachFile(sessionId, path || undefined, dataUrl || undefined, name);
+        if (attached.attached === false) {
+          throw new Error(attached.ref_text || "文件附件未能添加");
+        }
+        const refText = attached.ref_text || (attached.ref_path ? `@file:${attached.ref_path}` : "");
+        if (refText) {
+          parts.push(refText);
+        } else if (attached.path) {
+          parts.push(`[User attached file: ${attached.path}]`);
+        } else {
+          parts.push(`[User attached file: ${path || name}]`);
+        }
+        helpers.onAttachmentUpdate?.(attachment.id, {
+          source: "uploaded",
+          uploadedPath: attached.path,
+          uploadedName: attached.name || uploadedName || name,
+          path: attached.path || path,
+          mimeType: attachment.mimeType,
+          status: "done",
+          progress: 100,
+        });
+        continue;
+      }
+
+      // Legacy fallback for runtimes without the gateway file.attach method.
       if (!path && attachment.file) {
         if (!helpers.uploadFile) {
           throw new Error("当前环境不支持上传这个附件");
@@ -312,12 +482,6 @@ export async function prepareComposerPrompt(
       }
 
       helpers.onAttachmentUpdate?.(attachment.id, { status: "processing" });
-      if (attachment.kind === "directory") {
-        parts.push(`[User attached directory: ${path}]`);
-        helpers.onAttachmentUpdate?.(attachment.id, { status: "done", progress: 100 });
-        continue;
-      }
-
       const dropped = await helpers.detectDroppedPath(sessionId, path);
       if (dropped.matched && typeof dropped.text === "string" && dropped.text.trim()) {
         parts.push(dropped.text.trim());

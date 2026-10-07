@@ -1,5 +1,5 @@
 import { createStore } from "jotai/vanilla";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { HermesMessagePart, HermesUIMessage } from "@hermes/protocol";
 import {
   applyGatewayEventAtom,
@@ -45,6 +45,28 @@ function runtimeMessage(overrides: Partial<HermesUIMessage>): HermesUIMessage {
     ...overrides,
   };
 }
+
+describe("gwSessionIdAtom (persisted)", () => {
+  it("persists writes to the UI store and removes the key when cleared", async () => {
+    vi.resetModules();
+    const uiStore = await import("@/lib/ui-store");
+    uiStore.__resetUiStoreForTests();
+    const chat = await import("./chat");
+    const store = createStore();
+    store.set(chat.gwSessionIdAtom, "gws-live-789");
+    expect(uiStore.readUiValue("hermes.gateway-session-id", null)).toBe("gws-live-789");
+    store.set(chat.gwSessionIdAtom, null);
+    expect(uiStore.readUiValue("hermes.gateway-session-id", "fallback")).toBe("fallback");
+  });
+
+  it("restores a persisted gateway session id after a reload (F5)", async () => {
+    vi.resetModules();
+    const uiStore = await import("@/lib/ui-store");
+    uiStore.__resetUiStoreForTests({ "hermes.gateway-session-id": "gws-persisted-456" });
+    const chat = await import("./chat");
+    expect(createStore().get(chat.gwSessionIdAtom)).toBe("gws-persisted-456");
+  });
+});
 
 describe("chat runtime reducer", () => {
   it("uses message.complete payload even when no deltas were received", () => {
@@ -633,11 +655,6 @@ describe("chat runtime reducer", () => {
     expect(rt.statusUpdatedAt).toBeUndefined();
     expect(assistantMessage(rt).parts).toEqual([{ type: "text", text: "hello" }]);
   });
-
-  it("exports action atoms used for per-session updates", () => {
-    expect(startPromptAtom).toBeDefined();
-    expect(chatRuntimeBySessionAtom).toBeDefined();
-  });
 });
 
 describe("full conversation lifecycle", () => {
@@ -848,6 +865,55 @@ describe("startPromptAtom", () => {
     ]);
     expect(runtime.activeAssistantId).toBe("live-assistant-5");
     expect(runtime.streamStatus).toBe("streaming");
+  });
+
+  it("keeps optimistic progress until the backend emits turn events", () => {
+    // The chat store is driven only by gateway events, so an acknowledged
+    // prompt without message.* events remains in its optimistic state.
+    const store = createStore();
+    store.set(startPromptAtom, { sessionId: "s1", text: "hello", now: 5 });
+
+    // The gateway RPC response (raw frame) resolves `prompt.submit`, but no
+    // message.start / message.complete events arrive. Nothing in the store
+    // clears the optimistic progress.
+    const runtime = store.get(chatRuntimeBySessionAtom).s1;
+    expect(runtime.streamStatus).toBe("streaming");
+    expect(runtime.activeAssistantId).toBe("live-assistant-5");
+    expect(assistantMessage(runtime).parts).toEqual([
+      { type: "progress", text: "正在唤醒Hermes..." },
+    ]);
+  });
+
+  it("resolves optimistic progress when Core streams message.start + message.complete", () => {
+    // Real Core owns the streamed turn. Applying its events must replace the
+    // optimistic progress with the final assistant reply.
+    const store = createStore();
+    store.set(startPromptAtom, { sessionId: "s1", text: "hello", now: 5 });
+
+    store.set(chatRuntimeBySessionAtom, (state) => {
+      let rt = state.s1;
+      rt = reduceGatewayEvent(rt, {
+        type: "message.start",
+        session_id: "s1",
+        payload: {},
+      }, 6);
+      rt = reduceGatewayEvent(rt, {
+        type: "message.complete",
+        session_id: "s1",
+        payload: { text: "真实回复：hello", status: "complete" },
+      }, 7);
+      return { ...state, s1: rt };
+    });
+
+    const runtime = store.get(chatRuntimeBySessionAtom).s1;
+    expect(runtime.streamStatus).toBe("complete");
+    expect(runtime.activeAssistantId).toBeUndefined();
+    expect(runtime.turnStartedAt).toBeUndefined();
+    expect(assistantMessage(runtime).status).toBe("complete");
+    expect(assistantMessage(runtime).parts).toEqual([
+      { type: "text", text: "真实回复：hello" },
+    ]);
+    expect(assistantMessage(runtime).parts.some((p) => p.type === "progress")).toBe(false);
   });
 
 
@@ -1246,5 +1312,79 @@ describe("lastActivityAt (stall watchdog source)", () => {
       10,
     );
     expect(assistantMessage(thinking).parts).toEqual([{ type: "progress", text: placeholder }]);
+  });
+
+  describe("empty message.delta should not create messages", () => {
+    it("message.delta with empty text should NOT create a new assistant message when no turn is active", () => {
+      // Simulate the real bug: backend emits empty-string deltas during
+      // reasoning-to-content transitions, WITHOUT a preceding message.start.
+      const now = 1000;
+      let runtime = createEmptyChatRuntime(now);
+      const messageCountBefore = runtime.messages.length;
+
+      // Send an empty delta — this should be a no-op
+      runtime = reduceGatewayEvent(
+        runtime,
+        {
+          type: "message.delta",
+          session_id: "s1",
+          payload: { text: "" },
+        },
+        now + 1,
+      );
+
+      const messageCountAfter = runtime.messages.length;
+
+      // without the fix, empty delta creates an assistant message with parts: []
+      expect(messageCountAfter).toBe(messageCountBefore);
+    });
+
+    it("message.delta with real text should create an assistant message normally", () => {
+      const now = 1000;
+      let runtime = createEmptyChatRuntime(now);
+
+      runtime = reduceGatewayEvent(
+        runtime,
+        {
+          type: "message.delta",
+          session_id: "s1",
+          payload: { text: "Hello, world!" },
+        },
+        now + 1,
+      );
+
+      const assistant = runtime.messages.find((m) => m.role === "assistant");
+      expect(assistant).toBeDefined();
+      expect(assistant!.parts.length).toBeGreaterThan(0);
+      const text = textFromParts(assistant!.parts);
+      expect(text).toBe("Hello, world!");
+    });
+
+    it("message.complete removes empty assistant message (existing safety)", () => {
+      const now = 1000;
+      let runtime = createEmptyChatRuntime(now);
+      runtime = reduceGatewayEvent(
+        runtime,
+        {
+          type: "message.start",
+          session_id: "s1",
+        },
+        now,
+      );
+      // Complete with empty text and no reasoning — parts.length === 0 → removed
+      runtime = reduceGatewayEvent(
+        runtime,
+        {
+          type: "message.complete",
+          session_id: "s1",
+          payload: { text: "" },
+        },
+        now + 1,
+      );
+
+      // Should have no assistant message after complete with empty parts
+      const assistants = runtime.messages.filter((m) => m.role === "assistant");
+      expect(assistants).toHaveLength(0);
+    });
   });
 });

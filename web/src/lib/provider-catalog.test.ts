@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchExternalJSON } from "./transport";
+import { BRAND } from "./brand.generated";
 import {
   BUILTIN_PROVIDER_CATALOG,
+  BUILTIN_PROVIDER_CATALOG_VERSION,
   buildCurrentModelConfigUpdate,
   buildCustomProviderDeleteUpdate,
   buildProviderConfigUpdate,
@@ -12,6 +14,7 @@ import {
   chatEndpointPreviewUrl,
   customProviderPresetsFromConfig,
   detectCustomApiModeFromUrl,
+  ensureBrandProviderModelDeclared,
   fetchRemoteProviderCatalog,
   mergeProviderCatalog,
   getProviderCredentialPreview,
@@ -36,6 +39,79 @@ const mockedFetchExternalJSON = vi.mocked(fetchExternalJSON);
 
 beforeEach(() => {
   mockedFetchExternalJSON.mockReset();
+});
+
+describe("ensureBrandProviderModelDeclared", () => {
+  it("pins a hidden brand alias and disables live discovery", () => {
+    const providerId = `custom:${BRAND.providerKey}`;
+    const config = {
+      providers: {
+        [providerId]: {
+          name: BRAND.appName,
+          base_url: `${BRAND.serviceUrl}v1`,
+          api_key: "sk-test",
+          models: { "deepseek-v4-flash": {} },
+        },
+      },
+    };
+
+    const next = ensureBrandProviderModelDeclared(config, providerId, "claude-opus-5");
+    expect(next?.providers[providerId]).toMatchObject({
+      discover_models: false,
+      models: {
+        "deepseek-v4-flash": {},
+        "claude-opus-5": {},
+      },
+    });
+  });
+
+  it("does not create or modify unrelated providers", () => {
+    const config = {
+      providers: {
+        "custom:other": { base_url: "https://example.com/v1", models: {} },
+      },
+    };
+    expect(ensureBrandProviderModelDeclared(config, "custom:other", "claude-opus-5")).toBe(config);
+  });
+});
+
+describe("builtin provider catalog", () => {
+  it("ships the current Kimi and SiliconFlow coding models", () => {
+    expect(BUILTIN_PROVIDER_CATALOG_VERSION).toBe("2026.07.26.1");
+
+    const kimi = BUILTIN_PROVIDER_CATALOG.providers.find((provider) => provider.id === "kimi-for-coding");
+    expect(kimi).toMatchObject({
+      defaultModel: "kimi-k3",
+      models: expect.arrayContaining([
+        expect.objectContaining({
+          id: "kimi-k3",
+          contextWindow: 1_000_000,
+          supportsTools: true,
+          supportsReasoning: true,
+          supportsVision: true,
+        }),
+        expect.objectContaining({
+          id: "kimi-k2.7-code-highspeed",
+          contextWindow: 262_144,
+          supportsTools: true,
+          supportsReasoning: true,
+          supportsVision: true,
+        }),
+      ]),
+    });
+
+    const siliconflow = BUILTIN_PROVIDER_CATALOG.providers.find((provider) => provider.id === "siliconflow");
+    expect(siliconflow?.models).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "deepseek-ai/DeepSeek-V4-Flash",
+          contextWindow: 1_049_000,
+          supportsTools: true,
+          supportsReasoning: true,
+        }),
+      ]),
+    );
+  });
 });
 
 describe("provider catalog config updates", () => {
@@ -155,6 +231,39 @@ describe("provider catalog config updates", () => {
     const removed = buildCustomProviderDeleteUpdate(updated, "custom:zijian");
     expect(removed.custom_providers).toEqual([]);
     expect(removed.providers).toEqual({});
+  });
+
+  // Core replaces the whole `providers` map when the desktop saves config, so
+  // deleting the account provider also drops every ccwork model sharing that
+  // map — leaving the picker empty until the next account refresh.
+  it("refuses to delete the account-provisioned provider", () => {
+    const config = {
+      model: { provider: "deepseek", default: "deepseek-v4-pro" },
+      providers: {
+        [`custom:acct-${BRAND.providerKey}`]: { base_url: "http://127.0.0.1:1/v1" },
+        [`custom:acct-${BRAND.providerKey}-messages`]: { base_url: "http://127.0.0.1:1/v1" },
+        [`custom:${BRAND.providerKey}`]: { base_url: "https://account.example/v1" },
+        "custom:user-mine": { base_url: "http://localhost:3000/v1" },
+      },
+    };
+
+    for (const id of [
+      `custom:acct-${BRAND.providerKey}`,
+      `custom:acct-${BRAND.providerKey}-messages`,
+      `custom:${BRAND.providerKey}`,
+    ]) {
+      expect(() => buildCustomProviderDeleteUpdate(config, id)).toThrow(
+        /ccwork 统一管理/,
+      );
+    }
+
+    // The user's own saved model stays deletable.
+    expect(buildCustomProviderDeleteUpdate(config, "custom:user-mine").providers)
+      .toEqual({
+        [`custom:acct-${BRAND.providerKey}`]: { base_url: "http://127.0.0.1:1/v1" },
+        [`custom:acct-${BRAND.providerKey}-messages`]: { base_url: "http://127.0.0.1:1/v1" },
+        [`custom:${BRAND.providerKey}`]: { base_url: "https://account.example/v1" },
+      });
   });
 
   it("writes catalog providers as canonical providers instead of custom slugs", () => {

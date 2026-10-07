@@ -13,21 +13,25 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stageEmbeddedPayload } from "./stage-embedded-payload.mjs";
 
 function usage() {
   console.log(`Usage: node scripts/stage-bundled-runtime.mjs [options]
 
-Downloads a released Hermes-CN-Core runtime zip + signed manifest and stages
+Downloads a released Hermes-CN-Core runtime zip + manifest and stages
 it under static/bundled-runtime/ so Tauri bundles it into the installer.
 
 Options:
-  --repo <owner/repo>      Runtime release repo (default: Eynzof/Hermes-CN-Core)
+  --repo <owner/repo>      Runtime release repo (default: nevermorewish/Hermes-CN-Core)
   --tag <tag|latest>      Runtime release tag, or latest (default: latest)
+  --feed-base-url <url>   Prebuilt runtime feed root (default: production Linux server)
   --channel <name>        Manifest channel name (default: stable)
   --platform <name>       Runtime platform (default: win32)
   --arch <name>           Runtime arch (default: x64)
   --out <dir>             Output dir (default: static/bundled-runtime)
   --expand-artifact       Extract the zip into a runtime tree and do not stage the zip
+  --embedded-payload      Also stage the PyInstaller payload under static/embedded-python/
+                          so the in-process embedded runtime can use it
   --keep-existing         Do not delete old staged runtime files first
 `);
 }
@@ -52,21 +56,31 @@ if (hasFlag("--help") || hasFlag("-h")) {
 }
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const repo = argValue("--repo", process.env.HERMES_RUNTIME_REPO ?? "Eynzof/Hermes-CN-Core");
+const repo = argValue("--repo", process.env.HERMES_RUNTIME_REPO ?? "nevermorewish/Hermes-CN-Core");
 const tag = argValue("--tag", process.env.HERMES_RUNTIME_TAG ?? "latest");
 const channel = argValue("--channel", process.env.HERMES_RUNTIME_CHANNEL ?? "stable");
+const feedBaseUrl = argValue(
+  "--feed-base-url",
+  process.env.HERMES_RUNTIME_FEED_BASE_URL
+    ?? "https://huanxing.ai/downloads/Hermes-CN-Core/runtime",
+).replace(/\/+$/u, "");
 const platform = argValue("--platform", process.env.HERMES_RUNTIME_PLATFORM ?? "win32");
 const arch = argValue("--arch", process.env.HERMES_RUNTIME_ARCH ?? "x64");
 const outDir = resolve(repoRoot, argValue("--out", "static/bundled-runtime"));
 const expandArtifact = hasFlag("--expand-artifact");
 const keepExisting = hasFlag("--keep-existing");
+const embeddedPayload = hasFlag("--embedded-payload");
 
 const runtimeName = `hermes-agent-cn-runtime-${platform}-${arch}`;
 const manifestName = `${channel}-${platform}-${arch}.json`;
+// The bundled loader has a fixed filename, independent of the signed update
+// channel. Preserve the manifest bytes so canary signatures remain valid.
+const bundledManifestName = `stable-${platform}-${arch}.json`;
 const zipName = `${runtimeName}.zip`;
-const baseUrl = tag === "latest"
-  ? `https://github.com/${repo}/releases/latest/download`
-  : `https://github.com/${repo}/releases/download/${encodeURIComponent(tag)}`;
+const runtimeVersion = tag === "latest" ? null : tag.replace(/^runtime-v/u, "");
+const baseUrl = runtimeVersion
+  ? `${feedBaseUrl}/releases/${encodeURIComponent(runtimeVersion)}`
+  : `${feedBaseUrl}/${encodeURIComponent(channel)}`;
 
 async function sleep(ms) {
   await new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
@@ -185,6 +199,9 @@ if (manifest.platform !== platform || manifest.arch !== arch) {
 if (manifest.channel !== channel) {
   throw new Error(`manifest channel is ${manifest.channel}, expected ${channel}`);
 }
+if (runtimeVersion && manifest.runtimeVersion !== runtimeVersion) {
+  throw new Error(`manifest runtimeVersion is ${manifest.runtimeVersion}, expected ${runtimeVersion}`);
+}
 
 const zipBytes = await download(`${baseUrl}/${zipName}`, 15 * 60_000);
 const actualSha = sha256(zipBytes);
@@ -192,23 +209,40 @@ if (actualSha !== String(manifest.sha256).toLowerCase()) {
   throw new Error(`sha256 mismatch for ${zipName}: expected ${manifest.sha256}, got ${actualSha}`);
 }
 
-writeFileSync(join(outDir, manifestName), manifestBytes);
+writeFileSync(join(outDir, bundledManifestName), manifestBytes);
+const expandedRuntimeDir = expandArtifact || embeddedPayload ? expandRuntimeZip(zipBytes) : null;
 const artifactPath = expandArtifact
-  ? expandRuntimeZip(zipBytes)
+  ? expandedRuntimeDir
   : join(outDir, zipName);
 if (!expandArtifact) {
   writeFileSync(artifactPath, zipBytes);
+}
+
+// Embedded payload staging (report Phase 5): copy the PyInstaller _internal
+// (or expanded tree) to static/embedded-python/<platform>-<arch> so the
+// in-process interpreter can be located at startup.
+if (embeddedPayload) {
+  stageEmbeddedPayload({
+    fromDir: expandedRuntimeDir,
+    platform,
+    arch,
+    repoRoot,
+    internalOnly: true,
+    keepExisting,
+  });
 }
 writeFileSync(join(outDir, "README.generated.txt"), [
   "Generated by scripts/stage-bundled-runtime.mjs.",
   `repo=${repo}`,
   `tag=${tag}`,
+  `feedBaseUrl=${feedBaseUrl}`,
   `stagingMode=${expandArtifact ? "expanded" : "zip"}`,
   `macosFrameworkLayout=${expandArtifact && platform === "darwin" ? "signed-native" : "native"}`,
   `runtimeVersion=${manifest.runtimeVersion}`,
   `kernelVersion=${manifest.kernelVersion}`,
   `runtimeFlavor=${manifest.runtimeFlavor}`,
   `runtimeRevision=${manifest.runtimeRevision}`,
+  `manifestChannel=${manifest.channel}`,
   `sourceRepo=${manifest.sourceRepo}`,
   `sourceCommit=${manifest.sourceCommit}`,
   `sha256=${manifest.sha256}`,
@@ -217,4 +251,4 @@ writeFileSync(join(outDir, "README.generated.txt"), [
 
 console.log(`staged bundled runtime ${manifest.runtimeVersion} at ${outDir}`);
 console.log(`artifact: ${artifactPath}`);
-console.log(`manifest: ${join(outDir, manifestName)}`);
+console.log(`manifest: ${join(outDir, bundledManifestName)}`);

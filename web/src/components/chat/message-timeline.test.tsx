@@ -4,12 +4,25 @@ import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
 
 import { MarkdownText } from "./markdown-renderer";
-import { MessageTimeline, resolveBottomFollowState, shouldDetachOnScroll } from "./message-timeline";
+import {
+  MessageTimeline,
+  resolveBottomFollowState,
+  shouldDetachOnScroll,
+  shouldForceBottomOnMessageChange,
+} from "./message-timeline";
 import type { ChatMessage } from "./chat-types";
 
 // MessageTimeline 内部的资料卡用到 useNavigate，SSR 渲染需要 Router 上下文。
 const renderTimeline = (node: ReactElement) =>
   ReactDOMServer.renderToStaticMarkup(<MemoryRouter>{node}</MemoryRouter>);
+
+const skillInvocationText = [
+  '[IMPORTANT: The user has invoked the "codex" skill, indicating they want you to follow its instructions. The full skill content is loaded below.]',
+  "",
+  "# Codex",
+  "",
+  "Always use a PTY.",
+].join("\n");
 
 describe("MessageTimeline", () => {
   it("keeps bottom auto-follow disabled after an explicit upward scroll", () => {
@@ -38,6 +51,19 @@ describe("MessageTimeline", () => {
 
   it("does not detach when scrolling downward", () => {
     expect(shouldDetachOnScroll(1000, 800, false)).toBe(false);
+  });
+
+  it("forces bottom positioning when history first loads or the session changes", () => {
+    expect(shouldForceBottomOnMessageChange(0, 8, false, undefined, "user-4")).toBe(true);
+    expect(shouldForceBottomOnMessageChange(8, 6, true, "user-4", "user-3")).toBe(true);
+  });
+
+  it("forces bottom positioning for a newly appended user message", () => {
+    expect(shouldForceBottomOnMessageChange(8, 10, false, "user-4", "user-5")).toBe(true);
+  });
+
+  it("keeps an upward-scrolled user detached for assistant-only updates", () => {
+    expect(shouldForceBottomOnMessageChange(8, 9, false, "user-4", "user-4")).toBe(false);
   });
 
   it("uses the optimistic progress model instead of stale session usage", () => {
@@ -184,6 +210,22 @@ describe("MessageTimeline", () => {
     expect(html).toContain("alt=\"趋势图\"");
   });
 
+  it("routes a Windows local-path Markdown image to the local preview instead of blocking it", () => {
+    const html = ReactDOMServer.renderToStaticMarkup(
+      <MarkdownText
+        text={"模型生成图片：![生成图](D:\\Hermes-CN-Desktop\\e2e\\.runtime\\hermes-home\\images\\generated previews\\model output.png)"}
+      />,
+    );
+
+    // rehype-harden must not swallow the drive-letter path as a blocked image.
+    expect(html).not.toContain("[Image blocked");
+    // It must reach MessageImage's local-path handling (async media fetch →
+    // loading placeholder in SSR), with the POSIX-style drive path mapped back.
+    expect(html).toContain("图片加载中");
+    expect(html).toContain("generated%20previews");
+    expect(html).toContain("/D:/Hermes-CN-Desktop/e2e/.runtime/hermes-home/images");
+  });
+
   it("renders single-dollar inline LaTeX formulas", () => {
     const html = ReactDOMServer.renderToStaticMarkup(
       <MarkdownText text={String.raw`设 $\boldsymbol{v}_i \in \mathbb{R}^n$ 且 $A\boldsymbol{v}_i = \boldsymbol{0}$。`} />,
@@ -240,6 +282,7 @@ describe("MessageTimeline", () => {
     const messages: ChatMessage[] = [
       { id: "user-1", role: "user", createdAt: 1, text: "第一轮问题" },
       { id: "assistant-1", role: "assistant", createdAt: 2, text: "第一轮回答" },
+      { id: "skill-1", role: "user", createdAt: 2.5, text: skillInvocationText },
       { id: "user-2", role: "user", createdAt: 3, text: "第二轮追问" },
       { id: "assistant-2", role: "assistant", createdAt: 4, text: "第二轮回答" },
     ];
@@ -251,6 +294,31 @@ describe("MessageTimeline", () => {
     expect(html).toContain("aria-label=\"对话轮次定位\"");
     expect(html).toContain("aria-label=\"定位到第 1 轮对话\"");
     expect(html).toContain("aria-label=\"定位到第 2 轮对话\"");
+    expect(html).not.toContain("aria-label=\"定位到第 3 轮对话\"");
+    expect(html.match(/data-turn-anchor=\"true\"/g)).toHaveLength(2);
+  });
+
+  it("renders injected Skill content as a full-width system notice without user actions", () => {
+    const html = renderTimeline(
+      <MessageTimeline
+        messages={[{
+          id: "skill-1",
+          role: "user",
+          createdAt: 1,
+          text: skillInvocationText,
+        }]}
+      />,
+    );
+
+    expect(html).toContain('data-role="system"');
+    expect(html).toContain('data-system-kind="skill-invocation"');
+    expect(html).toContain('data-kind="skill-invocation"');
+    expect(html).toContain('role="status"');
+    expect(html).toContain("Skill 指令已加载");
+    expect(html).toContain('data-skill-invocation="true"');
+    expect(html).not.toContain('data-role="user"');
+    expect(html).not.toContain('data-turn-anchor="true"');
+    expect(html).not.toContain("复制");
   });
 
   it("does not show turn navigation for a single user turn", () => {

@@ -10,13 +10,17 @@ import {
   normalizeCliThinkingProgress,
   normalizeReasoningText,
 } from "@/lib/reasoning-filter";
-import { stripHermesUiWorkspaceContext } from "@/lib/composer-prompt";
+import {
+  extractHermesImageDirectivePaths,
+  stripHermesUiWorkspaceContext,
+} from "@/lib/composer-prompt";
 import {
   dedupeImageParts,
   extractImagePartsFromUnknown,
   imagePartFromSource,
 } from "@/lib/message-images";
 import { stableTextHash, type UiTurnStats } from "@/lib/ui-store";
+import { isSkillInvocationText } from "@/lib/skill-invocation";
 import type { AssistantTurnBlock } from "@/stores/chat";
 import type { AssistantMessageStats, ChatImageItem, ChatMessage, ChatToolItem } from "./chat-types";
 
@@ -62,6 +66,7 @@ function displayUnknown(value: unknown): string | undefined {
 
 const HERMES_UI_IMAGE_BLOCK_RE = /\[Hermes UI Image\]\nname=([^\n]*)\ndescription:\n([\s\S]*?)\n\[\/Hermes UI Image\]/g;
 const IMAGE_FALLBACK_RE = /\[You can examine it with vision_analyze using image_url: ([^\]\n]+)\]/g;
+const IMAGE_ATTACHED_AT_RE = /\[Image attached at:\s*([^\]\n]+)\]/g;
 
 function parseJsonContent(value: string | null | undefined): unknown | undefined {
   const text = value?.trim();
@@ -109,8 +114,23 @@ function imagePartsFromMessageImages(images: SessionMessage["images"]): HermesIm
 function imagePartsFromTransportText(text: string | null | undefined): HermesImagePart[] {
   if (!text) return [];
   const parts: HermesImagePart[] = [];
+  const imageBlockLabels = [...text.matchAll(HERMES_UI_IMAGE_BLOCK_RE)]
+    .map((match) => match[1]?.trim())
+    .filter((label): label is string => Boolean(label));
+
+  extractHermesImageDirectivePaths(text).forEach((path, index) => {
+    const part = imagePartFromSource(path, imageBlockLabels[index]);
+    if (part) parts.push(part);
+  });
 
   for (const match of text.matchAll(IMAGE_FALLBACK_RE)) {
+    const path = match[1]?.trim();
+    if (!path) continue;
+    const part = imagePartFromSource(path);
+    if (part) parts.push(part);
+  }
+
+  for (const match of text.matchAll(IMAGE_ATTACHED_AT_RE)) {
     const path = match[1]?.trim();
     if (!path) continue;
     const part = imagePartFromSource(path);
@@ -120,6 +140,9 @@ function imagePartsFromTransportText(text: string | null | undefined): HermesIma
   for (const match of text.matchAll(HERMES_UI_IMAGE_BLOCK_RE)) {
     const name = match[1]?.trim();
     const description = match[2]?.trim();
+    if (/^\[User attached image: [^\]\n]+\]$/.test(description ?? "")) {
+      continue;
+    }
     const extracted = extractImagePartsFromUnknown(description);
     if (extracted.length) {
       parts.push(...extracted.map((part) => ({
@@ -128,8 +151,6 @@ function imagePartsFromTransportText(text: string | null | undefined): HermesIma
       })));
       continue;
     }
-    const part = imagePartFromSource({ name, alt: name || "图片附件" });
-    if (part) parts.push(part);
   }
 
   return dedupeImageParts(parts);
@@ -317,6 +338,13 @@ export function legacySessionMessageToHermesUIMessage(msg: SessionMessage): Herm
   const createdAt = msg.timestamp ? msg.timestamp * 1000 : Date.now();
 
   if (!RENDERABLE_LEGACY_ROLES.has(msg.role)) return null;
+
+  // Belt-and-suspenders: drop metadata-only user messages that slipped past
+  // the Core API-boundary filter (_normalize_message_content in web_server.py).
+  const METADATA_ONLY_RE = /^\[(?:System|Note):\s.*\]/;
+  if (msg.role === "user" && msg.content && METADATA_ONLY_RE.test(msg.content.trim())) {
+    return null;
+  }
 
   if (msg.role === "tool") {
     return {
@@ -792,6 +820,11 @@ export function hermesUIMessageToChatMessage(msg: HermesUIMessage): ChatMessage 
   const text = msg.role === "system"
     ? noticeTextFromParts(msg.parts) ?? textFromParts(msg.parts)
     : textFromParts(msg.parts);
+  // Core 把 Skill 指令作为 user 上下文注入模型，但它不是用户在聊天框发送的
+  // 内容。进入展示模型时归一为 system，避免污染用户气泡、轮次导航和动作栏。
+  const displayRole = msg.role === "user" && isSkillInvocationText(text)
+    ? "system"
+    : msg.role;
   const reasoning = reasoningFromParts(msg.parts);
   const images = imagesFromParts(msg.parts);
   const blocks = msg.role === "assistant"
@@ -805,7 +838,7 @@ export function hermesUIMessageToChatMessage(msg: HermesUIMessage): ChatMessage 
 
   return {
     id: msg.id,
-    role: msg.role,
+    role: displayRole,
     createdAt: msg.createdAt,
     text,
     reasoning,
@@ -1093,7 +1126,29 @@ function isSameCanonicalMessage(stored: HermesUIMessage, live: HermesUIMessage):
       canonicalToolComparable(stored) === canonicalToolComparable(live);
   }
 
-  return storedText === liveText && storedReasoning === liveReasoning && storedImages === liveImages;
+  if (storedText === liveText && storedReasoning === liveReasoning && storedImages === liveImages) {
+    return true;
+  }
+
+  // Core persists attached images as authoritative `@image:<gateway path>`
+  // refs, while the optimistic desktop row holds the in-hand data URL and the
+  // original filename. They represent the same current user turn even though
+  // their image URLs differ. Match only near-simultaneous image turns with the
+  // same visible caption; mergeMatchedMessage then keeps the richer live row.
+  if (stored.role === "user" && storedImages && liveImages) {
+    const promptBody = (message: HermesUIMessage) => comparableText(
+      (normalizeContent(textFromParts(message.parts)) ?? "")
+        .replace(/(?:^|\n)附件：[^\n]*$/, ""),
+    );
+    if (
+      Math.abs(stored.createdAt - live.createdAt) <= 5_000 &&
+      promptBody(stored) === promptBody(live)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function consolidateAssistantMessages(messages: HermesUIMessage[]): HermesUIMessage[] {

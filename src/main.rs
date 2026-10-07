@@ -15,11 +15,12 @@ use hermes_agent_cn::bootstrap::{
     acquire_managed_dashboard, connect_local_backend, connect_remote_backend, finalize_bootstrap,
     finalize_offline_bootstrap, install_bundled_runtime_for_bootstrap, record_bootstrap_error,
 };
+use hermes_agent_cn::brand_generated::BRAND_APP_NAME;
 use hermes_agent_cn::commands;
 use hermes_agent_cn::commands::profiles::read_active_profile_sticky;
 use hermes_agent_cn::connection::{self, ConnectionBackend, ConnectionMode};
 use hermes_agent_cn::desktop_control;
-use hermes_agent_cn::process::{dashboard, instance, runtime};
+use hermes_agent_cn::process::{dashboard, instance, runtime, ui_update};
 use hermes_agent_cn::state::{AppState, DashboardHandle};
 use hermes_agent_cn::tray;
 
@@ -78,6 +79,11 @@ fn shutdown_owned_runtime(app: &tauri::AppHandle, reason: &str) {
         );
         handle.stop_with_token(session_token.as_deref());
     }
+
+    // Embedded runtime: finalize the interpreter AFTER agent loops are stopped
+    // (the dashboard handle above owns no process in embedded mode, so nothing
+    // to kill — the interpreter teardown is the only stop action).
+    hermes_agent_cn::embedded::shutdown();
 }
 
 fn create_and_return(path: PathBuf) -> PathBuf {
@@ -103,6 +109,118 @@ fn profile_hermes_home(base: &Path, profile: &str) -> PathBuf {
     } else {
         base.join("profiles").join(profile)
     }
+}
+
+/// Resolve the Vite dev-server URL when the desktop runs against it: the
+/// explicit `HERMES_DESKTOP_DEV_URL` override wins, otherwise any debug build
+/// (tauri dev / cargo run) assumes the standard 9545 dev server. `None` in
+/// release builds — the window then loads the `hermesui:` scheme.
+fn resolve_dev_url() -> Option<String> {
+    if let Ok(url) = std::env::var("HERMES_DESKTOP_DEV_URL") {
+        let trimmed = url.trim().to_string();
+        if !trimmed.is_empty() {
+            return Some(trimmed);
+        }
+    }
+    if cfg!(debug_assertions) {
+        return Some("http://localhost:9545".to_string());
+    }
+    None
+}
+
+/// MIME type for a served `hermesui:` asset, keyed by extension. Vite emits a
+/// known set (html/js/css + hashed images/fonts); anything unknown falls back
+/// to octet-stream.
+fn hermesui_content_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|ext| ext.to_str()).unwrap_or("") {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "js" | "mjs" => "text/javascript",
+        "css" => "text/css",
+        "json" | "map" => "application/json",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "ico" => "image/x-icon",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "txt" => "text/plain",
+        _ => "application/octet-stream",
+    }
+}
+
+fn empty_hermesui_response(status: u16) -> tauri::http::Response<Vec<u8>> {
+    tauri::http::Response::builder()
+        .status(status)
+        .body(Vec::new())
+        .unwrap()
+}
+
+/// Build the response for a `hermesui:` request.
+///
+/// 1. DEV bypass: while the Vite dev server owns the window the handler is
+///    dormant (HMR untouched) — nothing is served from the hot-update tree.
+/// 2. When `ui/current.json` exists, `index.html` is on disk and the signed
+///    `appVersionFloor` gate passes, serve from `ui/versions/<v>/` with
+///    `index.html` `no-cache` and hashed assets immutable.
+/// 3. Otherwise fall back to the embedded `frontendDist` — the window can
+///    never brick, even after a bad package installs.
+fn build_hermesui_response(
+    app: &tauri::AppHandle,
+    request_path: &str,
+) -> tauri::http::Response<Vec<u8>> {
+    if resolve_dev_url().is_some() {
+        return empty_hermesui_response(404);
+    }
+
+    if let Some(version_dir) = ui_update::ui_serving_version_dir() {
+        if let Some(asset_path) = ui_update::resolve_ui_asset(&version_dir, request_path) {
+            match std::fs::read(&asset_path) {
+                Ok(bytes) => {
+                    let is_index = asset_path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.eq_ignore_ascii_case("index.html"));
+                    let cache = if is_index {
+                        "no-cache"
+                    } else {
+                        "public, max-age=31536000, immutable"
+                    };
+                    return tauri::http::Response::builder()
+                        .status(200)
+                        .header("Content-Type", hermesui_content_type(&asset_path))
+                        .header("Cache-Control", cache)
+                        .body(bytes)
+                        .unwrap_or_else(|_| empty_hermesui_response(500));
+                }
+                Err(_) => return empty_hermesui_response(404),
+            }
+        }
+    }
+
+    // Embedded frontendDist fallback (tauri:// scheme assets), so a clean
+    // install / first launch / bad package still renders the app.
+    let relative = request_path.trim_start_matches('/');
+    let asset_key = if relative.is_empty() {
+        "index.html".to_string()
+    } else {
+        relative.to_string()
+    };
+    if let Some(asset) = app.asset_resolver().get(asset_key) {
+        let mut builder = tauri::http::Response::builder().status(200);
+        builder = builder.header("Content-Type", asset.mime_type());
+        if let Some(csp) = asset.csp_header() {
+            builder = builder.header("Content-Security-Policy", csp);
+        }
+        return builder
+            .body(asset.bytes)
+            .unwrap_or_else(|_| empty_hermesui_response(500));
+    }
+    empty_hermesui_response(404)
 }
 
 fn main() {
@@ -154,9 +272,42 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(app_state)
+        // Track B UI hot update: serve the webview from the writable
+        // `ui/versions/<v>/` tree (signed `appVersionFloor` gate + path-traversal
+        // guard, embedded frontendDist fallback, dev bypass) so the React UI can
+        // update without touching the kernel or the shell binary.
+        .register_asynchronous_uri_scheme_protocol("hermesui", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            let path = request.uri().path().to_string();
+            tauri::async_runtime::spawn(async move {
+                let response = build_hermesui_response(&app, &path);
+                responder.respond(response);
+            });
+        })
         .setup(move |app| {
             use tauri::Manager;
             let state = app.state::<AppState>();
+
+            // Create the main window: production loads the hot-updatable UI
+            // through the `hermesui:` custom scheme; dev builds keep the Vite
+            // dev server (http://localhost:9545) so HMR is unaffected.
+            let window_url = match resolve_dev_url() {
+                Some(dev_url) => tauri::WebviewUrl::External(
+                    dev_url.parse().expect("valid dev URL"),
+                ),
+                None => tauri::WebviewUrl::CustomProtocol(
+                    "hermesui://localhost/index.html"
+                        .parse()
+                        .expect("valid hermesui URL"),
+                ),
+            };
+            let window_builder = tauri::WebviewWindowBuilder::new(app, tray::MAIN_WINDOW_LABEL, window_url)
+                .title(hermes_agent_cn::brand_generated::BRAND_WINDOW_TITLE)
+                .inner_size(1240.0, 820.0)
+                .min_inner_size(960.0, 680.0);
+            #[cfg(target_os = "macos")]
+            let window_builder = window_builder.title_bar_style(tauri::TitleBarStyle::Transparent);
+            window_builder.build()?;
             let bundled_resource_dir = app.path().resource_dir().ok();
 
             // Focus channel for the single-instance guard: consume any stale
@@ -229,6 +380,14 @@ fn main() {
 
             let boot_home_str = boot_home.to_string_lossy().to_string();
 
+            if let Err(error) = hermes_agent_cn::model_registry::migrate_profile_home(
+                &boot_home,
+                hermes_agent_cn::brand_generated::BRAND_PROVIDER_KEY,
+                hermes_agent_cn::brand_generated::BRAND_ACCOUNT_DEFAULT_MODELS,
+            ) {
+                log::warn!("model provider migration failed: {error}");
+            }
+
             // 3. Resolve host/port
             let host = std::env::var("HERMES_DESKTOP_API_HOST")
                 .unwrap_or_else(|_| "127.0.0.1".to_string());
@@ -259,9 +418,9 @@ fn main() {
             }
 
             // Persist the first-install/migration decision before resolving or
-            // installing any backend. Existing users are marked complete;
-            // genuinely clean installs stay shell-only until `/guide` chooses
-            // a mode.
+            // installing any backend. Standard clean installs start the
+            // managed workspace; model onboarding is presented inside AppShell
+            // once the dashboard is ready.
             let control = match desktop_control::initialize() {
                 Ok(control) => control,
                 Err(error) => {
@@ -367,7 +526,7 @@ fn main() {
                     }
                 });
 
-                log::info!("Hermes Agent 中文社区桌面版 bootstrapping in background");
+                log::info!("{} bootstrapping in background", BRAND_APP_NAME);
                 return Ok(());
             }
 
@@ -462,7 +621,7 @@ fn main() {
                     .await;
                 });
 
-                log::info!("Hermes Agent 中文社区桌面版 bootstrapping in background");
+                log::info!("{} bootstrapping in background", BRAND_APP_NAME);
                 return Ok(());
             }
 
@@ -498,8 +657,10 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::gateway::get_runtime_config,
-            commands::gateway::refresh_gateway_url,
+  commands::gateway::get_runtime_config,
+  commands::gateway::refresh_gateway_url,
+  commands::gateway::get_backend_version,
+            commands::fatal_error::fatal_error_and_exit,
             commands::connection::get_connection_config,
             commands::connection::save_connection_config,
             commands::connection::probe_connection_config,
@@ -509,8 +670,33 @@ fn main() {
             commands::connection_auth::connection_password_login,
             commands::connection_auth::connection_auth_me,
             commands::connection_auth::connection_oauth_logout,
+            // 内置模型（品牌 serviceUrl 账号）。sk- key 存 OS keyring，
+            // 只有 masked 值会过 IPC。
+            commands::account::account_login,
+            commands::ccwork_account::account_register,
+            commands::ccwork_account::account_login_with_verification_code,
+            commands::ccwork_account::account_send_verification_code,
+            commands::account::account_login_saved,
+            commands::account::account_logout,
+            commands::account::account_status,
+            commands::account::account_fetch_setup,
+            commands::account::account_list_tokens,
+            commands::account::account_balance,
+            commands::account::account_transactions,
+            commands::ccwork_account::account_credit_packages,
+            commands::ccwork_account::account_create_recharge,
+            commands::ccwork_account::account_recharge_status,
+            commands::ccwork_account::account_cancel_recharge,
+            commands::account::account_save_models,
+            commands::account::account_test_model,
+            commands::account::account_save_credentials,
+            commands::account::account_has_saved_credentials,
+            commands::account::account_clear_credentials,
+            hermes_agent_cn::model_registry::save_user_provider,
+            hermes_agent_cn::model_registry::delete_user_provider,
             commands::backup::backup_export_profile,
             commands::backup::backup_import_profile,
+            commands::browser_companion::open_browser_companion,
             commands::config_migration::config_migration_scan,
             commands::config_migration::config_migration_import,
             commands::im_onboarding::im_onboarding_state,
@@ -523,8 +709,14 @@ fn main() {
             commands::file_dialogs::open_workspace_path,
             commands::file_dialogs::open_external_url,
             commands::log_export::export_log_snapshot,
+            commands::session_export::export_session_json,
             commands::debug_bundle::export_debug_bundle,
             commands::desktop_update::desktop_check_update,
+            commands::desktop_update::desktop_install_update,
+            commands::app_update::app_update_check,
+            commands::app_update::app_update_install,
+            hermes_agent_cn::update_config::get_update_config,
+            hermes_agent_cn::update_config::set_update_config,
             commands::devtools::toggle_devtools,
             commands::environment::environment_check,
             commands::coding_agents::coding_agents_check,
@@ -544,6 +736,7 @@ fn main() {
             commands::runtime_manager::managed_runtime_uninstall,
             commands::runtime_manager::managed_runtime_reinstall,
             commands::profiles::switch_profile,
+            commands::restart::quit_app,
             commands::yolo::get_yolo_mode,
             commands::yolo::set_yolo_mode,
             commands::memory::read_memory,
@@ -567,6 +760,7 @@ fn main() {
             commands::terminal::terminal_write,
             commands::terminal::terminal_resize,
             commands::terminal::terminal_close,
+            commands::preview::read_file_data_url,
             commands::preview::read_workspace_file,
             commands::preview::write_workspace_file,
             commands::preview::watch_preview_file,
@@ -588,6 +782,10 @@ fn main() {
             commands::git::git_branch_list,
             commands::git::git_branch_switch,
             commands::git::git_repo_status,
+            commands::hot_update::hot_update_backend,
+            commands::ui_update::ui_check_update,
+            commands::ui_update::ui_install_update,
+            commands::ui_update::ui_rollback,
         ])
         .on_window_event(move |window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. }
@@ -604,7 +802,7 @@ fn main() {
             _ => {}
         })
         .build(tauri::generate_context!())
-        .expect("error while building Hermes Agent 中文社区桌面版");
+        .expect("error while building desktop app");
 
     app.run(move |app_handle, event| match event {
         tauri::RunEvent::ExitRequested { .. } => {

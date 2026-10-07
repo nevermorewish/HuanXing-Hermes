@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 use tauri::Emitter;
 
+use crate::brand_generated::BRAND_APP_NAME;
 use crate::connection::{ConnectionMode, LocalBackend, RemoteBackend};
 use crate::environment;
 use crate::error::AppError;
@@ -49,10 +50,10 @@ pub fn record_bootstrap_error(app: &tauri::AppHandle, message: String) -> String
     message
 }
 
-/// Finish a shell-only bootstrap when the managed runtime is intentionally
+/// Finish an offline bootstrap when the managed runtime is intentionally
 /// stopped or uninstalled. The renderer still needs the profile/home metadata
-/// and a ready event so it can mount `/guide` and the recovery surfaces, but no
-/// backend URL is invented and no runtime payload is installed.
+/// and a ready event so it can mount recovery surfaces, but no backend URL is
+/// invented and no runtime payload is installed.
 pub fn finalize_offline_bootstrap(app: &tauri::AppHandle) {
     use tauri::Manager;
 
@@ -64,10 +65,12 @@ pub fn finalize_offline_bootstrap(app: &tauri::AppHandle) {
         inner.session_token = None;
         inner.oauth_session = None;
         inner.dashboard_handle = None;
+        inner.embedded = false;
+        inner.embedded_payload = None;
         inner.last_runtime_error = None;
     }
     emit_runtime_status(app, "ready-offline", "内核未启动，已进入桌面引导");
-    log::info!("Hermes Agent 中文社区桌面版 ready (managed runtime offline)");
+    log::info!("{} ready (managed runtime offline)", BRAND_APP_NAME);
 }
 
 pub async fn install_bundled_runtime_for_bootstrap(
@@ -139,8 +142,23 @@ pub async fn acquire_managed_dashboard(
         return Err("bundled runtime install failed".to_string());
     }
 
+    let embedded_possible = crate::embedded::embedded_possible(resource_dir.as_deref());
+    if embedded_possible {
+        log::info!(
+            "Bootstrap: embedded runtime available (payload: {:?}) — skipping managed-runtime install/update",
+            crate::embedded::resolve_payload_root(resource_dir.as_deref())
+                .map(|p| p.display().to_string())
+        );
+    }
+
     let info = runtime::get_runtime_info(None);
-    if info.current.is_none() && info.updates_configured {
+    // The managed-runtime install/update only provisions the `hermes dashboard`
+    // SUBPROCESS. In embedded mode the in-process Python runtime replaces that
+    // subprocess entirely, so a fresh embedded-only install must never block on
+    // this (network) check — first run would otherwise hang for the manifest
+    // fetch timeout (or worse, an unresolvable DNS) before the embedded runtime
+    // even gets a chance to start.
+    if !embedded_possible && info.current.is_none() && info.updates_configured {
         emit_runtime_status(app, "installing", "正在下载 hermes-agent-cn runtime...");
         log::info!("Bootstrap: install_runtime_update");
         let install = runtime::install_runtime_update(None).await;
@@ -156,7 +174,7 @@ pub async fn acquire_managed_dashboard(
         if let Some(installed) = &install.installed {
             log::info!("Installed managed runtime v{}", installed.runtime_version);
         }
-    } else if info.current.is_none() {
+    } else if !embedded_possible && info.current.is_none() {
         log::warn!(
             "No managed runtime installed and update channel is not configured. \
              PATH `hermes` fallback is disabled; dashboard startup will fail \
@@ -166,6 +184,25 @@ pub async fn acquire_managed_dashboard(
 
     if let Err(err) = runtime::sync_runtime_resources_if_available(resource_dir.as_deref()) {
         log::warn!("Failed to sync bundled runtime resources: {}", err);
+    }
+
+    // Embedded runtime path (docs/embedded-python.md): initialize CPython
+    // inside this process instead of spawning a `hermes` subprocess. Falls back
+    // to the subprocess path below when the payload is absent or the interpreter
+    // fails to start (HERMES_DESKTOP_EMBEDDED_PYTHON=0 disables it entirely).
+    if crate::embedded::EmbeddedPython::ensure_started(resource_dir.as_deref()) {
+        emit_runtime_status(
+            app,
+            "starting-dashboard",
+            "正在启动嵌入式 Python runtime...",
+        );
+        log::info!(
+            "Bootstrap: embedded Python runtime active (payload: {})",
+            crate::embedded::EmbeddedPython::get()
+                .and_then(|r| r.payload_root().map(|p| p.display().to_string()))
+                .unwrap_or_else(|| "<none>".into())
+        );
+        return Ok(DashboardHandle::embedded());
     }
 
     emit_runtime_status(app, "starting-dashboard", "正在启动 dashboard...");
@@ -289,8 +326,17 @@ pub async fn finalize_bootstrap(
         None
     };
 
+    let is_embedded = handle.api_base_url == crate::embedded::EMBEDDED_API_BASE_URL
+        || handle.ownership_state.as_deref() == Some("embedded");
     let session_token = if oauth_session.is_some() {
         None
+    } else if is_embedded {
+        // The embedded runtime never scrapes HTML — the synthetic token is
+        // already on the handle (frontend contract only; zero HTTP is sent).
+        handle
+            .session_token
+            .clone()
+            .or_else(|| Some(crate::embedded::embedded_session_token()))
     } else {
         match handle.session_token.clone() {
             Some(token) => Some(token),
@@ -306,7 +352,13 @@ pub async fn finalize_bootstrap(
         }
     };
     // OAuth gateway URL carries no token; the relay mints a ticket per connect.
-    let gateway_url = dashboard::build_gateway_url(&handle.api_base_url, session_token.as_deref());
+    // Embedded mode has no WS URL at all — the gateway rides the in-memory
+    // transport, so the placeholder is only a frontend-contract value.
+    let gateway_url = if is_embedded {
+        crate::embedded::EMBEDDED_GATEWAY_URL.to_string()
+    } else {
+        dashboard::build_gateway_url(&handle.api_base_url, session_token.as_deref())
+    };
     let (effective_home, effective_home_base, effective_profile) = if mode == ConnectionMode::Local
     {
         match dashboard::fetch_attached_dashboard_hermes_home(&handle.api_base_url)
@@ -343,66 +395,16 @@ pub async fn finalize_bootstrap(
         };
         inner.connection_mode = mode;
         inner.oauth_session = oauth_session;
+        inner.embedded = is_embedded;
+        inner.embedded_payload = if is_embedded {
+            crate::embedded::EmbeddedPython::get()
+                .and_then(|r| r.payload_root().map(|p| p.display().to_string()))
+        } else {
+            None
+        };
         inner.dashboard_handle = Some(handle);
     }
 
     emit_runtime_status(app, "ready", "");
-    log::info!("Hermes Agent 中文社区桌面版 ready");
-}
-
-#[cfg(test)]
-mod tests {
-    use serial_test::serial;
-
-    /// install_bundled_runtime_for_bootstrap returns true early when
-    /// HERMES_DESKTOP_SKIP_BUNDLED_RUNTIME=1, regardless of whether a
-    /// bundled runtime is available.
-    #[tokio::test]
-    #[serial]
-    async fn skip_bundled_runtime_env_var_bypasses_install() {
-        // We can't easily construct a real tauri::AppHandle in a unit test,
-        // but we can verify the env-var check itself. The function's first
-        // early return is an env-var gate that does not touch app or
-        // resource_dir — so passing null-like values will panic only if the
-        // gate is broken.
-        std::env::set_var("HERMES_DESKTOP_SKIP_BUNDLED_RUNTIME", "1");
-
-        // This test validates the gate logic: when the env var is "1",
-        // the function must return true without accessing app/resource_dir.
-        // We can't call the real function without a Tauri AppHandle, but
-        // we can exercise the env-var path through the same variable read:
-        let skip = std::env::var("HERMES_DESKTOP_SKIP_BUNDLED_RUNTIME")
-            .map(|v| v == "1")
-            .unwrap_or(false);
-        std::env::remove_var("HERMES_DESKTOP_SKIP_BUNDLED_RUNTIME");
-
-        assert!(
-            skip,
-            "HERMES_DESKTOP_SKIP_BUNDLED_RUNTIME=1 should enable skip"
-        );
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn skip_bundled_runtime_env_var_disabled_by_default() {
-        std::env::remove_var("HERMES_DESKTOP_SKIP_BUNDLED_RUNTIME");
-        let skip = std::env::var("HERMES_DESKTOP_SKIP_BUNDLED_RUNTIME")
-            .map(|v| v == "1")
-            .unwrap_or(false);
-        assert!(!skip, "without env var, skip should be false");
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn skip_bundled_runtime_env_var_zero_is_disabled() {
-        std::env::set_var("HERMES_DESKTOP_SKIP_BUNDLED_RUNTIME", "0");
-        let skip = std::env::var("HERMES_DESKTOP_SKIP_BUNDLED_RUNTIME")
-            .map(|v| v == "1")
-            .unwrap_or(false);
-        std::env::remove_var("HERMES_DESKTOP_SKIP_BUNDLED_RUNTIME");
-        assert!(
-            !skip,
-            "HERMES_DESKTOP_SKIP_BUNDLED_RUNTIME=0 should not skip"
-        );
-    }
+    log::info!("{} ready", BRAND_APP_NAME);
 }

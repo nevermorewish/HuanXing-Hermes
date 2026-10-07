@@ -3,7 +3,7 @@
 ## 项目概述
 
 Hermes Agent CN 桌面端 — 用 Tauri v2 + React 构建的独立桌面应用，替代原 Electron 壳。
-对接后端是 [Hermes-CN-Core](https://github.com/Eynzof/Hermes-CN-Core)（CN 核心 runtime，原名 hermes-agent-cn）内置 Dashboard；桌面端 managed runtime 默认使用端口 9120，避开用户全局 Hermes Agent 常用的 9119。bundle identifier 固定为 `cn.org.hermesagent.desktop`（升级安全承重标识，勿改）。版本号以 `package.json` 为唯一真相（勿在本文件硬编码版本号），由 `pnpm version:sync` 传播到 `tauri.conf.json` / `Cargo.toml` / `Cargo.lock` / 各 workspace `package.json` / README，`pnpm version:check` 校验。
+对接后端是 [Hermes-CN-Core](https://github.com/nevermorewish/Hermes-CN-Core)（CN 核心 runtime，原名 hermes-agent-cn）内置 Dashboard；桌面端 managed runtime 默认使用端口 9120，避开用户全局 Hermes Agent 常用的 9119。bundle identifier 固定为 `cn.org.hermesagent.desktop`（升级安全承重标识，勿改）。版本号以 `package.json` 为唯一真相（勿在本文件硬编码版本号），由 `pnpm version:sync` 传播到 `tauri.conf.json` / `Cargo.toml` / `Cargo.lock` / 各 workspace `package.json` / README，`pnpm version:check` 校验。
 
 ## 项目结构
 
@@ -31,7 +31,7 @@ Hermes-CN-Desktop/
 │   └── process/
 │       ├── dashboard.rs         dashboard 子进程管理（probe/spawn/port fallback）
 │       ├── gateway.rs           gateway 子进程 / 冲突检测
-│       └── runtime.rs           managed runtime 安装/签名验证
+│       └── runtime.rs           managed runtime 安装/SHA-256 校验
 ├── web/                    React 前端（Vite + TanStack Query + Jotai）
 │   ├── src/
 │   │   ├── lib/tauri-bridge.ts    Tauri invoke 包装 + hermesDesktop shim
@@ -63,20 +63,19 @@ UI 对接的是 hermes-agent Dashboard。**不要凭参数名猜后端行为**�
 
 ## 开发流程
 
-### 开发前预检（双仓同步 + Worktree 隔离）
+### Git 操作边界（铁律）
 
-Hermes CN 的需求与 bug 修复通常**同时横跨 Desktop 与 Core 两个仓库**。正式动手写代码前，两个仓库都必须先过这道预检，**不要直接在 `main` 上改**：
+编码代理**绝不自动执行**任何 Git 写操作：不 `git commit` / `git push` / `git pull` / `git fetch` / `git checkout`、不创建 `git worktree` / 分支、不开 PR、不打 tag、不发布 Release、不同步 landing 仓库。
 
-1. **确认主分支已与远端同步**。对 Desktop 与 Core 分别 `git fetch origin`，确认本地 `main` 与 `origin/main` 一致（`git rev-list --left-right --count main...origin/main` 应为 `0  0`）；落后就先快进，工作区脏就先收拾干净。
-2. **为每个仓库开独立的功能分支 + git worktree**，让 Desktop 与 Core 的改动互不干扰、可并行：
-   ```bash
-   git -C <repo> fetch origin
-   git -C <repo> worktree add ../wt/<repo>-<topic> -b <branch> origin/main
-   ```
-   分支命名沿用 Conventional 风格（`feat/` `fix/` `docs/` `chore/` …）。同一任务在两仓用同名分支，方便对应。
-3. 不要在同一个工作目录里来回 `git checkout` 切分支——双仓并行时极易串味；每条线一个 worktree。
+所有仓库同步、分支 / worktree 隔离、commit、push、PR、tag、Release 与 Landing 同步均由**人**执行（或由 CI/CD 流水线触发）。代理只做只读检查（`git status` / `git diff` / `git log` / `git rev-parse`）用于验证与报告。
 
-**收尾流程（每个仓库都要走完，缺一不可）**：改完 → `pnpm typecheck && pnpm test:unit && cargo check` → commit → push → 开 PR → **盯 PR 上 GitHub Actions 的构建与测试全绿**（`rust-test.yml` / `web-test.yml`），没过就回去修，别把任务当完成。
+完整的人工 Git 工作流（双仓同步 + worktree 预检、收尾 commit → push → PR、Commit 风格、发版 tag 与 Landing 同步）见 `docs/agents/git-workflow.md`。
+
+### 开发前准备
+
+- 确认当前工作目录位于**人已准备好**的仓库状态（已同步、已开好分支 / worktree）；不要自己 `git checkout` 切分支或同步远端。
+- 需求同时横跨 Desktop 与 Core 时，人会用独立 worktree 隔离两仓改动；代理不要自己创建 / 操作 worktree。
+- 若发现工作区状态异常（脏树、分支不对、落后远端），**报告给人处理**，不要自行 commit / stash / reset / pull。
 
 ### 仓库技能
 
@@ -89,7 +88,7 @@ Hermes CN 的需求与 bug 修复通常**同时横跨 Desktop 与 Core 两个仓
 `.codex/skills/desktop-release-sync-landing/SKILL.md`。
 只要桌面端公开版本发生变化，就必须同步处理 `Eynzof/hermes-agent-cn-desktop-landing`，
 更新官网版本与 `https://desktop.hermesagent.org.cn/latest.json` 清单；如果 release 资产尚未生成，
-需要明确说明 Landing 同步被阻塞，不能把桌面端发版任务当作已经完整结束。
+需要明确说明 Landing 同步被阻塞，不能把桌面端发版任务当作已经完整结束。**Landing 仓库的 commit / push / PR 由人执行**，代理只负责准备与核对内容、报告阻塞情况（见 `docs/agents/git-workflow.md` §5）。
 
 ### 启动顺序
 
@@ -179,12 +178,7 @@ webview 拦 `ws://` 时自动回退到 Rust 中继（`ws_proxy.rs`，线协议�
 - ❌ 不要直接调 `gateway-client.ts` 的 raw socket — 走 `hooks/use-gateway.ts`
 - ❌ 不要在 `web/src/routes/` 里塞业务逻辑 — 抽到 `hooks/` 或 `lib/`
 - ❌ 不要在组件里写硬编码颜色 — 用 `packages/shared-ui/src/tokens/` 里的 CSS 变量
-
-## Commit 风格
-
-- Conventional commit：`feat` / `fix` / `style` / `docs` / `refactor` / `chore`
-- 标题用中文、命令式（"新增 ..."、"修复 ..."、"重构 ..."）
-- 描述用中文，写"为什么"而不是"做了什么"
+- ❌ **不要自动执行任何 Git 写操作**（commit / push / pull / checkout / worktree / 开 PR / 打 tag / 发 Release / 同步 landing）— 全部由人执行，见 `docs/agents/`
 
 ## 端口
 
@@ -199,5 +193,5 @@ webview 拦 `ws://` 时自动回退到 Rust 中继（`ws_proxy.rs`，线协议�
 - **文件系统测试**：用 `tempfile::TempDir`，禁止写 `/tmp`、cwd 或固定路径
 - **HTTP 测试**：用 `wiremock::MockServer`，禁止打真实网络
 - **断言**：优先 `pretty_assertions::assert_eq` 拿更好的 diff
-- **CI**（PR / push 到 main）：`rust-test.yml`（`cargo fmt --check`、`cargo clippy -D warnings`、`cargo test`）、`web-test.yml`（typecheck + vitest）、`web-e2e.yml`（Playwright E2E，checkout `Eynzof/Hermes-CN-Core` 真实后端 + fake model）；`release-desktop.yml` 负责发布构建
+- **CI**（PR / push 到 main）：`rust-test.yml`（`cargo fmt --check`、`cargo clippy -D warnings`、`cargo test`）、`web-test.yml`（typecheck + vitest）、`web-e2e.yml`（Playwright E2E，checkout `nevermorewish/Hermes-CN-Core` 真实后端 + fake model）；`release-desktop.yml` 负责发布构建
 - **本地**：改完后跑 `cargo test --all-features`；运行 dashboard 相关测试不需要起 hermes 后端，全部走 mock

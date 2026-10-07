@@ -22,7 +22,7 @@ import { useSession, useSessionMessages, useSessions } from "@/hooks/use-session
 import { useSkills } from "@/hooks/use-skills";
 import { useActiveProfileName } from "@/hooks/use-profiles";
 import { useGateway } from "@/hooks/use-gateway";
-import { useConfig, useModelInfo } from "@/hooks/use-config";
+import { useConfig, useModelInfo, useSaveConfig } from "@/hooks/use-config";
 import { useModelOptions } from "@/hooks/use-model-options";
 import { useComposerTimer } from "@/hooks/use-composer-timer";
 import { useStallWatchdog } from "@/hooks/use-stall-watchdog";
@@ -30,6 +30,11 @@ import { useSessionResolution } from "@/hooks/use-session-resolution";
 import { useSessionUsagePolling } from "@/hooks/use-session-usage-polling";
 import { recordModelUsage } from "@/lib/model-usage-log";
 import { readSessionModelOverride } from "@/lib/session-model-override";
+import {
+  composerDraftStorageKey,
+  readComposerDraftByKey,
+  writeComposerDraftByKey,
+} from "@/lib/composer-drafts";
 import { prepareComposerPrompt } from "@/lib/composer-prompt";
 import { parseBuiltinComposerCommand } from "@/lib/builtin-commands";
 import { resolveComposerSkillCommand } from "@/lib/composer-skills";
@@ -42,13 +47,14 @@ import {
   estimateRenderedContextTokens,
 } from "@/lib/context-usage";
 import { resolveModelContextWindow } from "@/lib/model-context";
+import { ensureBrandProviderModelDeclared } from "@/lib/provider-catalog";
 import { reasoningEffortFromConfig, type ReasoningEffort } from "@/lib/reasoning-effort";
 import { sessionDisplayTitle } from "@/lib/session-title";
 import {
   readSessionTitleOverrides,
   subscribeSessionUiStateChanges,
 } from "@/lib/session-ui-state";
-import { isRemoteConnection, readImageBytesFromPath, uploadAttachmentFile } from "@/lib/transport";
+import { isRemoteConnection, readFileDataUrl, readImageBytesFromPath, uploadAttachmentFile } from "@/lib/transport";
 import { voiceAutoTtsFromConfig } from "@/lib/voice";
 import {
   rememberSessionWorkspace,
@@ -86,6 +92,12 @@ import {
 } from "@/components/chat/message-adapter";
 import s from "./detail.module.css";
 
+interface ComposerPrefillState {
+  text: string;
+  nonce: number;
+  sessionId?: string;
+}
+
 export function DetailRoute() {
   // URL drives the *initial* selection (deep links, browser back/forward),
   // but `activeSessionIdAtom` is the runtime source of truth. This lets
@@ -116,9 +128,11 @@ export function DetailRoute() {
     completePath,
     attachImage,
     attachImageBytes,
+    attachFile,
     detectDroppedPath,
   } = useGateway();
   const { data: config } = useConfig();
+  const saveConfig = useSaveConfig();
   const { data: modelInfo } = useModelInfo();
   const { data: modelOptionsCache } = useModelOptions();
   const skillsQuery = useSkills();
@@ -204,6 +218,21 @@ export function DetailRoute() {
     () => resolveSessionWorkspace(sessionData?.cwd ?? sessionSummary?.cwd, [restSessionId, taskId]),
     [sessionData?.cwd, sessionSummary?.cwd, restSessionId, taskId],
   );
+  const composerDraftKey = useMemo(
+    () => composerDraftStorageKey({
+      kind: "session",
+      sessionId: restSessionId ?? taskId,
+      profile: activeProfile,
+    }),
+    [activeProfile, restSessionId, taskId],
+  );
+  const storedComposerDraft = useMemo(
+    () => readComposerDraftByKey(composerDraftKey),
+    [composerDraftKey],
+  );
+  const onComposerDraftChange = useCallback((text: string) => {
+    writeComposerDraftByKey(composerDraftKey, text);
+  }, [composerDraftKey]);
 
   // Sync URL → atom on mount and whenever URL changes (browser back/forward
   // or a deep-link entry). Sidebar / history clicks already update the atom
@@ -298,7 +327,9 @@ export function DetailRoute() {
 
   const ensureGatewaySession = useCallback(async (): Promise<string> => {
     if (!taskId) throw new Error("缺少会话 ID");
-    if (restSessionId && taskId === restSessionId && !activeMappedGatewaySessionId) {
+    if (restSessionId && !activeMappedGatewaySessionId) {
+      // Old deep links can still use a gateway ID from a previous process.
+      // Resolve that alias to its persistent ID before resuming, too.
       // No URL navigate after the resume — atom + gwSessionIdAtom hold
       // the authoritative state; downstream callers go through
       // resolveGatewaySessionId / resolvePersistentSessionId helpers
@@ -414,8 +445,10 @@ export function DetailRoute() {
     const prepared = await prepareComposerPrompt(gatewaySessionId, payload, {
       attachImage,
       attachImageBytes,
+      attachFile,
       remote: isRemoteConnection(),
       readImageBytes: readImageBytesFromPath,
+      readFileDataUrl,
       detectDroppedPath,
       uploadFile: uploadAttachmentFile,
       onAttachmentUpdate: updateAttachment,
@@ -424,7 +457,7 @@ export function DetailRoute() {
       displayText: prepared.displayText,
       displayImages: prepared.displayImages,
     });
-  }, [attachImage, attachImageBytes, detectDroppedPath, dispatchCommand, ensureGatewaySession, restSessionId, sendPrompt, taskId]);
+  }, [attachFile, attachImage, attachImageBytes, detectDroppedPath, dispatchCommand, ensureGatewaySession, restSessionId, sendPrompt, taskId]);
 
   const onSend = useCallback(async (
     payload: ComposerSubmitPayload,
@@ -448,7 +481,7 @@ export function DetailRoute() {
 
   // ---- Send queue (drain on settle, send-now / edit / delete) --------------
   const queuedPrompts = useQueuedPrompts(taskId);
-  const [composerPrefill, setComposerPrefill] = useState({ text: "", nonce: 0 });
+  const [composerPrefill, setComposerPrefill] = useState<ComposerPrefillState>({ text: "", nonce: 0 });
   const drainingRef = useRef(false);
   const previousBusyRef = useRef(runtimeIsBusy);
   const userInterruptedRef = useRef(false);
@@ -499,7 +532,7 @@ export function DetailRoute() {
   }, [drainEntry, queuedPrompts]);
 
   const onQueueEdit = useCallback((entry: QueuedPromptEntry) => {
-    setComposerPrefill((prefill) => ({ text: entry.text, nonce: prefill.nonce + 1 }));
+    setComposerPrefill((prefill) => ({ text: entry.text, nonce: prefill.nonce + 1, sessionId: taskId }));
     removeQueuedPrompt(taskId, entry.id);
   }, [taskId]);
 
@@ -528,6 +561,18 @@ export function DetailRoute() {
   );
 
   const onModelSelect = useCallback(async (selection: ComposerModelSelection) => {
+    if (config) {
+      const nextConfig = ensureBrandProviderModelDeclared(
+        config,
+        selection.provider,
+        selection.model,
+      );
+      if (nextConfig && nextConfig !== config) {
+        // The session switch is validated against the persisted provider
+        // declaration, so save the brand alias before calling config.set.
+        await saveConfig.mutateAsync(nextConfig);
+      }
+    }
     const gatewaySessionId = await ensureGatewaySession();
     await setSessionModel(gatewaySessionId, selection.model, selection.provider);
     setSelectedModel({
@@ -538,7 +583,7 @@ export function DetailRoute() {
     await getSessionUsage(gatewaySessionId)
       .then(setSessionUsage)
       .catch(() => {});
-  }, [config, ensureGatewaySession, getSessionUsage, setSessionModel, setSessionUsage]);
+  }, [config, ensureGatewaySession, getSessionUsage, saveConfig, setSessionModel, setSessionUsage]);
 
   const onConfigureProvider = useCallback((providerId: string) => {
     navigate(`/models#provider-${providerId}`);
@@ -586,7 +631,7 @@ export function DetailRoute() {
     if (!model) return null;
     return {
       model,
-      provider: modelInfo?.provider,
+      provider: modelInfo?.provider ?? "",
     };
   }, [model, modelInfo?.provider, selectedModel]);
   const selectedContextMax = useMemo(
@@ -624,6 +669,9 @@ export function DetailRoute() {
     estimatedUsed: estimatedContextUsed,
   });
   const autoTts = voiceAutoTtsFromConfig(config);
+  const hasActiveComposerPrefill = composerPrefill.sessionId === taskId && composerPrefill.nonce > 0;
+  const composerInitial = hasActiveComposerPrefill ? composerPrefill.text : storedComposerDraft;
+  const composerInitialNonce = hasActiveComposerPrefill ? composerPrefill.nonce : 0;
   const pageStyle = useMemo(
     () => {
       const font = conversationFontSizeVars(conversationFontSizeMode);
@@ -732,10 +780,12 @@ export function DetailRoute() {
               onDelete={onQueueDelete}
             />
             <GooseComposer
-              key={taskId}
+              key={`${taskId}:${composerDraftKey ?? "draft"}`}
+              flushBottom
               initialWorkspacePath={sessionWorkspace}
-              initial={composerPrefill.text}
-              initialNonce={composerPrefill.nonce}
+              initial={composerInitial}
+              initialNonce={composerInitialNonce}
+              onDraftChange={onComposerDraftChange}
               onSend={onSend}
               loadingPlaceholder={composerLoadingPlaceholder}
               showMeta={false}

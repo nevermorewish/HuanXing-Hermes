@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
-  Copy,
   FolderOpen,
   RefreshCw,
   ServerCog,
@@ -15,6 +14,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { Button } from "@hermes/shared-ui";
 import { useStatus } from "@/hooks/use-status";
 import { useConfig, useModelInfo } from "@/hooks/use-config";
 import { useEnvVars } from "@/hooks/use-env";
@@ -22,7 +22,8 @@ import { useSkills } from "@/hooks/use-skills";
 import { useMcpServers } from "@/hooks/use-mcp-servers";
 import { useOAuthProviders } from "@/hooks/use-oauth-providers";
 import { useLastUsedModel } from "@/lib/last-used-model";
-import { CopyButton } from "@/components/ui/copy-button";
+import { getProviderEntry } from "@/lib/provider-catalog";
+import { DiagnosticCopyButton } from "@/components/ui/diagnostic-copy-button";
 import { Dot } from "@/components/ui/pill";
 import s from "./health-grid.module.css";
 
@@ -110,9 +111,9 @@ function groupSub(group: HealthGroup): string {
 }
 
 function groupIcon(group: HealthGroup): ReactNode {
-  if (group === "runtime") return <ServerCog size={15} />;
-  if (group === "model") return <SlidersHorizontal size={15} />;
-  return <Sparkles size={15} />;
+  if (group === "runtime") return <ServerCog size={16} />;
+  if (group === "model") return <SlidersHorizontal size={16} />;
+  return <Sparkles size={16} />;
 }
 
 function groupTone(items: HealthItem[]): Tone {
@@ -124,6 +125,32 @@ function groupTone(items: HealthItem[]): Tone {
 function providerMap(config: Record<string, unknown> | undefined): Record<string, unknown> {
   const providers = config?.providers;
   return isRecord(providers) ? providers : {};
+}
+
+function nonEmptyString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function currentInlineCredential(
+  config: Record<string, unknown> | undefined,
+  currentProviderId: string,
+): { source: "model" | "provider"; label: string } | null {
+  const model = isRecord(config?.model) ? config.model : {};
+  const configuredProviderId = nonEmptyString(model.provider);
+  const modelKeyBelongsToCurrentProvider = !currentProviderId
+    || !configuredProviderId
+    || configuredProviderId === currentProviderId;
+  if (modelKeyBelongsToCurrentProvider && nonEmptyString(model.api_key)) {
+    return { source: "model", label: "当前模型内联凭证已保存" };
+  }
+
+  if (!currentProviderId) return null;
+  const provider = getProviderEntry(config, currentProviderId);
+  if (!nonEmptyString(provider.api_key)) return null;
+  return {
+    source: "provider",
+    label: `${nonEmptyString(provider.name) || currentProviderId} 内联凭证已保存`,
+  };
 }
 
 function findInvalidProviderApiKeys(providers: Record<string, unknown>): string[] {
@@ -219,7 +246,7 @@ function HealthItemCard({ item, onNavigate }: { item: HealthItem; onNavigate: (t
       {item.actionTo && (
         <span className={s.itemAction}>
           {item.actionLabel ?? "去处理"}
-          <ArrowRight size={13} aria-hidden="true" />
+          <ArrowRight size={12} aria-hidden="true" />
         </span>
       )}
     </>
@@ -295,7 +322,8 @@ export function HealthGrid({ variant = "compact" }: HealthGridProps) {
     const currentProviderId = modelInfo?.provider || lastUsedModel?.provider || "";
     const currentOAuthProvider = oauthProviders?.find((provider) => provider.id === currentProviderId);
     const currentOAuthLoggedIn = currentOAuthProvider?.status.logged_in === true;
-    const anyModelCredential = anyTokenSet || currentOAuthLoggedIn;
+    const inlineCredential = currentInlineCredential(config, currentProviderId);
+    const anyModelCredential = anyTokenSet || currentOAuthLoggedIn || inlineCredential !== null;
     const ctxLabel = formatContextLength(
       lastUsedModel?.contextWindow
         ?? modelInfo?.effective_context_length
@@ -366,14 +394,18 @@ export function HealthGrid({ variant = "compact" }: HealthGridProps) {
         value: envQuery.isError ? "读取失败" : env ? (anyModelCredential ? "已配置" : "未配置") : "检测中",
         sub: currentOAuthLoggedIn
           ? `${currentOAuthProvider?.name ?? currentProviderId} OAuth 已连接`
-          : anyTokenSet
-            ? formatTokenNames(setTokens)
-            : "模型调用需要 API Key 或 OAuth 凭证",
+          : inlineCredential
+            ? inlineCredential.label
+            : anyTokenSet
+              ? formatTokenNames(setTokens)
+              : "模型调用需要 API Key 或 OAuth 凭证",
         detail: currentOAuthLoggedIn
           ? "当前主模型使用 OAuth 登录凭证，无需额外 API Token。"
-          : anyTokenSet
-            ? "仅展示已设置的变量名称，不会暴露密钥内容。"
-            : "可在模型设置里补齐 API Key，或完成支持 OAuth 的模型登录。",
+          : inlineCredential
+            ? "凭证保存在当前 Profile 的模型或 Provider 配置中；健康检查只读取是否存在，不会展示密钥内容。"
+            : anyTokenSet
+              ? "仅展示已设置的变量名称，不会暴露密钥内容。"
+              : "可在模型设置里补齐 API Key，或完成支持 OAuth 的模型登录。",
         actionTo: anyModelCredential ? undefined : "/models",
         actionLabel: "配置凭证",
       },
@@ -457,7 +489,6 @@ export function HealthGrid({ variant = "compact" }: HealthGridProps) {
         { label: "正常项", value: String(counts.ok), sub: `共 ${items.length} 项`, tone: "ok" as Tone },
         { label: "注意项", value: String(counts.warn), sub: counts.warn ? "建议尽快处理" : "无需处理", tone: counts.warn ? "warn" as Tone : "ok" as Tone },
         { label: "异常项", value: String(counts.err), sub: counts.err ? "影响功能可用性" : "未发现异常", tone: counts.err ? "err" as Tone : "ok" as Tone },
-        { label: "活跃会话", value: String(status?.active_sessions ?? 0), sub: status ? `Dashboard v${status.version}` : "等待状态接口", tone: status ? "ok" as Tone : "warn" as Tone },
       ] satisfies HealthMetric[],
     };
   }, [config, env, envQuery.isError, lastUsedModel, mcp, mcpQuery.isError, modelInfo, oauthProviders, skills, skillsQuery.isError, status, statusQuery.isError]);
@@ -509,12 +540,17 @@ export function HealthGrid({ variant = "compact" }: HealthGridProps) {
             </p>
           </div>
           <div className={s.heroActions}>
-            <button className={s.actionButton} type="button" onClick={refreshAll} disabled={isRefreshing}>
-              <RefreshCw size={13} aria-hidden="true" />
-              {isRefreshing ? "刷新中" : "刷新检查"}
-            </button>
-            <CopyButton
-              className={s.actionButton}
+            <Button
+              variant="outline"
+              size="md"
+              type="button"
+              onClick={refreshAll}
+              loading={isRefreshing}
+              leadingIcon={<RefreshCw size={12} aria-hidden="true" />}
+            >
+              刷新检查
+            </Button>
+            <DiagnosticCopyButton
               text={() => buildDiagnosticsPayload({
                 status,
                 modelInfo,
@@ -525,19 +561,17 @@ export function HealthGrid({ variant = "compact" }: HealthGridProps) {
                 invalidProviders: health.invalidProviders,
                 counts: health.counts,
               })}
-            >
-              <Copy size={13} aria-hidden="true" />
-              复制诊断 JSON
-            </CopyButton>
-            <button
-              className={s.actionButton}
+            />
+            <Button
+              variant="outline"
+              size="md"
               type="button"
               onClick={openHermesHome}
               disabled={!status?.hermes_home || !window.hermesDesktop?.openWorkspacePath}
+              leadingIcon={<FolderOpen size={12} aria-hidden="true" />}
             >
-              <FolderOpen size={13} aria-hidden="true" />
               打开 HERMES_HOME
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -571,7 +605,7 @@ export function HealthGrid({ variant = "compact" }: HealthGridProps) {
           <aside className={s.aside} aria-label="健康检查建议">
             <div className={s.asideCard}>
               <div className={s.asideHead}>
-                <Wrench size={15} aria-hidden="true" />
+                <Wrench size={16} aria-hidden="true" />
                 <span>建议处理顺序</span>
               </div>
               {attentionItems.length > 0 ? (
@@ -590,13 +624,13 @@ export function HealthGrid({ variant = "compact" }: HealthGridProps) {
                         <strong>{item.label}</strong>
                         <span>{item.sub ?? item.value}</span>
                       </span>
-                      {item.actionTo && <ArrowRight size={13} aria-hidden="true" />}
+                      {item.actionTo && <ArrowRight size={12} aria-hidden="true" />}
                     </button>
                   ))}
                 </div>
               ) : (
                 <div className={s.emptyState}>
-                  <ShieldCheck size={18} aria-hidden="true" />
+                  <ShieldCheck size={20} aria-hidden="true" />
                   <span>当前没有需要处理的健康项，可以直接新建任务。</span>
                 </div>
               )}
@@ -604,7 +638,7 @@ export function HealthGrid({ variant = "compact" }: HealthGridProps) {
 
             <div className={s.asideCard}>
               <div className={s.asideHead}>
-                <Activity size={15} aria-hidden="true" />
+                <Activity size={16} aria-hidden="true" />
                 <span>刷新节奏</span>
               </div>
               <p className={s.asideText}>

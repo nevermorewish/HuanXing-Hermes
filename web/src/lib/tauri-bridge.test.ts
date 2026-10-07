@@ -4,7 +4,10 @@ import {
   installTauriBridge,
   isTauriDevMode,
   normalizeTauriInvokeError,
+  shouldWaitForRuntimeBootstrap,
+  shouldWaitForManagedRuntimeConfig,
 } from "./tauri-bridge";
+import { EXPECTED_BACKEND_VERSION } from "./build-info";
 
 const mockInvoke = vi.fn();
 const mockFileDropUnlisten = vi.fn();
@@ -42,6 +45,15 @@ beforeEach(() => {
         gatewayUrl: "ws://127.0.0.1:9120/api/ws",
         sessionToken: "token",
         currentProfile: "default",
+      });
+    }
+    if (command === "api_request") {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ version: EXPECTED_BACKEND_VERSION, name: "hermes-agent" }),
       });
     }
     return Promise.resolve({ command, args });
@@ -90,6 +102,14 @@ describe("isTauriDevMode", () => {
     });
   });
 
+  it("exposes an explicit app quit command instead of closing the webview", async () => {
+    await installTauriBridge();
+
+    await window.hermesDesktop?.quitApp?.();
+
+    expect(mockInvoke).toHaveBeenCalledWith("quit_app", undefined);
+  });
+
   it("exposes debug bundle export through Tauri IPC", async () => {
     await installTauriBridge();
 
@@ -124,6 +144,22 @@ describe("isTauriDevMode", () => {
     });
   });
 
+  it("exposes session JSON export through Tauri IPC", async () => {
+    await installTauriBridge();
+
+    await window.hermesDesktop?.exportSessionJson?.({
+      fileName: "session-abc.json",
+      content: "{\n  \"id\": \"abc\"\n}\n",
+    });
+
+    expect(mockInvoke).toHaveBeenCalledWith("export_session_json", {
+      input: {
+        fileName: "session-abc.json",
+        content: "{\n  \"id\": \"abc\"\n}\n",
+      },
+    });
+  });
+
   it("exposes external URL opening through Tauri IPC", async () => {
     await installTauriBridge();
 
@@ -140,6 +176,14 @@ describe("isTauriDevMode", () => {
     await window.hermesDesktop?.checkDesktopUpdate?.();
 
     expect(mockInvoke).toHaveBeenCalledWith("desktop_check_update", undefined);
+  });
+
+  it("exposes desktop update install through Tauri IPC", async () => {
+    await installTauriBridge();
+
+    await window.hermesDesktop?.installDesktopUpdate?.();
+
+    expect(mockInvoke).toHaveBeenCalledWith("desktop_install_update", undefined);
   });
 
   it("exposes external terminal opening through Tauri IPC", async () => {
@@ -219,6 +263,7 @@ describe("isTauriDevMode", () => {
   });
 
   it("mounts the renderer without waiting when the managed runtime is intentionally offline", async () => {
+    (globalThis as any).window.__TAURI_INTERNALS__ = {};
     mockInvoke.mockImplementation((command: string) => {
       if (command === "get_runtime_config") {
         return Promise.resolve({
@@ -239,11 +284,103 @@ describe("isTauriDevMode", () => {
 
     expect(window.__HERMES_RUNTIME__).toMatchObject({
       backendReady: false,
+      backendRecoveryReason: "managed-runtime-offline",
       guideState: "pending",
       managedRuntimeDesiredState: "stopped",
       managedRuntimeLifecycleState: "stopped",
     });
     expect(mockInvoke).not.toHaveBeenCalledWith("runtime_info", undefined);
+    expect(mockInvoke).not.toHaveBeenCalledWith("api_request", expect.anything());
+  });
+
+  it("mounts the offline repair shell when an attached backend is unreachable", async () => {
+    (globalThis as any).window.__TAURI_INTERNALS__ = {};
+    mockInvoke.mockImplementation((command: string) => {
+      if (command === "get_runtime_config") {
+        return Promise.resolve({
+          apiBaseUrl: "http://127.0.0.1:9559",
+          gatewayUrl: "ws://127.0.0.1:9559/api/ws",
+          currentProfile: "default",
+          connectionMode: "local",
+          backendReady: true,
+          guideState: "completed",
+        });
+      }
+      if (command === "api_request") {
+        return Promise.reject({
+          code: "dashboard_unreachable",
+          kind: "dashboard",
+          message: "Dashboard not reachable at http://127.0.0.1:9559",
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    await installTauriBridge();
+
+    expect(window.__HERMES_RUNTIME__).toMatchObject({
+      connectionMode: "local",
+      backendReady: false,
+      backendRecoveryReason: "external-backend-unreachable",
+      apiBaseUrl: "http://127.0.0.1:9559",
+      dashboardApiBaseUrl: "http://127.0.0.1:9559",
+    });
+  });
+
+  it("mounts the auth repair shell when an attached backend rejects credentials", async () => {
+    (globalThis as any).window.__TAURI_INTERNALS__ = {};
+    mockInvoke.mockImplementation((command: string) => {
+      if (command === "get_runtime_config") {
+        return Promise.resolve({
+          apiBaseUrl: "https://remote.example.com",
+          gatewayUrl: "wss://remote.example.com/api/ws",
+          currentProfile: "default",
+          connectionMode: "remote",
+          backendReady: true,
+          guideState: "completed",
+        });
+      }
+      if (command === "api_request") {
+        return Promise.resolve({
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ error: "unauthenticated" }),
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    await installTauriBridge();
+
+    expect(window.__HERMES_RUNTIME__).toMatchObject({
+      connectionMode: "remote",
+      backendReady: false,
+      backendRecoveryReason: "external-backend-auth-required",
+      dashboardApiBaseUrl: "https://remote.example.com",
+    });
+  });
+
+  it("waits for apiBaseUrl when managed runtime is still starting", () => {
+    expect(shouldWaitForManagedRuntimeConfig({
+      apiBaseUrl: "",
+      connectionMode: "managed",
+      backendReady: false,
+      managedRuntimeDesiredState: "running",
+    })).toBe(true);
+    expect(shouldWaitForManagedRuntimeConfig({
+      apiBaseUrl: "",
+      connectionMode: "managed",
+      backendReady: false,
+      managedRuntimeDesiredState: "stopped",
+    })).toBe(false);
+    expect(shouldWaitForManagedRuntimeConfig({
+      apiBaseUrl: "http://127.0.0.1:9120",
+      connectionMode: "managed",
+      backendReady: true,
+      managedRuntimeDesiredState: "running",
+    })).toBe(false);
   });
 
   it("exposes persisted guide and managed runtime lifecycle commands", async () => {
@@ -262,5 +399,98 @@ describe("isTauriDevMode", () => {
     expect(mockInvoke).toHaveBeenCalledWith("managed_runtime_stop", undefined);
     expect(mockInvoke).toHaveBeenCalledWith("managed_runtime_uninstall", undefined);
     expect(mockInvoke).toHaveBeenCalledWith("managed_runtime_reinstall", undefined);
+  });
+
+  it("verifies backend version before mounting the runtime in Tauri mode", async () => {
+    (globalThis as any).window.__TAURI_INTERNALS__ = {};
+    const fetchSpy = vi.fn();
+    (globalThis as any).fetch = fetchSpy;
+
+    await installTauriBridge();
+
+    expect(mockInvoke).toHaveBeenCalledWith("api_request", {
+      input: { path: "/api/version", method: "GET" },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(window.__HERMES_RUNTIME__).toMatchObject({
+      platform: "tauri",
+      // In dev mode with managed connection the runtime hides apiBaseUrl so
+      // requests flow through the Vite proxy, but the real dashboard origin is
+      // preserved on dashboardApiBaseUrl.
+      dashboardApiBaseUrl: "http://127.0.0.1:9120",
+    });
+  });
+
+  it("uses the managed runtime kernel version for the initial compatibility gate", async () => {
+    (globalThis as any).window.__TAURI_INTERNALS__ = {};
+    mockInvoke.mockImplementation((command: string) => {
+      if (command === "get_runtime_config") {
+        return Promise.resolve({
+          apiBaseUrl: "http://127.0.0.1:9120",
+          gatewayUrl: "ws://127.0.0.1:9120/api/ws",
+          sessionToken: "token",
+          kernelVersion: "0.20.0",
+          currentProfile: "default",
+          connectionMode: "managed",
+        });
+      }
+      if (command === "api_request") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ version: "0.20.0", name: "hermes-agent" }),
+        });
+      }
+      return Promise.resolve({});
+    });
+    const fetchSpy = vi.fn();
+    (globalThis as any).fetch = fetchSpy;
+
+    await installTauriBridge();
+
+    expect(mockInvoke).toHaveBeenCalledWith("api_request", {
+      input: { path: "/api/version", method: "GET" },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(window.__HERMES_RUNTIME__).toMatchObject({
+      kernelVersion: "0.20.0",
+      dashboardApiBaseUrl: "http://127.0.0.1:9120",
+    });
+  });
+});
+
+describe("shouldWaitForRuntimeBootstrap", () => {
+  it("waits for a managed runtime that is expected to be running", () => {
+    expect(shouldWaitForRuntimeBootstrap({
+      apiBaseUrl: "",
+      connectionMode: "managed",
+      managedRuntimeDesiredState: "running",
+    })).toBe(true);
+  });
+
+  it("mounts the offline UI when the managed runtime was intentionally stopped", () => {
+    expect(shouldWaitForRuntimeBootstrap({
+      apiBaseUrl: "",
+      connectionMode: "managed",
+      managedRuntimeDesiredState: "stopped",
+    })).toBe(false);
+  });
+
+  it("does not wait for an unavailable attached backend", () => {
+    expect(shouldWaitForRuntimeBootstrap({
+      apiBaseUrl: "",
+      connectionMode: "remote",
+      managedRuntimeDesiredState: "running",
+    })).toBe(false);
+  });
+
+  it("does not wait after the backend URL is ready", () => {
+    expect(shouldWaitForRuntimeBootstrap({
+      apiBaseUrl: "http://127.0.0.1:9120",
+      connectionMode: "managed",
+      managedRuntimeDesiredState: "running",
+    })).toBe(false);
   });
 });
